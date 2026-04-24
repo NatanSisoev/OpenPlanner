@@ -1,0 +1,41 @@
+{
+  "name": "hackupc-planstack-spike",
+  "displayName": "HackUPC planstack (native handoff spike)",
+  "description": "Spike: copy phase prompt to clipboard and optionally executeCommand to focus Cursor Composer.",
+  "version": "0.0.1",
+  "publisher": "hackupc",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:hackupc.nativeHandoff.demo"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "hackupc.nativeHandoff.demo",
+        "title": "HackUPC: Native handoff demo (clipboard + Composer)"
+      }
+    ],
+    "configuration": {
+      "title": "HackUPC native handoff",
+      "properties": {
+        "hackupc.nativeHandoff.openComposerCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional. VS Code command ID to open or focus Cursor Composer/Agent after the prompt is copied. Find it via Command Palette (Cmd+Shift+P), search for the panel you want, click the gear → Copy Command ID. Leave empty to only copy to clipboard."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.7.2"
+  }
+}

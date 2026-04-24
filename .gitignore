@@ -25,6 +25,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.vscode
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -193,6 +194,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Cursor agent smoke script (--write-demo); do not commit generated demo file
+demo/cursor-agent-smoke-demo.md
+
+# Node (e.g. tools/cursor-sdk-smoke)
+node_modules/
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
