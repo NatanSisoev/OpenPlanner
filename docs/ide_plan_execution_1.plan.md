@@ -21,7 +21,7 @@ todos:
     content: "Optional @cursor/february / CLI for headless or cloud; default remains native handoff for code phases"
     status: pending
   - id: git-plan-branch-model
-    content: "Extend plan schema + validation: optional branch fields, naming helpers, sync with git state (via vscode.git or git exec)"
+    content: "Schema + validation: git.baseBranch, git.planBranch (plan), git.phaseBranch (phase); implement effectiveWorkBranch(); sync with git state (vscode.git or git exec)"
     status: pending
   - id: git-overview-ui
     content: "Orchestration view: plan/phase vs branch, dirty/ahead-behind, quick actions (create/checkout branch, open compare)"
@@ -90,18 +90,20 @@ The SDK can run a real agent against `local.cwd`, but streaming into an **Output
 | Field | Level | Purpose |
 |--------|--------|---------|
 | `git.baseBranch` | plan | Default integration target (e.g. `main`) for comparisons and “ahead/behind”. |
-| `git.branch` | plan (optional) | Canonical branch for the whole plan, if one branch spans all phases. |
-| `git.branch` | phase (optional) | Overrides plan branch when a phase is intentionally isolated (e.g. long-running spike). |
-| `git.branchPattern` | plan (optional) | Template for generated names, e.g. `planstack/{planId}/{phaseId}` — extension can **propose** or **create** branches from it. |
+| `git.planBranch` | plan (optional) | Default **work branch** for every phase that does not set its own. |
+| `git.phaseBranch` | phase (optional) | **Per-phase override** only: use this branch for this phase instead of `git.planBranch`. |
+| `git.branchPattern` | plan (optional, deferred) | Template for generated names — omit from parsers until supported; keep separate from `planBranch` / `phaseBranch`. |
+
+**Normative branch resolution:** `effectiveWorkBranch(phase) := phase.git.phaseBranch ?? plan.git.planBranch ?? null`. Do not use a single field name `git.branch` at two hierarchy levels (flattening or partial JSON is ambiguous).
 
 **Conventions (document, don’t over-enforce):** encourage predictable names (`planstack/<plan-slug>`, or `feature/<ticket>-<phase>`) so `git branch -a` and PR titles stay readable. Teams can adopt stricter rules in their own CONTRIBUTING.
 
 **Extension behaviour (read-first, small writes):**
 
-1. **Resolve state** — On refresh (and on window focus), resolve each linked `git.branch` against the repo: exists? checked out? **ahead/behind** vs `git.baseBranch`? **working tree dirty**? Use the built-in **`vscode.git` extension API** when available, else `git` via `child_process` with safe argument lists.
+1. **Resolve state** — On refresh (and on window focus), resolve **`effectiveWorkBranch(phase)`** against the repo: exists? checked out? **ahead/behind** vs `git.baseBranch`? **working tree dirty**? Use the built-in **`vscode.git` extension API** when available, else `git` via `child_process` with safe argument lists.
 2. **Overview UI** — A second view or columns on the plan tree: **Branch**, **Status** (e.g. clean / dirty / gone / not created), **↑/↓ vs base** (counts or icons). This is the “general overview” for orchestration—not a full graph of every commit.
 3. **Actions (optional v1)** — Commands such as **“Create branch from pattern and checkout”**, **“Checkout plan branch”**, **“Open diff vs base”** (delegate to VS Code’s native diff/compare). Optionally append branch name + base to the **handoff prompt** so the native agent knows where to work.
-4. **Handoff prompt enrichment** — When `git.branch` is set, include in the clipboard payload: current branch, intended branch, and base branch so Composer aligns with the same VC story the sidebar shows.
+4. **Handoff prompt enrichment** — When **`effectiveWorkBranch(phase)`** is non-null, include in the clipboard payload: current checkout branch, that effective work branch, and `git.baseBranch` so Composer aligns with the same VC story the sidebar shows.
 
 **Out of scope here:** auto-merge, conflict resolution UI, or replacing Git hosting PR flows—only **linking, visibility, and light branch helpers**.
 
