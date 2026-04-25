@@ -22,9 +22,9 @@ HackUPC/
       extension.ts                # activation, command + view registration
       log.ts                      # shared "Planstack" OutputChannel (used by loader, dispatchers)
       plan/                       # plan types, validate, loader, watcher, prompt builders, plansStore
-      ui/                         # tree provider + sidebar webview + chat webview
+      ui/                         # tree, sidebar + chat webviews, chatStatusBridge, agentChatStreamBridge
       dispatch/                   # router + handoff variants (cli / native / sdk / claude)
-      git/                        # branch resolver + work-branch helper
+      git/                        # branch resolver, work-branch helper, post-run diff summary helper
     media/                        # activity-bar icon, webview JS/CSS
     out/                          # tsc output (gitignored)
 ```
@@ -56,7 +56,7 @@ A working seed plan ships at [`.planstack/plans/demo-onboarding.json`](.planstac
 
 | Mode              | File                              | Notes                                                                                |
 |-------------------|-----------------------------------|--------------------------------------------------------------------------------------|
-| `cli` *(default)* | `dispatch/cursorCli.ts`           | Runs `agent -p --trust --force` headless. Streams status into the chat panel and tails stdout/stderr to the shared "Planstack" output channel. |
+| `cli` *(default)* | `dispatch/cursorCli.ts`           | Runs `agent -p --trust --force` headless. Live stdout/stderr to **Output → Planstack** (`cliStreamAgentOutput`) and, by default, a **live stream block** in Chat (`agentChatLiveStream` via `agentChatStreamBridge.ts`); throttled notification progress; throttled Chat bubbles when live stream is off; single concurrent run; optional **Git vs HEAD** summary (`worktreeChangeSummary.ts`). |
 | `native-first`    | `dispatch/cursorNativeHandoff.ts` | Clipboard + optional `executeCommand` to focus Composer.                              |
 | `sdk-local` / `sdk-cloud` | `dispatch/cursorSdk.ts`     | `@cursor/february` headless. Stub-level.                                              |
 | (separate path)   | `dispatch/claudeCode.ts`          | Spawns `claude` in an integrated terminal. Not wired into the router.                 |
