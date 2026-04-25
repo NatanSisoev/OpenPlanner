@@ -4,6 +4,7 @@
   let plans = [];
   const expandedPlans = new Set();
   const expandedPhases = new Set();
+  let viewMode = "list";
   let activeContextMenu = null;
   let activeSubMenu = null;
   let activeSubMenuAnchor = null;
@@ -56,7 +57,113 @@
         </div>`;
       return;
     }
-    root.innerHTML = plans.map(renderPlan).join("");
+    const controls = `
+      <div class="view-switcher" style="display:flex;gap:6px;padding:4px 8px 8px;position:sticky;top:0;background:var(--vscode-sideBar-background);z-index:2;">
+        <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list"
+                style="font:inherit;font-size:12px;border-radius:999px;border:1px solid rgba(127,127,127,0.35);padding:3px 10px;cursor:pointer;${viewMode === "list" ? "background:var(--vscode-button-background,#0e70c0);color:var(--vscode-button-foreground,#fff);" : "background:transparent;color:inherit;"}">List view</button>
+        <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes"
+                style="font:inherit;font-size:12px;border-radius:999px;border:1px solid rgba(127,127,127,0.35);padding:3px 10px;cursor:pointer;${viewMode === "nodes" ? "background:var(--vscode-button-background,#0e70c0);color:var(--vscode-button-foreground,#fff);" : "background:transparent;color:inherit;"}">View as nodes</button>
+      </div>
+    `;
+    const body = viewMode === "nodes"
+      ? renderNodesView()
+      : plans.map(renderPlan).join("");
+    root.innerHTML = controls + body;
+  }
+
+  function renderNodesView() {
+    const legend = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;padding:0 8px 8px;font-size:11px;opacity:0.85;">
+        <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid #f44747;"></span>failed</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid #4ec9b0;"></span>completed</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid #569cd6;"></span>running</span>
+      </div>
+    `;
+    return `
+      ${legend}
+      <div class="nodes-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:4px 8px 10px;">
+        ${plans.map((plan) => renderPlanNode(plan)).join("")}
+      </div>
+    `;
+  }
+
+  function renderPlanNode(plan) {
+    const { tone, borderColor, glowColor } = derivePlanNodeTone(plan);
+    const isOpen = expandedPlans.has(plan.id);
+    const pid = esc(plan.id);
+    const phases = Array.isArray(plan.phases) ? plan.phases : [];
+    const totalTasks = phases.reduce((acc, ph) => acc + ((ph.tasks && ph.tasks.length) || 0), 0);
+    const completedTasks = phases.reduce(
+      (acc, ph) => acc + ((ph.tasks || []).filter((t) => t.state === "completed").length),
+      0,
+    );
+    return `
+      <div class="node-wrapper">
+        <button class="plan-node tone-${tone}"
+                data-action="toggleNodeDetails"
+                data-plan="${pid}"
+                title="${esc(plan.title)}"
+                style="
+                  width: 132px;
+                  height: 132px;
+                  border-radius: 50%;
+                  border: 3px solid ${borderColor};
+                  box-shadow: 0 0 0 2px ${glowColor} inset, 0 6px 14px rgba(0,0,0,0.28);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  text-align: center;
+                  padding: 12px;
+                  margin: 0 auto;
+                  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.04), rgba(0,0,0,0.18));
+                  cursor: pointer;
+                ">
+          <span class="node-name" style="white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;">${esc(plan.title)}</span>
+        </button>
+        ${isOpen
+          ? `<div class="node-details" style="margin-top:8px;border:1px solid rgba(127,127,127,0.25);border-radius:8px;padding:8px;background:rgba(127,127,127,0.08);">
+               <div style="font-size:12px;opacity:0.9;margin-bottom:6px;"><strong>${esc(plan.title)}</strong></div>
+               <div style="font-size:11px;opacity:0.8;margin-bottom:8px;">${completedTasks}/${totalTasks} tasks completed · ${phases.length} phases</div>
+               ${phases.map((phase) => renderNodePhase(plan, phase)).join("")}
+             </div>`
+          : ""}
+      </div>
+    `;
+  }
+
+  function renderNodePhase(plan, phase) {
+    const pid = esc(plan.id);
+    const phid = esc(phase.id);
+    const tasks = Array.isArray(phase.tasks) ? phase.tasks : [];
+    return `
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(127,127,127,0.18);">
+        <div class="phase-header" data-plan="${pid}" data-phase="${phid}" style="padding:2px 0;cursor:default;">
+          <div class="phase-header-left">
+            <span class="phase-status-dot dot-${phase.state}"></span>
+            <span class="phase-title">${esc(phase.title)}</span>
+          </div>
+          <div class="phase-header-right">${badgeHtml(phase.state)}</div>
+        </div>
+        <div class="phase-tasks" style="margin:4px 0 0 8px;padding:0 0 0 10px;">
+          ${tasks.map((task) => renderTask(plan, phase, task)).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function derivePlanNodeTone(plan) {
+    const phases = Array.isArray(plan.phases) ? plan.phases : [];
+    const tasks = phases.flatMap((phase) => (Array.isArray(phase.tasks) ? phase.tasks : []));
+    if (tasks.some((task) => task.state === "failed")) {
+      return { tone: "failed", borderColor: "#f44747", glowColor: "rgba(244,71,71,0.20)" };
+    }
+    if (tasks.every((task) => task.state === "completed")) {
+      return { tone: "completed", borderColor: "#4ec9b0", glowColor: "rgba(78,201,176,0.20)" };
+    }
+    if (tasks.some((task) => task.state === "in_progress")) {
+      return { tone: "in_progress", borderColor: "#569cd6", glowColor: "rgba(86,156,214,0.20)" };
+    }
+    return { tone: "pending", borderColor: "#6e6e6e", glowColor: "rgba(110,110,110,0.18)" };
   }
 
   function renderPlan(plan) {
@@ -188,6 +295,25 @@
         expandedPlans.add(planId);
       }
       render();
+      return;
+    }
+
+    if (action === "toggleNodeDetails") {
+      if (expandedPlans.has(planId)) {
+        expandedPlans.delete(planId);
+      } else {
+        expandedPlans.add(planId);
+      }
+      render();
+      return;
+    }
+
+    if (action === "switchView") {
+      const nextView = el.dataset.view;
+      if (nextView === "list" || nextView === "nodes") {
+        viewMode = nextView;
+        render();
+      }
       return;
     }
 

@@ -198,6 +198,68 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
 
     #root { padding: 6px 0 16px; }
 
+    .view-switcher {
+      display: flex;
+      gap: 6px;
+      padding: 4px 8px 8px;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--vscode-sideBar-background);
+    }
+    .view-btn {
+      font: inherit;
+      font-size: 0.78em;
+      border-radius: 999px;
+      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      background: transparent;
+      color: var(--vscode-foreground);
+      padding: 3px 10px;
+      cursor: pointer;
+      opacity: 0.8;
+    }
+    .view-btn:hover {
+      opacity: 1;
+      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+    }
+    .view-btn.active {
+      opacity: 1;
+      color: var(--vscode-button-foreground, #fff);
+      background: var(--vscode-button-background, #0e70c0);
+      border-color: transparent;
+    }
+
+    .nodes-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      padding: 4px 8px 8px;
+    }
+    .plan-node {
+      min-height: 62px;
+      border-radius: 999px;
+      border: 2px solid var(--c-pending);
+      background: var(--c-card-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8px 12px;
+    }
+    .plan-node.tone-failed { border-color: var(--c-failed); box-shadow: 0 0 0 1px rgba(244,71,71,0.2) inset; }
+    .plan-node.tone-completed { border-color: var(--c-done); box-shadow: 0 0 0 1px rgba(78,201,176,0.2) inset; }
+    .plan-node.tone-in_progress { border-color: var(--c-running); box-shadow: 0 0 0 1px rgba(86,156,214,0.2) inset; }
+    .plan-node.tone-pending { border-color: var(--c-pending); }
+    .node-name {
+      font-size: 0.88em;
+      font-weight: 600;
+      line-height: 1.35;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     /* ── Empty state ── */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
