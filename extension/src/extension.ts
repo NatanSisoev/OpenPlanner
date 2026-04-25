@@ -8,15 +8,35 @@ import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
 import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem } from "./ui/planTreeProvider";
 
+let currentPlans: import("./plan/types").Plan[] = [];
+
 async function refreshPlans(provider: PlanTreeProvider, sidebar: PlanstackSidebarWebview): Promise<void> {
-  const plans = await loadPlansFromWorkspace();
-  provider.setPlans(plans);
-  sidebar.setPlanCount(plans.length);
+  currentPlans = await loadPlansFromWorkspace();
+  provider.setPlans(currentPlans);
+  sidebar.setPlans(currentPlans);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   const extUri = context.extensionUri;
-  const sidebarUi = new PlanstackSidebarWebview(extUri);
+  const sidebarUi = new PlanstackSidebarWebview(extUri, async (planId, phaseId) => {
+    const plan = currentPlans.find((p) => p.id === planId);
+    const phase = plan?.phases.find((ph) => ph.id === phaseId);
+    if (!plan || !phase) {
+      void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+      return;
+    }
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const git = root
+      ? await summarizeGitForPlan(root, phase, plan)
+      : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
+    const eff = effectiveWorkBranch(phase, plan);
+    const prompt = buildPhaseHandoffPrompt(plan, phase, {
+      currentHead: git.currentBranchLabel,
+      effectiveWorkBranch: eff,
+      baseBranch: plan.git?.baseBranch,
+    });
+    await dispatchPhaseHandoff(prompt);
+  });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR_WEBVIEW_ID, sidebarUi));
 
   const tree = new PlanTreeProvider();

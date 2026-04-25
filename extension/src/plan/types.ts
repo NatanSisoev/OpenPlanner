@@ -2,6 +2,15 @@
 
 export type PhaseStatus = "pending" | "in_progress" | "done" | "blocked";
 
+export type TaskStatus = "pending" | "in_progress" | "done" | "cancelled" | "failed" | "skipped";
+
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+}
+
 export interface PhaseGitMeta {
   phaseBranch?: string;
 }
@@ -18,6 +27,7 @@ export interface Phase {
   status: PhaseStatus;
   dependsOn?: string[];
   git?: PhaseGitMeta;
+  tasks?: Task[];
 }
 
 export interface Plan {

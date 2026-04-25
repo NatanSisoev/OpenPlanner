@@ -11,7 +11,7 @@ type ChatRole = "user" | "system";
 type ChatTurn = { role: ChatRole; text: string };
 
 export class PlanstackChatWebview implements vscode.WebviewViewProvider {
-  private view?: vscode.WebviewView;
+  private _view?: vscode.WebviewView;
   private readonly transcript: ChatTurn[] = [];
   private createPlanInFlight = false;
 
@@ -26,7 +26,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken,
   ): void {
-    this.view = webviewView;
+    this._view = webviewView;
     const w = webviewView.webview;
     w.options = {
       enableScripts: true,
@@ -127,98 +127,79 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <style>
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
     body {
-      display: flex;
-      flex-direction: column;
+      display: flex; flex-direction: column;
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
       color: var(--vscode-foreground);
       background: var(--vscode-sideBar-background);
     }
+    .hint {
+      font-size: 0.8em; opacity: 0.55; padding: 8px 10px 6px; line-height: 1.5;
+      border-bottom: 1px solid rgba(127,127,127,0.15);
+    }
+    .hint strong { opacity: 0.85; }
+    .hint code { font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
     #messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px 10px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
+      flex: 1; overflow-y: auto;
+      padding: 10px 10px 10px;
+      display: flex; flex-direction: column; gap: 7px;
     }
     .row { display: flex; justify-content: flex-end; }
     .row.system { justify-content: flex-start; }
     .bubble {
-      max-width: 92%;
-      padding: 8px 10px;
+      max-width: 90%;
+      padding: 7px 10px;
       border-radius: 8px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      line-height: 1.35;
+      white-space: pre-wrap; word-break: break-word;
+      line-height: 1.4; font-size: 0.9em;
     }
     .bubble.user {
       background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, transparent);
+      border: 1px solid rgba(127,127,127,0.2);
+      border-bottom-right-radius: 2px;
     }
     .bubble.system {
-      background: var(--vscode-editor-inactiveSelectionBackground);
-      border: 1px solid var(--vscode-widget-border, transparent);
-      font-size: 0.92em;
+      background: var(--vscode-editor-background, rgba(0,0,0,0.15));
+      border: 1px solid rgba(127,127,127,0.15);
+      border-bottom-left-radius: 2px;
+      opacity: 0.85;
     }
     #composer {
-      display: flex;
-      gap: 6px;
+      display: flex; flex-direction: column; gap: 6px;
       padding: 8px 10px 10px;
-      border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(127,127,127,.25));
-      align-items: flex-end;
-      flex-wrap: wrap;
+      border-top: 1px solid rgba(127,127,127,0.18);
     }
     #input {
-      flex: 1 1 100%;
-      min-height: 36px;
-      max-height: 120px;
-      resize: vertical;
-      padding: 8px;
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
+      width: 100%; min-height: 36px; max-height: 120px; resize: vertical;
+      padding: 7px 9px;
+      font-family: var(--vscode-font-family); font-size: var(--vscode-font-size);
       color: var(--vscode-input-foreground);
       background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, transparent);
-      border-radius: 4px;
-      min-width: 0;
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 5px; outline: none;
     }
-    #composerActions {
-      display: flex;
-      gap: 6px;
-      flex: 1 1 auto;
-      justify-content: flex-end;
-    }
+    #input:focus { border-color: var(--vscode-focusBorder, #007acc); }
+    #composerActions { display: flex; gap: 6px; justify-content: flex-end; }
     #send, #createPlan {
-      flex-shrink: 0;
-      padding: 0 12px;
-      height: 36px;
-      cursor: pointer;
-      font-size: var(--vscode-font-size);
-      border: none;
-      border-radius: 4px;
+      flex-shrink: 0; padding: 0 12px; height: 28px;
+      cursor: pointer; font-size: 0.85em;
+      border: none; border-radius: 4px; white-space: nowrap;
     }
-    #send {
+    #createPlan {
       color: var(--vscode-button-foreground);
       background: var(--vscode-button-background);
     }
-    #send:hover { background: var(--vscode-button-hoverBackground); }
-    #createPlan {
+    #createPlan:hover { background: var(--vscode-button-hoverBackground); }
+    #send {
       color: var(--vscode-foreground);
-      background: var(--vscode-button-secondaryBackground);
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.2));
     }
-    #createPlan:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    #send:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.3)); }
     #send:disabled, #createPlan:disabled, #input:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-    .hint {
-      font-size: 0.85em;
-      opacity: 0.75;
-      padding: 0 10px 6px;
+      opacity: 0.45; cursor: not-allowed;
     }
   </style>
 </head>
