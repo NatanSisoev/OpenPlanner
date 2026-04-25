@@ -9,6 +9,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private plans: Plan[] = [];
   private taskDetailsPanel?: vscode.WebviewPanel;
   private phaseDetailsPanel?: vscode.WebviewPanel;
+  private planDetailsPanel?: vscode.WebviewPanel;
 
   constructor(
     private readonly extUri: vscode.Uri,
@@ -75,6 +76,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "openPhaseDetails" && m.planId && m.phaseId) {
         void this.openPhaseDetails(m.planId, m.phaseId);
+      }
+      if (m.type === "openPlanDetails" && m.planId) {
+        void this.openPlanDetails(m.planId);
       }
       if (m.type === "updateTask" && m.planId && m.phaseId && m.taskId) {
         void this.onUpdateTask(m.planId, m.phaseId, m.taskId, {
@@ -172,6 +176,36 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
     });
     this.phaseDetailsPanel = panel;
+  }
+
+  private async openPlanDetails(planId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    if (!plan) {
+      void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+      return;
+    }
+
+    const title = `Plan: ${plan.title}`;
+    if (this.planDetailsPanel) {
+      this.planDetailsPanel.title = title;
+      this.planDetailsPanel.webview.html = getPlanDetailsHtml(plan);
+      this.planDetailsPanel.reveal(vscode.ViewColumn.Active, true);
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "hackupc.planstack.planDetails",
+      title,
+      { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
+      { enableScripts: false },
+    );
+    panel.webview.html = getPlanDetailsHtml(plan);
+    panel.onDidDispose(() => {
+      if (this.planDetailsPanel === panel) {
+        this.planDetailsPanel = undefined;
+      }
+    });
+    this.planDetailsPanel = panel;
   }
 }
 
@@ -595,6 +629,63 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
   <div class="section">
     <div><strong>Tasks in this phase</strong></div>
     ${tasksMarkup}
+  </div>
+</body>
+</html>`;
+}
+
+function getPlanDetailsHtml(plan: Plan): string {
+  const phases = plan.phases ?? [];
+  const tasks = phases.flatMap((ph) => ph.tasks ?? []);
+  const donePhases = phases.filter((p) => p.state === "completed").length;
+  const doneTasks = tasks.filter((t) => t.state === "completed").length;
+  const desc = (plan as { description?: unknown }).description;
+  const createdAt = (plan as { createdAt?: unknown }).createdAt;
+  const createdAtLabel = createdAt ? new Date(String(createdAt)).toISOString() : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      margin: 0;
+      padding: 14px 16px 18px;
+    }
+    .h1 { font-size: 1.1em; font-weight: 700; margin: 0 0 10px; }
+    .meta {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 6px 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 8px;
+      background: rgba(127,127,127,0.08);
+    }
+    .k { opacity: 0.7; }
+    .v { word-break: break-word; }
+    .section { margin-top: 12px; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li { margin-bottom: 8px; }
+    .subtle { opacity: 0.75; }
+    code { font-family: var(--vscode-editor-font-family); }
+  </style>
+</head>
+<body>
+  <div class="h1">${htmlEscape(plan.title)}</div>
+  <div class="meta">
+    <div class="k">Plan</div><div class="v"><code>${htmlEscape(plan.id)}</code></div>
+    <div class="k">State</div><div class="v"><code>${htmlEscape(plan.state)}</code></div>
+    <div class="k">Description</div><div class="v">${desc ? htmlEscape(desc) : `<span class="subtle">—</span>`}</div>
+    <div class="k">CreatedAt</div><div class="v">${createdAtLabel ? `<code>${htmlEscape(createdAtLabel)}</code>` : `<span class="subtle">—</span>`}</div>
+    <div class="k">Phases</div><div class="v"><code>${phases.length}</code> · completed <code>${donePhases}</code></div>
+    <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code> · completed <code>${doneTasks}</code></div>
   </div>
 </body>
 </html>`;

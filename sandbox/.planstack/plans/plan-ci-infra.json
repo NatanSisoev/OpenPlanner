@@ -2,6 +2,7 @@
   "id": "plan-ci-001",
   "state": "in_progress",
   "title": "CI/CD Pipeline Overhaul",
+  "description": "Speed up CI, reduce flaky runs, and harden deploy gates by auditing workflows, parallelizing test suites, and migrating critical jobs to self-hosted runners.",
   "createdAt": "2026-04-23T14:00:00Z",
   "phases": [
     {

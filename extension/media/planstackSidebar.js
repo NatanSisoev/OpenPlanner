@@ -472,7 +472,9 @@
 
   document.addEventListener("contextmenu", (e) => {
     hideContextMenu();
-    if (e.target.closest("button")) {
+    const btn = e.target.closest("button");
+    // Allow right-click menus on the plan nodes view (which uses <button>).
+    if (btn && !btn.classList.contains("plan-node")) {
       return;
     }
     const taskRow = e.target.closest(".task-row");
@@ -481,8 +483,20 @@
       openTaskContextMenu(e, taskRow);
       return;
     }
+    const planHeader = e.target.closest(".plan-header");
+    if (planHeader) {
+      e.preventDefault();
+      openPlanContextMenu(e, planHeader);
+      return;
+    }
     const phaseHeader = e.target.closest(".phase-header");
     if (!phaseHeader) {
+      const planNode = e.target.closest(".plan-node");
+      if (!planNode) {
+        return;
+      }
+      e.preventDefault();
+      openPlanNodeContextMenu(e, planNode);
       return;
     }
     e.preventDefault();
@@ -614,6 +628,68 @@
             expandedPhases.delete(key);
           } else {
             expandedPhases.add(key);
+          }
+          render();
+        },
+      },
+    ]);
+    document.body.appendChild(menu);
+    activeContextMenu = menu;
+  }
+
+  function openPlanContextMenu(event, planHeader) {
+    const planId = planHeader.dataset.plan;
+    if (!planId) {
+      return;
+    }
+    const plan = plans.find((p) => p.id === planId);
+    if (!plan) {
+      return;
+    }
+    const phases = Array.isArray(plan.phases) ? plan.phases : [];
+    const menu = createContextMenu(event.clientX, event.clientY, [
+      {
+        label: `Plan info (${plan.state})`,
+        onClick: () => vscode.postMessage({ type: "openPlanDetails", planId }),
+      },
+      {
+        label: expandedPlans.has(planId) ? "Collapse phases" : `Expand phases (${phases.length})`,
+        onClick: () => {
+          if (expandedPlans.has(planId)) {
+            expandedPlans.delete(planId);
+          } else {
+            expandedPlans.add(planId);
+          }
+          render();
+        },
+      },
+    ]);
+    document.body.appendChild(menu);
+    activeContextMenu = menu;
+  }
+
+  function openPlanNodeContextMenu(event, planNodeBtn) {
+    const planId = planNodeBtn.dataset.plan;
+    if (!planId) {
+      return;
+    }
+    const plan = plans.find((p) => p.id === planId);
+    if (!plan) {
+      return;
+    }
+    const phases = Array.isArray(plan.phases) ? plan.phases : [];
+    const menu = createContextMenu(event.clientX, event.clientY, [
+      {
+        label: `Plan info (${plan.state})`,
+        onClick: () => vscode.postMessage({ type: "openPlanDetails", planId }),
+      },
+      {
+        label: expandedPlans.has(planId) ? "Hide phases" : `Show phases (${phases.length})`,
+        onClick: () => {
+          if (expandedPlans.has(planId)) {
+            expandedPlans.delete(planId);
+          } else {
+            expandedPlans.add(planId);
           }
           render();
         },
