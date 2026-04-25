@@ -132,7 +132,11 @@ export function activate(context: vscode.ExtensionContext): void {
       await refreshPlansOrdered(tree, sidebarUi);
     },
   );
-  context.subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR_WEBVIEW_ID, sidebarUi));
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(SIDEBAR_WEBVIEW_ID, sidebarUi, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
 
   const tree = new PlanTreeProvider();
   const view = vscode.window.createTreeView(PLAN_TREE_VIEW_ID, {
@@ -144,7 +148,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const chatUi = new PlanstackChatWebview(extUri, context, async () => {
     await refreshPlansOrdered(tree, sidebarUi);
   });
-  context.subscriptions.push(vscode.window.registerWebviewViewProvider(CHAT_WEBVIEW_ID, chatUi));
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(CHAT_WEBVIEW_ID, chatUi, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.refresh", async () => {
