@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { AgentCliError, runAgentPrint } from "./agentCliRunner";
+import { prependUserLocalBinToPath, resolveDefaultAgentExecutable } from "./agentPath";
 import { buildPlanCreationPrompt } from "./planCreationPrompt";
 import { extractJsonObject } from "./extractJsonFromAgentOutput";
 import type { Plan } from "./types";
@@ -18,11 +19,12 @@ async function resolveCursorApiKey(context: vscode.ExtensionContext): Promise<st
 }
 
 async function buildAgentEnv(context: vscode.ExtensionContext): Promise<NodeJS.ProcessEnv> {
-  const env = { ...process.env } as NodeJS.ProcessEnv;
+  let env = { ...process.env } as NodeJS.ProcessEnv;
   const key = await resolveCursorApiKey(context);
   if (key) {
     env.CURSOR_API_KEY = key;
   }
+  env = prependUserLocalBinToPath(env);
   return env;
 }
 
@@ -50,10 +52,11 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
 
   const cwd = opts.workspaceRoot.fsPath;
   const env = await buildAgentEnv(opts.extensionContext);
+  const resolvedAgent = resolveDefaultAgentExecutable(agentPath);
   const prompt = buildPlanCreationPrompt(opts.userRequest);
 
   const { stdout, stderr, exitCode } = await runAgentPrint({
-    agentPath,
+    agentPath: resolvedAgent,
     cwd,
     prompt,
     env,

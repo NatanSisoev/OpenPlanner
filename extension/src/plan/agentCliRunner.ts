@@ -67,7 +67,14 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
 
     child.on("error", (e) => {
       clearTimeout(killTimer);
-      finish(() => reject(new AgentCliError(`Failed to spawn agent: ${e.message}`)));
+      const err = e as NodeJS.ErrnoException;
+      let msg = `Failed to spawn agent: ${e.message}`;
+      if (err.code === "ENOENT") {
+        msg +=
+          ` Cannot find "${opts.agentPath}". The extension already prepends ~/.local/bin to the child PATH when that folder exists and resolves bare \`agent\` to ~/.local/bin/agent when present. ` +
+          `If the CLI is elsewhere, set **planstack.cursor.agentPath** to the full path (output of \`which agent\` in a working shell), or install the Cursor CLI into ~/.local/bin.`;
+      }
+      finish(() => reject(new AgentCliError(msg)));
     });
 
     child.on("close", (exitCode) => {

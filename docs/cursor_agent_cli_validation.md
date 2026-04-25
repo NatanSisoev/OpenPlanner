@@ -12,7 +12,7 @@ This matches the optional **headless** path in [ide_plan_execution_1.plan.md](id
 The HackUPC extension can spawn the same **`agent -p --trust`** flow from the **Planstack → Chat** view (**Create plan** button). It uses the **first workspace folder** as `cwd`, passes a prompt that asks for **JSON-only** plan output, then **parses stdout**, validates against the extension schema, and writes **`.planstack/plans/<id>.json`** itself (print mode only; no `--force` in that path).
 
 - **API key:** The Extension Host does **not** read repo `.env`. Either launch Cursor with `CURSOR_API_KEY` set in your environment, or use **Command Palette → “Planstack: Set Cursor API key”** to store a key in VS Code **Secret Storage** (the extension sets `CURSOR_API_KEY` when spawning `agent`).
-- **Executable:** Defaults to `agent` on `PATH`; override with **`planstack.cursor.agentPath`** if needed.
+- **Executable:** Defaults to `agent`. The extension **prepends `~/.local/bin` to the child `PATH`** when that folder exists and uses **`~/.local/bin/agent`** when the default name is `agent` and that file exists—so a typical install matches the smoke script’s `PATH` story without relying on GUI Cursor’s global `PATH`. Override with **`planstack.cursor.agentPath`** if `agent` lives elsewhere.
 - **Limits:** **`planstack.cursor.agentTimeoutMs`** and **`planstack.cursor.agentMaxStdoutChars`** guard runaway output or hangs.
 
 See [extension/README.md](../extension/README.md) for F5 and UI steps.

@@ -13,6 +13,14 @@ Orchestration UI for phased plans (`.planstack/plans/*.json`) with **native hand
 
 **Command Palette:** `Planstack: Set Cursor API key` · `HackUPC: Native handoff demo` (fixed clipboard spike).
 
+### Cursor CLI and Extension Host `PATH`
+
+`./scripts/cursor-agent-smoke.sh` uses your **terminal**’s environment. **Planstack → Create plan** runs `agent` from the **Extension Host**, which often **does not** inherit the same `PATH` as an interactive shell—especially if Cursor was opened from the Dock. **`~/.bashrc` is Bash-only**; on macOS with **zsh**, put `export PATH="$HOME/.local/bin:$PATH"` in **`~/.zshrc`** and/or **`~/.zprofile`**, then **fully quit and reopen Cursor**.
+
+The extension also **prepends `~/.local/bin` to the child `PATH`** when that directory exists, and if **`planstack.cursor.agentPath`** is the default `agent`, it will run **`~/.local/bin/agent`** when that file exists—so a typical Cursor CLI install under `~/.local/bin` works even when GUI Cursor’s `PATH` is minimal.
+
+If the binary lives somewhere else, set **`planstack.cursor.agentPath`** to the **absolute path** from `which agent` in a shell where the CLI works.
+
 ## Source layout
 
 Matches [extension_and_repo_structure.plan.md](../docs/extension_and_repo_structure.plan.md):
