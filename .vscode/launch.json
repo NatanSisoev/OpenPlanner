@@ -5,7 +5,7 @@
       "name": "Extension: HackUPC native handoff",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension", "C:/Users/natan/HackUPC"],
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"],
       "outFiles": ["${workspaceFolder}/extension/out/**/*.js"],
       "preLaunchTask": "extension: compile"
     }

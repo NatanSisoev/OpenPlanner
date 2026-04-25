@@ -1,32 +1,15 @@
 import * as vscode from "vscode";
 import { AgentCliError, runAgentPrint } from "./agentCliRunner";
-import { prependUserLocalBinToPath, resolveDefaultAgentExecutable } from "./agentPath";
+import { buildAgentEnv as buildEnvForAgent, resolveCursorApiKey as resolveKey } from "./cursorApiKey";
+import { resolveDefaultAgentExecutable } from "./agentPath";
 import { buildPlanCreationPrompt } from "./planCreationPrompt";
 import { extractJsonObject } from "./extractJsonFromAgentOutput";
 import type { Plan } from "./types";
 import { validatePlanJson } from "./validate";
 import { saveValidatedPlan } from "./writePlan";
 
-export const CURSOR_API_KEY_SECRET = "planstack.cursor.apiKey";
-
-export async function resolveCursorApiKey(context: vscode.ExtensionContext): Promise<string | undefined> {
-  const fromSecret = await context.secrets.get(CURSOR_API_KEY_SECRET);
-  if (fromSecret?.trim()) {
-    return fromSecret.trim();
-  }
-  const fromEnv = process.env.CURSOR_API_KEY?.trim();
-  return fromEnv || undefined;
-}
-
-export async function buildAgentEnv(context: vscode.ExtensionContext): Promise<NodeJS.ProcessEnv> {
-  let env = { ...process.env } as NodeJS.ProcessEnv;
-  const key = await resolveCursorApiKey(context);
-  if (key) {
-    env.CURSOR_API_KEY = key;
-  }
-  env = prependUserLocalBinToPath(env);
-  return env;
-}
+// Re-exported here for backward compat with callers that imported from this module.
+export { CURSOR_API_KEY_SECRET, buildAgentEnv, resolveCursorApiKey } from "./cursorApiKey";
 
 export interface CreatePlanFromCliOptions {
   extensionContext: vscode.ExtensionContext;
@@ -43,7 +26,7 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
   const timeoutMs = cfg.get<number>("agentTimeoutMs") ?? 180_000;
   const maxStdoutChars = cfg.get<number>("agentMaxStdoutChars") ?? 2_000_000;
 
-  const apiKey = await resolveCursorApiKey(opts.extensionContext);
+  const apiKey = await resolveKey(opts.extensionContext);
   if (!apiKey) {
     throw new AgentCliError(
       "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command “Planstack: Set Cursor API key”.",
@@ -51,7 +34,7 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
   }
 
   const cwd = opts.workspaceRoot.fsPath;
-  const env = await buildAgentEnv(opts.extensionContext);
+  const env = await buildEnvForAgent(opts.extensionContext);
   const resolvedAgent = resolveDefaultAgentExecutable(agentPath);
   const prompt = buildPlanCreationPrompt(opts.userRequest);
 

@@ -36,7 +36,11 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       fn();
     };
 
-    const args = opts.applyEdits ? ["-p", "--trust", "--force", opts.prompt] : ["-p", "--trust", opts.prompt];
+    const baseArgs = opts.applyEdits ? ["-p", "--trust", "--force", opts.prompt] : ["-p", "--trust", opts.prompt];
+    // Windows installs commonly expose `cursor` with an `agent` subcommand,
+    // not a standalone `agent` executable.
+    const looksLikeCursorCli = /(^|[\\/])cursor(\.cmd|\.exe)?$/i.test(opts.agentPath.trim());
+    const args = looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
     const child = spawn(opts.agentPath, args, {
       cwd: opts.cwd,
       env: opts.env,
@@ -73,8 +77,8 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       let msg = `Failed to spawn agent: ${e.message}`;
       if (err.code === "ENOENT") {
         msg +=
-          ` Cannot find "${opts.agentPath}". The extension already prepends ~/.local/bin to the child PATH when that folder exists and resolves bare \`agent\` to ~/.local/bin/agent when present. ` +
-          `If the CLI is elsewhere, set **planstack.cursor.agentPath** to the full path (output of \`which agent\` in a working shell), or install the Cursor CLI into ~/.local/bin.`;
+          ` Cannot find "${opts.agentPath}". The extension prepends ~/.local/bin when present and also resolves common Cursor install locations. ` +
+          `If needed, set **planstack.cursor.agentPath** to an absolute executable path (Windows: output of \`where cursor\` or \`where agent\`; macOS/Linux: \`which cursor\` or \`which agent\`).`;
       }
       finish(() => reject(new AgentCliError(msg)));
     });

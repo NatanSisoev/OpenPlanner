@@ -16,6 +16,7 @@
     "onCommand:hackupc.planstack.refresh",
     "onCommand:hackupc.planstack.runPhase",
     "onCommand:hackupc.planstack.setCursorApiKey",
+    "onCommand:hackupc.planstack.debugCliConnection",
     "onCommand:hackupc.nativeHandoff.demo"
   ],
   "main": "./out/extension.js",
@@ -60,6 +61,10 @@
       {
         "command": "hackupc.planstack.setCursorApiKey",
         "title": "Planstack: Set Cursor API key"
+      },
+      {
+        "command": "hackupc.planstack.debugCliConnection",
+        "title": "Planstack: Debug Cursor CLI connection"
       },
       {
         "command": "hackupc.nativeHandoff.demo",

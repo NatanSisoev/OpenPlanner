@@ -1,0 +1,61 @@
+{
+  "id": "demo-onboarding",
+  "state": "pending",
+  "title": "PlanStack demo \u2014 onboarding",
+  "createdAt": "2026-04-25T00:00:00Z",
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "demo/onboarding"
+  },
+  "phases": [
+    {
+      "id": "wire-up",
+      "state": "pending",
+      "title": "Wire up the extension",
+      "description": "Open the workspace in Cursor, install the extension, and confirm the PlanStack sidebar shows this plan.",
+      "tasks": [
+        {
+          "id": "open-workspace",
+          "state": "pending",
+          "desc": "Open the HackUPC repo in Cursor.",
+          "commit": false
+        },
+        {
+          "id": "install-ext",
+          "state": "pending",
+          "desc": "Run `npm install && npm run compile` inside extension/.",
+          "commit": false
+        },
+        {
+          "id": "f5-host",
+          "state": "pending",
+          "desc": "Press F5 to launch the Extension Development Host.",
+          "commit": false
+        }
+      ]
+    },
+    {
+      "id": "trigger-run",
+      "state": "pending",
+      "title": "Run a phase",
+      "description": "Use the sidebar to run this phase via the configured execution mode.",
+      "dependsOn": [
+        "wire-up"
+      ],
+      "tasks": [
+        {
+          "id": "set-mode",
+          "state": "pending",
+          "desc": "Set planstack.cursor.executionMode in settings (native-first, cli, sdk-local, sdk-cloud).",
+          "commit": false
+        },
+        {
+          "id": "run-phase",
+          "state": "pending",
+          "desc": "Click Run on this phase from the sidebar.",
+          "commit": false
+        }
+      ]
+    }
+  ]
+}

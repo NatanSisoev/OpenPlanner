@@ -3,9 +3,11 @@ import { handoffToNativeComposer } from "./dispatch/cursorNativeHandoff";
 import { dispatchPhaseHandoff } from "./dispatch/router";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
-import { loadPlansFromWorkspace } from "./plan/loader";
+import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
+import { deriveAggregateState } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET } from "./plan/createPlanFromCli";
+import { debugCliConnection } from "./plan/debugCliConnection";
 import { savePlanPreservingFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
@@ -165,6 +167,12 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.debugCliConnection", async () => {
+      await debugCliConnection(context);
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.nativeHandoff.demo", async () => {
       const demo =
         `HackUPC native handoff demo (${new Date().toISOString()}):\n\n` +
@@ -178,26 +186,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       void refreshPlans(tree, sidebarUi);
     }),
+    watchPlans(() => {
+      void refreshPlans(tree, sidebarUi);
+    }),
   );
 }
 
 export function deactivate(): void {}
 
-function deriveAggregateState(states: ExecutionState[]): ExecutionState {
-  if (!states.length) {
-    return "pending";
-  }
-  if (states.some((s) => s === "in_progress")) {
-    return "in_progress";
-  }
-  if (states.some((s) => s === "failed")) {
-    return "failed";
-  }
-  if (states.every((s) => s === "completed")) {
-    return "completed";
-  }
-  if (states.every((s) => s === "cancelled")) {
-    return "cancelled";
-  }
-  return "pending";
-}

@@ -1,66 +1,69 @@
 # PlanStack
 
-A Cursor-first VS Code extension that turns ephemeral agent plans into tracked, **phased**, dependency-aware work units. PlanStack adds a thin orchestration layer on top of native agent workflows: plans are first-class JSON objects with phases and tasks, the sidebar surfaces them as a tree, and **Run phase** hands a focused prompt off to Cursor Composer / Agent (or Claude Code in the integrated terminal) so the *editing* experience stays exactly where developers already expect it.
+A Cursor-first VS Code extension that turns ephemeral agent plans into tracked, **phased**, dependency-aware work units. PlanStack adds a thin orchestration layer on top of native agent workflows: plans are first-class JSON files on disk, the sidebar surfaces them as a tree, and **Run phase** hands a focused prompt off to the configured executor (Cursor agent CLI, Cursor SDK, or native Composer).
 
-Built at HackUPC by a team of four.
+The product boundary is firm: PlanStack owns **structured intent -> start of execution**. The actual editing — diffs, accept/reject, code review — stays in the native surfaces (Composer, Agent, Claude Code).
 
-## The problem
-
-Agentic coding plans live in chat threads, scratch files, or scrollback — there is no durable view of what is planned, running, or done. Plans are usually executed all-or-nothing: there is no first-class notion of phases, so you cannot say "run phase 2 only, defer phase 3, mark phase 4 blocked" without rewriting the prompt by hand. Dependencies between plans are implicit and lost. See [`docs/base_idea.md`](docs/base_idea.md) for the full motivation.
-
-## What PlanStack does
-
-Plans are stored on disk as JSON under `.planstack/plans/<id>.json` (with shippable examples in [`seed/`](seed/)). Each plan has phases, each phase has tasks, every level carries a state (`pending` / `in_progress` / `completed` / `failed` / `cancelled`) and optional Git metadata (`baseBranch`, `planBranch`, per-phase `phaseBranch`). The on-disk shape is documented in [`extension/src/plan/types.ts`](extension/src/plan/types.ts).
-
-The extension activates a **Planstack** activity-bar container with three views — Overview, Plans (tree), Chat — and exposes:
-
-- **Run phase (native handoff, default)** — builds a prompt from the plan title, the phase description, the listed tasks, and the resolved Git context (current head, `effectiveWorkBranch(phase)`, base branch), copies it to the clipboard, and optionally runs a configured `executeCommand` to focus Cursor Composer or Agent. From there the user is in the **native** edit loop. See [`extension/src/dispatch/cursorNativeHandoff.ts`](extension/src/dispatch/cursorNativeHandoff.ts).
-- **Chat → Create plan** — invokes `agent -p --trust` in the workspace, parses a single JSON plan from stdout, validates it, and writes a pretty-printed `.planstack/plans/<id>.json`. Requires `CURSOR_API_KEY` in the environment that launched Cursor, or set it via `Planstack: Set Cursor API key` (stored in VS Code Secret Storage).
-- **Optional non-native modes** — SDK-local, SDK-cloud, and CLI handoff routes are wired through [`extension/src/dispatch/router.ts`](extension/src/dispatch/router.ts) and selected via `planstack.cursor.handoff`. Claude Code dispatches into an integrated terminal so the user stays in their familiar tty flow.
-
-The extension reads Git state through `vscode.git` when available (falling back to `git` via `child_process`) so the sidebar can show "which branch belongs to which plan/phase" and the handoff prompt aligns with the same VC story. Editing, diffs, and merges stay in Git tooling — PlanStack does not reinvent them.
-
-## Repository layout
-
-| Path | Role |
-|------|------|
-| [`extension/`](extension/) | The VS Code / Cursor extension package (TypeScript, builds to `out/`). See [`extension/README.md`](extension/README.md) for build and run details. |
-| [`extension/src/extension.ts`](extension/src/extension.ts) | Activation, command registration, tree wiring |
-| [`extension/src/plan/`](extension/src/plan/) | Plan types, schema validation, JSON loader, agent CLI runner, plan creation prompt |
-| [`extension/src/ui/`](extension/src/ui/) | Sidebar tree provider and chat / overview webviews |
-| [`extension/src/dispatch/`](extension/src/dispatch/) | Native Composer handoff plus optional SDK / CLI / Claude Code routes |
-| [`extension/src/git/resolver.ts`](extension/src/git/resolver.ts) | `effectiveWorkBranch` resolution and best-effort Git snapshot |
-| [`.planstack/plans/`](.planstack/plans/) | Live plan JSON for the workspace (loaded by the tree) |
-| [`seed/`](seed/) | Example plans bundled with the repo for demos |
-| [`designUI/`](designUI/) | UI design notes and TypeScript sketches for plan visualisation |
-| [`docs/`](docs/) | Product writing — `base_idea.md`, the IDE execution plan, the Cursor agent CLI validation note, repo structure rationale |
-| [`scripts/`](scripts/) | `cursor-agent-smoke.sh` — smoke test for the Cursor headless CLI |
-| [`tools/cursor-sdk-smoke/`](tools/cursor-sdk-smoke/) | Standalone TypeScript smoke for the optional `@cursor/february` SDK path |
-| [`talks/`](talks/) | Sponsor talk notes from the hackathon |
-
-## Try it in Cursor
-
-1. Open this repo as a workspace in **Cursor**.
-2. Press **F5** ([launch config](.vscode/launch.json)) to start an Extension Development Host. The pre-launch task runs `tsc -p extension`.
-3. In the host window, click the **Planstack** icon in the activity bar. You'll see Overview, Plans, and Chat.
-4. The Plans tree loads `.planstack/plans/*.json` plus `seed/*.json` — try the bundled examples ([auth refactor](seed/plan-auth-refactor.json), [CI infra](seed/plan-ci-infra.json), [dashboard feature](seed/plan-dashboard-feature.json)).
-5. Right-click any phase → **Planstack: Run phase**. The phase prompt is on your clipboard; configure `planstack.cursor.openComposerCommand` to auto-focus Composer.
-6. To create a plan from natural language, switch to the Chat view, type the request, then click **Create plan**. Make sure `CURSOR_API_KEY` is set or stored via `Planstack: Set Cursor API key`, and that `agent` is on the Extension Host's `PATH`.
-
-The full setup details — including Cursor CLI `PATH` caveats on macOS — live in [`extension/README.md`](extension/README.md).
-
-## Build
+## Quick start
 
 ```bash
 cd extension
 npm install
-npm run compile      # or: npm run watch
+npm run compile          # or `npm run watch`
 ```
 
-## Status
+Then from the repo root, press **F5** in VS Code / Cursor to launch the Extension Development Host. The PlanStack activity-bar icon shows the Plans tree, populated from `.planstack/plans/*.json`. A demo plan ships at [`.planstack/plans/demo-onboarding.json`](.planstack/plans/demo-onboarding.json) — edit it, save, and the tree refreshes automatically (file watcher).
 
-Hackathon project — interfaces and command IDs are still moving. The product boundary is fixed: PlanStack does **plans, phases, status, and handoff**; native agent surfaces own the actual editing.
+## Plan schema
 
-## License
+Each `.planstack/plans/*.json` file is a single plan. Every level (plan / phase / task) carries a state from the same enum: `pending`, `in_progress`, `completed`, `failed`, `cancelled`. Phases may declare `dependsOn` to reference other phase ids in the same plan; the validator rejects unknown ids, self-references, and duplicate phase ids. The full shape lives in [`extension/src/plan/types.ts`](extension/src/plan/types.ts), the parser in [`extension/src/plan/validate.ts`](extension/src/plan/validate.ts).
 
-[MIT](LICENSE).
+## Dispatch modes
+
+`Run phase` is routed by [`extension/src/dispatch/router.ts`](extension/src/dispatch/router.ts) based on the `planstack.cursor.executionMode` setting (legacy alias: `planstack.cursor.handoff`).
+
+| Mode             | File                          | Behaviour                                                                |
+|------------------|-------------------------------|--------------------------------------------------------------------------|
+| `cli` *(default)* | `dispatch/cursorCli.ts`       | Runs `agent -p --trust --force` headless and edits the workspace.        |
+| `native-first`   | `dispatch/cursorNativeHandoff.ts` | Copies the prompt to the clipboard and (optionally) focuses Composer. |
+| `sdk-local`      | `dispatch/cursorSdk.ts`       | `@cursor/february` local headless. Stub-level.                           |
+| `sdk-cloud`      | `dispatch/cursorSdk.ts`       | `@cursor/february` cloud. Stub-level.                                    |
+
+A separate `dispatch/claudeCode.ts` path can spawn `claude` in an integrated terminal — not wired into the router by default.
+
+## Settings
+
+The extension exposes:
+
+- `planstack.cursor.executionMode` — which dispatcher to use (default: `cli`).
+- `planstack.cursor.agentPath` — full path to the Cursor `agent` binary; defaults to bare `agent` and falls back to `~/.local/bin/agent` when present.
+- `planstack.cursor.agentTimeoutMs` — kill the headless agent after this many ms.
+- `planstack.cursor.agentMaxStdoutChars` — backpressure cap on `stdout` chars.
+
+The `CURSOR_API_KEY` is stored in VS Code's secret storage (`Planstack: Set Cursor API key`) and falls back to the environment variable when absent.
+
+## Repo layout
+
+```
+HackUPC/
+  README.md                       # this file
+  CLAUDE.md                       # orientation for AI agents working here
+  LICENSE                         # MIT
+  .planstack/plans/               # live plan JSON loaded by the extension
+  .vscode/                        # F5 launch + compile task
+  extension/                      # the VS Code / Cursor extension package
+    package.json                  # manifest: views, commands, configuration
+    tsconfig.json                 # ES2022, commonjs, src/ -> out/
+    src/
+      extension.ts                # activation, command + view registration
+      log.ts                      # shared "Planstack" OutputChannel
+      plan/                       # plan types, validate, loader, watcher, helpers
+      ui/                         # tree provider, chat webview, sidebar webview
+      dispatch/                   # router + handoff variants (cli / native / sdk / claude)
+      git/                        # branch resolver + work-branch helper
+    media/                        # activity-bar icon, webview JS/CSS
+```
+
+## What this is not
+
+PlanStack does not implement a custom diff viewer, accept/reject loop, or in-extension code review. Those live in Composer / Agent / Claude Code. The extension only owns structured intent and the dispatch boundary.

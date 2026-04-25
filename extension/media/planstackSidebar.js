@@ -80,6 +80,17 @@
       </div>`;
   }
 
+  function blockingDeps(plan, phase) {
+    if (!phase.dependsOn || phase.dependsOn.length === 0) {
+      return [];
+    }
+    const byId = new Map((plan.phases || []).map((p) => [p.id, p]));
+    return phase.dependsOn.filter((id) => {
+      const dep = byId.get(id);
+      return !dep || dep.state !== "completed";
+    });
+  }
+
   function renderPhase(plan, phase) {
     const key = plan.id + "::" + phase.id;
     const isOpen = expandedPhases.has(key);
@@ -88,9 +99,13 @@
     const pid = esc(plan.id);
     const phid = esc(phase.id);
 
+    const blockers = blockingDeps(plan, phase);
+    const isBlocked = blockers.length > 0;
+    const blockedTitle = isBlocked ? `Blocked by: ${blockers.join(", ")}` : "Run this phase";
+
     return `
       <div class="phase-row">
-        <div class="phase-header" data-plan="${pid}" data-phase="${phid}">
+        <div class="phase-header${isBlocked ? " blocked" : ""}" data-plan="${pid}" data-phase="${phid}">
           <div class="phase-header-left"
                ${hasTasks ? `data-action="togglePhase" data-plan="${pid}" data-phase="${phid}"` : ""}>
             ${hasTasks
@@ -98,12 +113,13 @@
               : `<span class="chevron-gap"></span>`}
             <span class="phase-status-dot dot-${phase.state}"></span>
             <span class="phase-title">${esc(phase.title)}</span>
+            ${isBlocked ? `<span class="phase-blocked-hint">· blocked by ${esc(blockers.join(", "))}</span>` : ""}
           </div>
           <div class="phase-header-right">
             ${badgeHtml(phase.state)}
             <button class="run-btn"
                     data-action="runPhase" data-plan="${pid}" data-phase="${phid}"
-                    title="Run this phase">▶ Run</button>
+                    title="${esc(blockedTitle)}">▶ Run</button>
           </div>
         </div>
         ${hasTasks && isOpen

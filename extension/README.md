@@ -26,7 +26,16 @@ If the plan JSON includes **`git.planBranch`** (and optional **`git.baseBranch`*
 
 If **`git.planBranch`** is missing, or there is **no Git repo** / **Git extension**, a **Chat** system line explains the skip; execution still runs (unless branch checkout **fails**, in which case Run phase aborts after an error toast).
 
-**Command Palette:** `Planstack: Set Cursor API key` · `HackUPC: Native handoff demo` (fixed clipboard spike).
+**Command Palette:** `Planstack: Set Cursor API key` · `Planstack: Debug Cursor CLI connection` · `HackUPC: Native handoff demo` (fixed clipboard spike).
+
+### Quick CLI diagnostics
+
+Run **`Planstack: Debug Cursor CLI connection`** to verify the full Extension Host -> `agent` path used by:
+
+- **Chat -> Create plan** (`agent -p --trust`)
+- **Run phase** when `planstack.cursor.executionMode = cli` (`agent -p --trust --force`)
+
+The command logs resolved `agentPath`, API-key presence, PATH sample, exit code, and output tails in **Output -> Planstack**.
 
 ### Cursor CLI and Extension Host `PATH`
 

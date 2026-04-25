@@ -53,9 +53,14 @@ function asGitInfo(v: unknown, field: string): GitInfo | undefined {
   if (!isRecord(v)) {
     throw new Error(`Invalid git object: ${field}`);
   }
+  const baseBranch = typeof v.baseBranch === "string" ? v.baseBranch.trim() : undefined;
+  const planBranch = typeof v.planBranch === "string" ? v.planBranch.trim() : undefined;
+  if (!baseBranch && !planBranch) {
+    return undefined;
+  }
   return {
-    baseBranch: typeof v.baseBranch === "string" ? v.baseBranch.trim() : "",
-    planBranch: typeof v.planBranch === "string" ? v.planBranch.trim() : "",
+    baseBranch: baseBranch || undefined,
+    planBranch: planBranch || undefined,
   };
 }
 
@@ -126,11 +131,34 @@ function parsePhase(raw: unknown, index: number): Phase {
     description: typeof raw.description === "string" ? raw.description.trim() : "",
     tasks,
     dependsOn: depends,
-    git: asGitInfo(raw.git, `phases[${index}].git`),
   };
 }
 
 /** Parse and validate workspace plan JSON (seed-aligned schema). */
+/** Cross-phase checks that need every phase parsed before they can run. */
+function checkPhaseInvariants(phases: { id: string; dependsOn?: string[] }[]): void {
+  // 1. No duplicate phase ids
+  const seen = new Set<string>();
+  for (const p of phases) {
+    if (seen.has(p.id)) {
+      throw new Error(`duplicate phase id "${p.id}"`);
+    }
+    seen.add(p.id);
+  }
+  // 2. Every dependsOn id refers to an existing phase, and isn't self-referential.
+  const allIds = new Set(phases.map((p) => p.id));
+  for (const p of phases) {
+    for (const dep of p.dependsOn ?? []) {
+      if (dep === p.id) {
+        throw new Error(`phase "${p.id}" depends on itself`);
+      }
+      if (!allIds.has(dep)) {
+        throw new Error(`phase "${p.id}" depends on unknown phase id "${dep}"`);
+      }
+    }
+  }
+}
+
 export function validatePlanJson(raw: unknown): Plan {
   if (!isRecord(raw)) {
     throw new Error("Plan root must be an object");
@@ -140,6 +168,7 @@ export function validatePlanJson(raw: unknown): Plan {
     throw new Error("Plan must have a phases array");
   }
   const phases = phasesRaw.map((p, i) => parsePhase(p, i));
+  checkPhaseInvariants(phases);
   return {
     id: asString(raw.id, "id"),
     state: asPlanState(raw.state, "state"),

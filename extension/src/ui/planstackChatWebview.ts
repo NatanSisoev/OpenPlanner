@@ -118,6 +118,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         );
         return;
       }
+      const startLine = "Create plan: starting Cursor CLI run (agent -p --trust)…";
+      this.transcript.push({ role: "system", text: startLine });
+      w.postMessage({ type: "append", role: "system", text: startLine });
       const { savedUri } = await createPlanFromUserRequest({
         extensionContext: this.extensionContext,
         workspaceRoot: folder.uri,
@@ -135,6 +138,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (e instanceof AgentCliError && e.stderr?.trim()) {
         detail = `${detail}\n${e.stderr.trim().slice(0, 800)}`;
       }
+      this.transcript.push({ role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
+      w.postMessage({ type: "append", role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
       void vscode.window.showErrorMessage(`Planstack: ${detail.slice(0, 2000)}`);
     } finally {
       this.createPlanInFlight = false;

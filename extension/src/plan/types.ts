@@ -1,40 +1,66 @@
-/** Plan JSON on disk — aligned with `seed/*.json` (see repo seed/). */
+/**
+ * Plan JSON on-disk shape.
+ *
+ * A plan is a tree of work: plan -> phases -> tasks. Every level shares the
+ * same lifecycle states (`WorkState`). Plans optionally carry Git metadata so
+ * the extension can resolve which branch a phase should run on.
+ */
 
-export type PlanState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+/** Lifecycle state shared by plans, phases, and tasks. */
+export type WorkState =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
-export type PhaseState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+/** All valid `WorkState` values, in canonical UI order. */
+export const WORK_STATES: readonly WorkState[] = [
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+  "cancelled",
+];
 
-export type TaskState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
-/** Backward-compatible alias used across UI/extension merge points. */
-export type ExecutionState = TaskState;
+// Back-compat aliases (older code paths still import these names).
+export type PlanState = WorkState;
+export type PhaseState = WorkState;
+export type TaskState = WorkState;
+export type ExecutionState = WorkState;
 
 export interface GitInfo {
-  baseBranch: string;
-  planBranch: string;
+  /** Branch the plan is based on (e.g. `main`). */
+  baseBranch?: string;
+  /** Working branch that owns this plan's commits. */
+  planBranch?: string;
 }
 
 export interface Task {
   id: string;
-  state: TaskState;
+  state: WorkState;
   desc: string;
+  /** Whether this task should end with a git commit when run. */
   commit: boolean;
+  /** Optional override prompt used when handing the task off. */
   prompt?: string;
 }
 
 export interface Phase {
   id: string;
-  state: PhaseState;
+  state: WorkState;
   title: string;
   description: string;
   tasks: Task[];
+  /** Other phase ids in the same plan that must complete first. */
   dependsOn?: string[];
-  git?: GitInfo;
 }
 
 export interface Plan {
   id: string;
-  state: PlanState;
+  state: WorkState;
   title: string;
+  /** ISO-8601 timestamp; optional. */
   createdAt?: string;
   phases: Phase[];
   git?: GitInfo;
