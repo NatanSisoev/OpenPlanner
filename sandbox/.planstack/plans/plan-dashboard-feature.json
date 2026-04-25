@@ -3,10 +3,6 @@
   "state": "in_progress",
   "title": "Analytics Dashboard v2",
   "createdAt": "2026-04-25T07:30:00Z",
-  "git": {
-    "baseBranch": "main",
-    "planBranch": "planstack/plan-dash-001"
-  },
   "phases": [
     {
       "id": "phase-dash-001",
@@ -54,7 +50,7 @@
         },
         {
           "id": "task-dash-006",
-          "state": "pending",
+          "state": "in_progress",
           "desc": "Add loading skeletons and error boundary for each widget",
           "commit": true
         },
@@ -118,5 +114,9 @@
         }
       ]
     }
-  ]
+  ],
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-dash-001"
+  }
 }

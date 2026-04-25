@@ -7,7 +7,11 @@ export const PLAN_TREE_VIEW_ID = "hackupc.planstackPlans";
 export const PHASE_CONTEXT = "hackupcPhase";
 
 export class TaskTreeItem extends vscode.TreeItem {
-  constructor(public readonly task: Task) {
+  constructor(
+    public readonly plan: Plan,
+    public readonly phase: Phase,
+    public readonly task: Task,
+  ) {
     const label = task.desc.trim().length > 0 ? truncate(task.desc, 56) : task.id;
     super(label, vscode.TreeItemCollapsibleState.None);
     this.contextValue = "hackupcTask";
@@ -125,7 +129,7 @@ export class PlanTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return items;
     }
     if (element instanceof PhaseTreeItem) {
-      return element.phase.tasks.map((t) => new TaskTreeItem(t));
+      return element.phase.tasks.map((t) => new TaskTreeItem(element.plan, element.phase, t));
     }
     return [];
   }

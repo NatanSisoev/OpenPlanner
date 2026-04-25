@@ -96,7 +96,7 @@
       "tasks": [
         {
           "id": "task-ci-011",
-          "state": "pending",
+          "state": "cancelled",
           "desc": "Configure branch protection rules to require passing CI before merge",
           "commit": false
         },

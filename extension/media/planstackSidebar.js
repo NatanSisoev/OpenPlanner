@@ -5,6 +5,9 @@
   const expandedPlans = new Set();
   const expandedPhases = new Set();
   let activeContextMenu = null;
+  let activeSubMenu = null;
+  let activeSubMenuAnchor = null;
+  let closeSubMenuTimer = null;
 
   const root = document.getElementById("root");
 
@@ -257,6 +260,29 @@
       return;
     }
 
+    const stateMenuItems = [
+      {
+        label: "pending",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "pending"),
+      },
+      {
+        label: "in progress",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "in_progress"),
+      },
+      {
+        label: "completed",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "completed"),
+      },
+      {
+        label: "failed",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "failed"),
+      },
+      {
+        label: "cancelled",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "cancelled"),
+      },
+    ];
+
     const menu = createContextMenu(event.clientX, event.clientY, [
       {
         label: "Open task details",
@@ -300,24 +326,8 @@
         },
       },
       {
-        label: "Set state: pending",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "pending"),
-      },
-      {
-        label: "Set state: in progress",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "in_progress"),
-      },
-      {
-        label: "Set state: completed",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "completed"),
-      },
-      {
-        label: "Set state: failed",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "failed"),
-      },
-      {
-        label: "Set state: cancelled",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "cancelled"),
+        label: "Set state",
+        submenu: stateMenuItems,
       },
     ]);
     document.body.appendChild(menu);
@@ -387,10 +397,40 @@
   }
 
   function hideContextMenu() {
+    if (closeSubMenuTimer) {
+      clearTimeout(closeSubMenuTimer);
+      closeSubMenuTimer = null;
+    }
+    if (activeSubMenu && activeSubMenu.parentNode) {
+      activeSubMenu.parentNode.removeChild(activeSubMenu);
+    }
+    activeSubMenu = null;
+    activeSubMenuAnchor = null;
     if (activeContextMenu && activeContextMenu.parentNode) {
       activeContextMenu.parentNode.removeChild(activeContextMenu);
     }
     activeContextMenu = null;
+  }
+
+  function scheduleCloseSubMenu() {
+    if (closeSubMenuTimer) {
+      clearTimeout(closeSubMenuTimer);
+    }
+    closeSubMenuTimer = setTimeout(() => {
+      if (activeSubMenu && activeSubMenu.parentNode) {
+        activeSubMenu.parentNode.removeChild(activeSubMenu);
+      }
+      activeSubMenu = null;
+      activeSubMenuAnchor = null;
+      closeSubMenuTimer = null;
+    }, 220);
+  }
+
+  function cancelCloseSubMenu() {
+    if (closeSubMenuTimer) {
+      clearTimeout(closeSubMenuTimer);
+      closeSubMenuTimer = null;
+    }
   }
 
   function createContextMenu(x, y, items) {
@@ -412,7 +452,7 @@
     items.forEach((item) => {
       const line = document.createElement("button");
       line.type = "button";
-      line.textContent = item.label;
+      line.textContent = item.submenu ? item.label + " \u203a" : item.label;
       line.style.display = "block";
       line.style.width = "100%";
       line.style.textAlign = "left";
@@ -424,13 +464,36 @@
       line.style.cursor = "pointer";
       line.addEventListener("mouseenter", () => {
         line.style.background = "var(--vscode-list-hoverBackground, rgba(127,127,127,0.2))";
+        if (item.submenu) {
+          cancelCloseSubMenu();
+          if (activeSubMenu && activeSubMenu.parentNode && activeSubMenuAnchor !== line) {
+            activeSubMenu.parentNode.removeChild(activeSubMenu);
+            activeSubMenu = null;
+          }
+          if (!activeSubMenu) {
+            const rect = line.getBoundingClientRect();
+            activeSubMenu = createContextMenu(rect.right - 1, rect.top, item.submenu);
+            activeSubMenu.addEventListener("mouseenter", cancelCloseSubMenu);
+            activeSubMenu.addEventListener("mouseleave", scheduleCloseSubMenu);
+            document.body.appendChild(activeSubMenu);
+          }
+          activeSubMenuAnchor = line;
+        }
       });
       line.addEventListener("mouseleave", () => {
         line.style.background = "transparent";
+        if (item.submenu) {
+          scheduleCloseSubMenu();
+        }
       });
       line.addEventListener("click", () => {
+        if (item.submenu) {
+          return;
+        }
         hideContextMenu();
-        item.onClick();
+        if (typeof item.onClick === "function") {
+          item.onClick();
+        }
       });
       menu.appendChild(line);
     });

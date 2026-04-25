@@ -15,6 +15,11 @@
     "onView:hackupc.planstackPlans",
     "onCommand:hackupc.planstack.refresh",
     "onCommand:hackupc.planstack.runPhase",
+    "onCommand:hackupc.planstack.taskSetState.pending",
+    "onCommand:hackupc.planstack.taskSetState.in_progress",
+    "onCommand:hackupc.planstack.taskSetState.completed",
+    "onCommand:hackupc.planstack.taskSetState.failed",
+    "onCommand:hackupc.planstack.taskSetState.cancelled",
     "onCommand:hackupc.planstack.setCursorApiKey",
     "onCommand:hackupc.planstack.debugCliConnection",
     "onCommand:hackupc.nativeHandoff.demo"
@@ -59,6 +64,26 @@
         "title": "Planstack: Run phase (execution)"
       },
       {
+        "command": "hackupc.planstack.taskSetState.pending",
+        "title": "Pending"
+      },
+      {
+        "command": "hackupc.planstack.taskSetState.in_progress",
+        "title": "In progress"
+      },
+      {
+        "command": "hackupc.planstack.taskSetState.completed",
+        "title": "Completed"
+      },
+      {
+        "command": "hackupc.planstack.taskSetState.failed",
+        "title": "Failed"
+      },
+      {
+        "command": "hackupc.planstack.taskSetState.cancelled",
+        "title": "Cancelled"
+      },
+      {
         "command": "hackupc.planstack.setCursorApiKey",
         "title": "Planstack: Set Cursor API key"
       },
@@ -69,6 +94,12 @@
       {
         "command": "hackupc.nativeHandoff.demo",
         "title": "HackUPC: Native handoff demo (clipboard + Composer)"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "hackupc.planstack.taskSetState",
+        "label": "Set state"
       }
     ],
     "menus": {
@@ -84,6 +115,33 @@
           "command": "hackupc.planstack.runPhase",
           "when": "view == hackupc.planstackPlans && viewItem == hackupcPhase",
           "group": "inline@0"
+        },
+        {
+          "submenu": "hackupc.planstack.taskSetState",
+          "when": "view == hackupc.planstackPlans && viewItem == hackupcTask",
+          "group": "inline@1"
+        }
+      ],
+      "submenu/hackupc.planstack.taskSetState": [
+        {
+          "command": "hackupc.planstack.taskSetState.pending",
+          "group": "0_state"
+        },
+        {
+          "command": "hackupc.planstack.taskSetState.in_progress",
+          "group": "1_state"
+        },
+        {
+          "command": "hackupc.planstack.taskSetState.completed",
+          "group": "2_state"
+        },
+        {
+          "command": "hackupc.planstack.taskSetState.failed",
+          "group": "3_state"
+        },
+        {
+          "command": "hackupc.planstack.taskSetState.cancelled",
+          "group": "4_state"
         }
       ]
     },

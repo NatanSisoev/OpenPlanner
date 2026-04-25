@@ -1,12 +1,8 @@
 {
   "id": "plan-auth-001",
-  "state": "in_progress",
+  "state": "pending",
   "title": "Auth System Refactor",
   "createdAt": "2026-04-24T08:00:00Z",
-  "git": {
-    "baseBranch": "main",
-    "planBranch": "planstack/plan-auth-001"
-  },
   "phases": [
     {
       "id": "phase-auth-001",
@@ -36,7 +32,7 @@
     },
     {
       "id": "phase-auth-002",
-      "state": "in_progress",
+      "state": "pending",
       "title": "Implement JWT authentication",
       "description": "Add stateless JWT-based auth with refresh token rotation and secure HttpOnly cookie delivery.",
       "tasks": [
@@ -48,7 +44,7 @@
         },
         {
           "id": "task-auth-005",
-          "state": "in_progress",
+          "state": "pending",
           "desc": "Implement token signing and verification in src/auth/jwt.ts",
           "commit": true
         },
@@ -92,5 +88,9 @@
         }
       ]
     }
-  ]
+  ],
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-auth-001"
+  }
 }

@@ -11,8 +11,8 @@ import { debugCliConnection } from "./plan/debugCliConnection";
 import { savePlanPreservingFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
-import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem } from "./ui/planTreeProvider";
-import type { ExecutionState } from "./plan/types";
+import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem, TaskTreeItem } from "./ui/planTreeProvider";
+import { WORK_STATES, type ExecutionState } from "./plan/types";
 
 let currentPlans: import("./plan/types").Plan[] = [];
 
@@ -116,6 +116,19 @@ export function activate(context: vscode.ExtensionContext): void {
     return undefined;
   }
 
+  function resolveTaskTreeItem(arg: unknown): TaskTreeItem | undefined {
+    if (arg instanceof TaskTreeItem) {
+      return arg;
+    }
+    if (Array.isArray(arg)) {
+      const first = arg[0];
+      if (first instanceof TaskTreeItem) {
+        return first;
+      }
+    }
+    return undefined;
+  }
+
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.runPhase", async (item: unknown) => {
       const phaseItem = resolvePhaseTreeItem(item);
@@ -180,6 +193,32 @@ export function activate(context: vscode.ExtensionContext): void {
       await handoffToNativeComposer(demo);
     }),
   );
+
+  for (const state of WORK_STATES) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(`hackupc.planstack.taskSetState.${state}`, async (item: unknown) => {
+        const taskItem = resolveTaskTreeItem(item);
+        if (!taskItem) {
+          await vscode.window.showInformationMessage(
+            "Set task state from the Planstack sidebar: right-click a task, then pick Set state.",
+          );
+          return;
+        }
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!root) {
+          void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+          return;
+        }
+
+        taskItem.task.state = state;
+        taskItem.phase.state = deriveAggregateState(taskItem.phase.tasks.map((t) => t.state));
+        taskItem.plan.state = deriveAggregateState(taskItem.plan.phases.map((p) => p.state));
+
+        await savePlanPreservingFile(taskItem.plan, root);
+        await refreshPlans(tree, sidebarUi);
+      }),
+    );
+  }
 
   void refreshPlans(tree, sidebarUi);
   context.subscriptions.push(
