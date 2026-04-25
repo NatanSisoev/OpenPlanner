@@ -1,4 +1,7 @@
 import * as vscode from "vscode";
+import { postChatSystemMessage } from "../ui/chatStatusBridge";
+import { handoffPathForMessage, writePlanstackHandoffFile } from "./handoffFile";
+import { getWriteHandoffFile } from "../plan/executorConfig";
 
 /**
  * When Composer opens, Cursor often auto-inserts an @-mention for the **previously**
@@ -23,6 +26,19 @@ async function revealHandoffDocument(prompt: string): Promise<void> {
  */
 export async function handoffToNativeComposer(prompt: string): Promise<void> {
   await vscode.env.clipboard.writeText(prompt);
+
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder && getWriteHandoffFile()) {
+    try {
+      const written = await writePlanstackHandoffFile(folder.uri, prompt);
+      postChatSystemMessage(
+        `Handoff file: ${handoffPathForMessage(folder.uri, written)} — attach in Junie or another agent.`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showWarningMessage(`Planstack: could not write handoff file: ${msg.slice(0, 200)}`);
+    }
+  }
 
   const commandId =
     vscode.workspace.getConfiguration("planstack.cursor").get<string>("openComposerCommand")?.trim() ||

@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
+import { getActiveExecutorProfileId } from "../plan/executorConfig";
 import { getExecutionMode, type ExecutionMode } from "../plan/modes";
 import { handoffClaudeTerminal } from "./claudeCode";
 import { handoffViaAgentCli, type CliPhaseRunFinishedKind } from "./cursorCli";
 import { handoffToNativeComposer } from "./cursorNativeHandoff";
 import { handoffViaCursorSdk } from "./cursorSdk";
+import { handoffViaJunieCli } from "./junieCli";
 
 /** @deprecated Use ExecutionMode from plan/modes.ts; kept for callers that imported HandoffMode. */
 export type HandoffMode = ExecutionMode;
@@ -54,8 +56,18 @@ export async function dispatchPhaseHandoff(
     case "sdk-cloud":
       traceEvent(traceId, "dispatch.target", { handoff: "handoffViaCursorSdk", sdkMode: "cloud" });
       return handoffViaCursorSdk(prompt, "cloud");
-    case "cli":
-      traceEvent(traceId, "dispatch.target", { handoff: "handoffViaAgentCli" });
+    case "cli": {
+      const profile = getActiveExecutorProfileId();
+      traceEvent(traceId, "dispatch.target", { handoff: profile === "junie-cli" ? "handoffViaJunieCli" : "handoffViaAgentCli", profile });
+      if (profile === "junie-cli") {
+        return handoffViaJunieCli(
+          prompt,
+          extensionContext,
+          options?.statusLabel,
+          traceId,
+          options?.onCliRunFinished,
+        );
+      }
       return handoffViaAgentCli(
         prompt,
         extensionContext,
@@ -63,6 +75,7 @@ export async function dispatchPhaseHandoff(
         traceId,
         options?.onCliRunFinished,
       );
+    }
     default: {
       const _exhaustive: never = mode;
       return _exhaustive;

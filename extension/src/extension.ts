@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "./debug/trace";
 import { handoffToNativeComposer } from "./dispatch/cursorNativeHandoff";
 import type { CliPhaseRunFinishedKind } from "./dispatch/cursorCli";
+import { handoffPathForMessage, writePlanstackHandoffFile } from "./dispatch/handoffFile";
 import { dispatchPhaseHandoff } from "./dispatch/router";
 import { mergePlanBranchNoFf } from "./git/mergePlanBranch";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
@@ -19,6 +20,8 @@ import {
   resyncPlanFromCurrentWorkspace,
   runAgentPromptEdits,
 } from "./plan/createPlanFromCli";
+import { getWriteHandoffFileOnCliRun } from "./plan/executorConfig";
+import { JUNIE_API_KEY_SECRET } from "./plan/junieApiKey";
 import { PLANSTACK_MONGODB_URI_SECRET, requireMongoUriOrThrow } from "./plan/mongoUri";
 import { reconcileAllPlansWithMongo, type ReconcileMongoPlansResult } from "./plan/mongoPlanSync";
 import { validatePlanJson } from "./plan/validate";
@@ -845,6 +848,21 @@ export function activate(context: vscode.ExtensionContext): void {
       traceId,
       source,
     });
+    if (root && getWriteHandoffFileOnCliRun()) {
+      try {
+        const written = await writePlanstackHandoffFile(root, prompt, {
+          planId: plan.id,
+          phaseId: phase.id,
+          planTitle: plan.title,
+          phaseTitle: phase.title,
+        });
+        postChatSystemMessage(
+          `Handoff file: ${handoffPathForMessage(root, written)} — attach in Junie or keep for your records.`,
+        );
+      } catch (e) {
+        logLine(`runphase: handoff file write failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     await dispatchPhaseHandoff(prompt, context, {
       statusLabel: `${plan.title} › ${phase.title}`,
       traceId,
@@ -1977,6 +1995,37 @@ export function activate(context: vscode.ExtensionContext): void {
         storedChars: value.trim().length,
       });
       void vscode.window.showInformationMessage("Planstack: Cursor API key saved for this profile.");
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.setJunieApiToken", async () => {
+      const tid = newTraceId("cmd-setjunie");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.setJunieApiToken" });
+      const value = await vscode.window.showInputBox({
+        title: "Junie API token (Planstack / Junie CLI)",
+        prompt:
+          "Token from junie.jetbrains.com/cli. Stored in Secret Storage; passed as --auth when using Junie executor. Leave empty to clear.",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (value === undefined) {
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.setJunieApiToken", ok: true, cancelled: true });
+        return;
+      }
+      if (!value.trim()) {
+        await context.secrets.delete(JUNIE_API_KEY_SECRET);
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.setJunieApiToken", ok: true, cleared: true });
+        void vscode.window.showInformationMessage("Planstack: cleared stored Junie API token.");
+        return;
+      }
+      await context.secrets.store(JUNIE_API_KEY_SECRET, value.trim());
+      traceEvent(tid, "command.exit", {
+        command: "hackupc.planstack.setJunieApiToken",
+        ok: true,
+        storedChars: value.trim().length,
+      });
+      void vscode.window.showInformationMessage("Planstack: Junie API token saved for this profile.");
     }),
   );
 

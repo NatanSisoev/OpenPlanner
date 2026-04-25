@@ -29,6 +29,7 @@
     "onCommand:hackupc.planstack.taskSetState.cancelled",
     "onCommand:hackupc.planstack.setMongoConnectionString",
     "onCommand:hackupc.planstack.setCursorApiKey",
+    "onCommand:hackupc.planstack.setJunieApiToken",
     "onCommand:hackupc.planstack.debugCliConnection",
     "onCommand:hackupc.planstack.killAgentRuns",
     "onCommand:hackupc.planstack.confirmStopHeadlessAgents",
@@ -119,6 +120,10 @@
         "title": "Planstack: Set Cursor API key"
       },
       {
+        "command": "hackupc.planstack.setJunieApiToken",
+        "title": "Planstack: Set Junie API token"
+      },
+      {
         "command": "hackupc.planstack.debugCliConnection",
         "title": "Planstack: Debug Cursor CLI connection"
       },
@@ -152,6 +157,49 @@
     "configuration": {
       "title": "Planstack",
       "properties": {
+        "planstack.executor.activeProfile": {
+          "type": "string",
+          "default": "cursor-agent-cli",
+          "enum": [
+            "cursor-agent-cli",
+            "junie-cli"
+          ],
+          "markdownDescription": "Headless CLI used for **Chat → Create plan**, **Send**, and **Run phase** when `planstack.cursor.executionMode` is **`cli`**. Also mirrored in the Planstack Chat panel. Junie CLI is [EAP](https://junie.jetbrains.com/docs/junie-headless.html).",
+          "enumDescriptions": [
+            "Cursor `agent` CLI (`-p --trust`, `--force` for execution).",
+            "JetBrains Junie CLI (`junie --auth … --project …`). Requires token from junie.jetbrains.com/cli."
+          ]
+        },
+        "planstack.executor.juniePath": {
+          "type": "string",
+          "default": "junie",
+          "description": "Executable for Junie CLI (PATH name or absolute path). Used when activeProfile is junie-cli."
+        },
+        "planstack.executor.writeHandoffFile": {
+          "type": "boolean",
+          "default": true,
+          "description": "When using native-first (clipboard) handoff, also write the prompt to the handoff file path for JetBrains Junie @-attach."
+        },
+        "planstack.executor.writeHandoffFileOnCliRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Before each Run phase (including headless CLI), write the phase prompt to the handoff file so the same repo opened in IntelliJ can load it in Junie."
+        },
+        "planstack.executor.handoffFileRelativePath": {
+          "type": "string",
+          "default": ".planstack/handoff.md",
+          "description": "Workspace-relative path for the markdown handoff file (POSIX slashes)."
+        },
+        "planstack.cursor.activeProfile": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "cursor-agent-cli",
+            "junie-cli"
+          ],
+          "markdownDescription": "**Legacy:** prefer `planstack.executor.activeProfile`. When non-empty and `planstack.executor.activeProfile` is default, this value is used."
+        },
         "planstack.cursor.planningMode": {
           "type": "string",
           "default": "cli",

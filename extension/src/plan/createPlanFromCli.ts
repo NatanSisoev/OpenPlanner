@@ -1,8 +1,11 @@
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
-import { AgentCliError, runAgentPrint } from "./agentCliRunner";
+import { AgentCliError, runAgentPrint, runExternalCli } from "./agentCliRunner";
 import { buildAgentEnv as buildEnvForAgent, resolveCursorApiKey as resolveKey } from "./cursorApiKey";
 import { resolveDefaultAgentExecutable } from "./agentPath";
+import { getActiveExecutorProfileId, getJunieExecutable } from "./executorConfig";
+import { buildJunieCliArgs } from "./junieCliArgs";
+import { buildJunieCliEnv, resolveJunieApiKey } from "./junieApiKey";
 import { buildPlanCreationPrompt, buildPlanResyncPrompt } from "./planCreationPrompt";
 import { extractJsonObject } from "./extractJsonFromAgentOutput";
 import type { Plan } from "./types";
@@ -11,6 +14,7 @@ import { saveValidatedPlan } from "./writePlan";
 
 // Re-exported here for backward compat with callers that imported from this module.
 export { CURSOR_API_KEY_SECRET, buildAgentEnv, resolveCursorApiKey } from "./cursorApiKey";
+export { JUNIE_API_KEY_SECRET, buildJunieCliEnv, resolveJunieApiKey } from "./junieApiKey";
 
 export interface CreatePlanFromCliOptions {
   extensionContext: vscode.ExtensionContext;
@@ -74,43 +78,100 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
   const useWsl = cfg.get<boolean>("useWsl") ?? false;
   const wslDistro = cfg.get<string>("wslDistro")?.trim() || "Ubuntu";
 
-  const apiKey = await resolveKey(opts.extensionContext);
-  if (!apiKey) {
-    traceEvent(tid, "agentPlanJson.fail", { reason: "no_api_key" });
-    throw new AgentCliError(
-      "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command “Planstack: Set Cursor API key”.",
-    );
-  }
-
   const cwd = opts.workspaceRoot.fsPath;
-  const env = await buildEnvForAgent(opts.extensionContext);
+  const profile = getActiveExecutorProfileId();
 
-  // In WSL mode the agent path is a Linux path/name, so skip Windows-specific executable resolution.
-  const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
+  let stdout: string;
+  let stderr: string;
+  let exitCode: number | null;
 
-  traceEvent(tid, "agentPlanJson.config", {
-    agentPath,
-    resolvedAgent,
-    cwd,
-    timeoutMs,
-    maxStdoutChars,
-    useWsl,
-    wslDistro: useWsl ? wslDistro : undefined,
-  });
+  if (profile === "junie-cli") {
+    const junieKey = await resolveJunieApiKey(opts.extensionContext);
+    if (!junieKey) {
+      traceEvent(tid, "agentPlanJson.fail", { reason: "no_junie_api_key" });
+      throw new AgentCliError(
+        "JUNIE_API_KEY is not set. Export it or run command “Planstack: Set Junie API token”.",
+      );
+    }
+    const juniePath = getJunieExecutable();
+    const resolvedJunie = useWsl ? juniePath : resolveDefaultAgentExecutable(juniePath);
+    const env = await buildJunieCliEnv(opts.extensionContext);
+    const args = buildJunieCliArgs({
+      cwd,
+      authToken: junieKey,
+      timeoutMs,
+      task: opts.prompt,
+      outputFormatJson: true,
+    });
+    traceEvent(tid, "agentPlanJson.config", {
+      profile,
+      juniePath,
+      resolvedJunie,
+      cwd,
+      timeoutMs,
+      maxStdoutChars,
+      useWsl,
+      wslDistro: useWsl ? wslDistro : undefined,
+    });
+    const r = await runExternalCli({
+      executable: resolvedJunie,
+      args,
+      cwd,
+      env,
+      timeoutMs,
+      maxStdoutChars,
+      onStdoutChunk: opts.onAgentStdoutChunk,
+      onStderrChunk: opts.onAgentStderrChunk,
+      debugTraceId: tid,
+      useWsl,
+      wslDistro,
+      wslPassThroughKeys: ["JUNIE_API_KEY"],
+    });
+    stdout = r.stdout;
+    stderr = r.stderr;
+    exitCode = r.exitCode;
+  } else {
+    const apiKey = await resolveKey(opts.extensionContext);
+    if (!apiKey) {
+      traceEvent(tid, "agentPlanJson.fail", { reason: "no_api_key" });
+      throw new AgentCliError(
+        "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command “Planstack: Set Cursor API key”.",
+      );
+    }
 
-  const { stdout, stderr, exitCode } = await runAgentPrint({
-    agentPath: resolvedAgent,
-    cwd,
-    prompt: opts.prompt,
-    env,
-    timeoutMs,
-    maxStdoutChars,
-    onStdoutChunk: opts.onAgentStdoutChunk,
-    onStderrChunk: opts.onAgentStderrChunk,
-    debugTraceId: tid,
-    useWsl,
-    wslDistro,
-  });
+    const env = await buildEnvForAgent(opts.extensionContext);
+
+    // In WSL mode the agent path is a Linux path/name, so skip Windows-specific executable resolution.
+    const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
+
+    traceEvent(tid, "agentPlanJson.config", {
+      profile,
+      agentPath,
+      resolvedAgent,
+      cwd,
+      timeoutMs,
+      maxStdoutChars,
+      useWsl,
+      wslDistro: useWsl ? wslDistro : undefined,
+    });
+
+    const r = await runAgentPrint({
+      agentPath: resolvedAgent,
+      cwd,
+      prompt: opts.prompt,
+      env,
+      timeoutMs,
+      maxStdoutChars,
+      onStdoutChunk: opts.onAgentStdoutChunk,
+      onStderrChunk: opts.onAgentStderrChunk,
+      debugTraceId: tid,
+      useWsl,
+      wslDistro,
+    });
+    stdout = r.stdout;
+    stderr = r.stderr;
+    exitCode = r.exitCode;
+  }
 
   traceEvent(tid, "agentPlanJson.agent_exit", {
     exitCode,
@@ -125,7 +186,7 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
       tailHead: tail.slice(0, 400),
     });
     throw new AgentCliError(
-      `agent exited with code ${exitCode}. ${tail ? `Details: ${tail}` : ""}`.trim(),
+      `CLI exited with code ${exitCode}. ${tail ? `Details: ${tail}` : ""}`.trim(),
       exitCode,
       stderr,
     );
@@ -146,7 +207,7 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
       stdoutHead: stdout.slice(0, 400),
     });
     throw new AgentCliError(
-      `Could not parse plan JSON from agent output: ${msg}. First 400 chars: ${stdout.slice(0, 400)}`,
+      `Could not parse plan JSON from CLI output: ${msg}. First 400 chars: ${stdout.slice(0, 400)}`,
       exitCode,
       stderr,
     );
@@ -184,42 +245,90 @@ export async function runAgentPromptEdits(
   const useWsl = cfg.get<boolean>("useWsl") ?? false;
   const wslDistro = cfg.get<string>("wslDistro")?.trim() || "Ubuntu";
 
-  const apiKey = await resolveKey(opts.extensionContext);
-  if (!apiKey) {
-    traceEvent(tid, "agentPromptEdits.fail", { reason: "no_api_key" });
-    throw new AgentCliError(
-      "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command “Planstack: Set Cursor API key”.",
-    );
-  }
-
   const cwd = opts.workspaceRoot.fsPath;
-  const env = await buildEnvForAgent(opts.extensionContext);
-  const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
+  const profile = getActiveExecutorProfileId();
 
-  traceEvent(tid, "agentPromptEdits.config", {
-    agentPath,
-    resolvedAgent,
-    cwd,
-    timeoutMs,
-    maxStdoutChars,
-    useWsl,
-    wslDistro: useWsl ? wslDistro : undefined,
-  });
+  let result: RunAgentPromptEditsResult;
 
-  const result = await runAgentPrint({
-    agentPath: resolvedAgent,
-    cwd,
-    prompt: opts.prompt,
-    env,
-    timeoutMs,
-    maxStdoutChars,
-    applyEdits: true,
-    onStdoutChunk: opts.onAgentStdoutChunk,
-    onStderrChunk: opts.onAgentStderrChunk,
-    debugTraceId: tid,
-    useWsl,
-    wslDistro,
-  });
+  if (profile === "junie-cli") {
+    const junieKey = await resolveJunieApiKey(opts.extensionContext);
+    if (!junieKey) {
+      traceEvent(tid, "agentPromptEdits.fail", { reason: "no_junie_api_key" });
+      throw new AgentCliError(
+        "JUNIE_API_KEY is not set. Export it or run command “Planstack: Set Junie API token”.",
+      );
+    }
+    const juniePath = getJunieExecutable();
+    const resolvedJunie = useWsl ? juniePath : resolveDefaultAgentExecutable(juniePath);
+    const env = await buildJunieCliEnv(opts.extensionContext);
+    const args = buildJunieCliArgs({
+      cwd,
+      authToken: junieKey,
+      timeoutMs,
+      task: opts.prompt,
+    });
+    traceEvent(tid, "agentPromptEdits.config", {
+      profile,
+      juniePath,
+      resolvedJunie,
+      cwd,
+      timeoutMs,
+      maxStdoutChars,
+      useWsl,
+      wslDistro: useWsl ? wslDistro : undefined,
+    });
+    result = await runExternalCli({
+      executable: resolvedJunie,
+      args,
+      cwd,
+      env,
+      timeoutMs,
+      maxStdoutChars,
+      onStdoutChunk: opts.onAgentStdoutChunk,
+      onStderrChunk: opts.onAgentStderrChunk,
+      debugTraceId: tid,
+      useWsl,
+      wslDistro,
+      wslPassThroughKeys: ["JUNIE_API_KEY"],
+    });
+  } else {
+    const apiKey = await resolveKey(opts.extensionContext);
+    if (!apiKey) {
+      traceEvent(tid, "agentPromptEdits.fail", { reason: "no_api_key" });
+      throw new AgentCliError(
+        "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command “Planstack: Set Cursor API key”.",
+      );
+    }
+
+    const env = await buildEnvForAgent(opts.extensionContext);
+    const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
+
+    traceEvent(tid, "agentPromptEdits.config", {
+      profile,
+      agentPath,
+      resolvedAgent,
+      cwd,
+      timeoutMs,
+      maxStdoutChars,
+      useWsl,
+      wslDistro: useWsl ? wslDistro : undefined,
+    });
+
+    result = await runAgentPrint({
+      agentPath: resolvedAgent,
+      cwd,
+      prompt: opts.prompt,
+      env,
+      timeoutMs,
+      maxStdoutChars,
+      applyEdits: true,
+      onStdoutChunk: opts.onAgentStdoutChunk,
+      onStderrChunk: opts.onAgentStderrChunk,
+      debugTraceId: tid,
+      useWsl,
+      wslDistro,
+    });
+  }
 
   traceEvent(tid, "agentPromptEdits.exit", {
     exitCode: result.exitCode,

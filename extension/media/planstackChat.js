@@ -5,6 +5,7 @@
   const sendBtn = document.getElementById("send");
   const createPlanBtn = document.getElementById("createPlan");
   const stopAgentsBtn = document.getElementById("stopAgents");
+  const executorProfileEl = document.getElementById("executorProfile");
   const mentionChipsEl = document.getElementById("mentionChips");
   const mentionSuggestEl = document.getElementById("mentionSuggest");
 
@@ -716,6 +717,11 @@
   sendBtn.addEventListener("click", send);
   createPlanBtn.addEventListener("click", createPlan);
   stopAgentsBtn.addEventListener("click", stopAgents);
+  if (executorProfileEl) {
+    executorProfileEl.addEventListener("change", () => {
+      vscode.postMessage({ type: "setExecutorProfile", profile: executorProfileEl.value });
+    });
+  }
   inputEl.addEventListener("input", () => {
     renderMentionChips();
     requestMentionSuggestForCaret();
@@ -796,7 +802,17 @@
           appendBubble(m.role, m.text, typeof m.timestampIso === "string" ? m.timestampIso : "");
         }
       });
+      if (executorProfileEl && typeof msg.executorProfile === "string") {
+        executorProfileEl.value = msg.executorProfile;
+      }
       messagesEl.scrollTop = messagesEl.scrollHeight;
+      return;
+    }
+
+    if (msg.type === "executorProfile" && typeof msg.profile === "string") {
+      if (executorProfileEl) {
+        executorProfileEl.value = msg.profile;
+      }
       return;
     }
 

@@ -126,18 +126,54 @@ function envSummary(env: NodeJS.ProcessEnv): Record<string, unknown> {
   return {
     PATH_head: pathHead,
     CURSOR_API_KEY_set: Boolean(env.CURSOR_API_KEY && String(env.CURSOR_API_KEY).length > 0),
+    JUNIE_API_KEY_set: Boolean(env.JUNIE_API_KEY && String(env.JUNIE_API_KEY).length > 0),
   };
 }
 
-export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  const tid = opts.debugTraceId ?? "agent";
+export function buildCursorAgentArgv(agentPath: string, prompt: string, applyEdits: boolean): string[] {
+  const baseArgs = applyEdits ? ["-p", "--trust", "--force", prompt] : ["-p", "--trust", prompt];
+  const looksLikeCursorCli = /(^|[\\/])cursor(\.cmd|\.exe)?$/i.test(agentPath.trim());
+  return looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
+}
+
+export interface RunExternalCliOptions {
+  executable: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  timeoutMs: number;
+  maxStdoutChars: number;
+  maxStreamChunkChars?: number;
+  onStdoutChunk?: (text: string) => void;
+  onStderrChunk?: (text: string) => void;
+  debugTraceId?: string;
+  useWsl?: boolean;
+  wslDistro?: string;
+  /**
+   * Windows WSL: append to WSLENV so these keys pass from Windows env into the WSL session.
+   * Defaults to CURSOR_API_KEY for backward compatibility. Use ["JUNIE_API_KEY"] for Junie CLI.
+   */
+  wslPassThroughKeys?: string[];
+}
+
+function wslEnvSuffix(keys: string[]): string {
+  return keys.map((k) => `${k}/u`).join(":");
+}
+
+/**
+ * Spawn an arbitrary CLI with streamed stdout/stderr (single-flight lock; same lifecycle as Cursor `agent`).
+ */
+export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const tid = opts.debugTraceId ?? "externalCli";
   if (agentRunLocked) {
-    traceEvent(tid, "runAgentPrint.busy_reject", { agentPath: opts.agentPath, cwd: opts.cwd });
+    traceEvent(tid, "runExternalCli.busy_reject", { executable: opts.executable, cwd: opts.cwd });
     return Promise.reject(new AgentRunBusyError());
   }
   agentRunLocked = true;
 
   const streamCap = Math.max(256, opts.maxStreamChunkChars ?? 8192);
+  const wslKeys =
+    opts.wslPassThroughKeys && opts.wslPassThroughKeys.length > 0 ? opts.wslPassThroughKeys : ["CURSOR_API_KEY"];
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -181,10 +217,6 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       }, FORCE_KILL_GRACE_MS);
     };
 
-    const baseArgs = opts.applyEdits ? ["-p", "--trust", "--force", opts.prompt] : ["-p", "--trust", opts.prompt];
-    const looksLikeCursorCli = /(^|[\\/])cursor(\.cmd|\.exe)?$/i.test(opts.agentPath.trim());
-    const agentArgs = looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
-
     const useWsl = opts.useWsl === true && process.platform === "win32";
     let spawnExe: string;
     let spawnArgs: string[];
@@ -195,32 +227,30 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     if (useWsl) {
       const distro = opts.wslDistro?.trim() || "Ubuntu";
       const wslCwd = toWslPath(opts.cwd);
-      // wsl.exe lives in System32 which the Extension Host PATH may not include.
       const systemRoot = process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows";
       spawnExe = path.join(systemRoot, "System32", "wsl.exe");
-      spawnArgs = ["-d", distro, "--cd", wslCwd, "--exec", opts.agentPath, ...agentArgs];
+      spawnArgs = ["-d", distro, "--cd", wslCwd, "--exec", opts.executable, ...opts.args];
       spawnCwd = opts.cwd;
       spawnShell = false;
       const existingWslEnv = opts.env.WSLENV;
+      const suffix = wslEnvSuffix(wslKeys);
       spawnEnv = {
         ...opts.env,
-        WSLENV: existingWslEnv ? `${existingWslEnv}:CURSOR_API_KEY/u` : "CURSOR_API_KEY/u",
+        WSLENV: existingWslEnv ? `${existingWslEnv}:${suffix}` : suffix,
       };
     } else {
-      spawnExe = opts.agentPath;
-      spawnArgs = agentArgs;
+      spawnExe = opts.executable;
+      spawnArgs = opts.args;
       spawnCwd = opts.cwd;
-      spawnShell = win32SpawnNeedsShell(opts.agentPath);
+      spawnShell = win32SpawnNeedsShell(opts.executable);
       spawnEnv = opts.env;
     }
 
     const t0 = Date.now();
-    traceEvent(tid, "runAgentPrint.spawn", {
-      agentPath: opts.agentPath,
+    traceEvent(tid, "runExternalCli.spawn", {
+      executable: opts.executable,
       cwd: opts.cwd,
       shell: spawnShell,
-      looksLikeCursorCli,
-      applyEdits: Boolean(opts.applyEdits),
       timeoutMs: opts.timeoutMs,
       maxStdoutChars: opts.maxStdoutChars,
       argvLength: spawnArgs.length,
@@ -229,13 +259,12 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       wslDistro: useWsl ? (opts.wslDistro?.trim() || "Ubuntu") : undefined,
       env: envSummary(opts.env),
     });
-    traceMultiline(tid, "runAgentPrint.prompt", opts.prompt);
-    traceEvent(tid, "runAgentPrint.spawnArgs", {
+    traceEvent(tid, "runExternalCli.spawnArgs", {
       args: spawnArgs.map((a, i) => ({ index: i, length: a.length, head: a.slice(0, 120) })),
     });
     traceMultiline(
       tid,
-      "runAgentPrint.argv_full",
+      "runExternalCli.argv_full",
       spawnArgs.map((a, i) => `--- argv[${i}] len=${a.length} ---\n${a}`).join("\n"),
     );
 
@@ -245,7 +274,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       shell: spawnShell,
     });
 
-    traceEvent(tid, "runAgentPrint.spawned", { pid: child.pid ?? null });
+    traceEvent(tid, "runExternalCli.spawned", { pid: child.pid ?? null });
 
     activeRunCtl = { killed: false, child, terminating: false };
     registerChild(child);
@@ -266,7 +295,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       outChunks.push(d);
       const str = d.toString("utf8");
       stdoutChunkCount++;
-      traceEvent(tid, "runAgentPrint.stdoutChunk", {
+      traceEvent(tid, "runExternalCli.stdoutChunk", {
         n: stdoutChunkCount,
         bytes: d.length,
         chars: str.length,
@@ -275,12 +304,12 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       emitOut(str);
       const byteLen = Buffer.concat(outChunks).length;
       if (byteLen > opts.maxStdoutChars * 4) {
-        traceEvent(tid, "runAgentPrint.stdout_budget_kill", {
+        traceEvent(tid, "runExternalCli.stdout_budget_kill", {
           byteLen,
           budgetBytes: opts.maxStdoutChars * 4,
         });
         requestTermination(
-          `agent stdout exceeded byte budget (>${opts.maxStdoutChars * 4} bytes). Raise planstack.cursor.agentMaxStdoutChars or narrow the request.`,
+          `CLI stdout exceeded byte budget (>${opts.maxStdoutChars * 4} bytes). Raise planstack.cursor.agentMaxStdoutChars or narrow the request.`,
         );
       }
     });
@@ -288,7 +317,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       errChunks.push(d);
       const str = d.toString("utf8");
       stderrChunkCount++;
-      traceEvent(tid, "runAgentPrint.stderrChunk", {
+      traceEvent(tid, "runExternalCli.stderrChunk", {
         n: stderrChunkCount,
         bytes: d.length,
         chars: str.length,
@@ -298,25 +327,23 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     });
 
     const killTimer = setTimeout(() => {
-      traceEvent(tid, "runAgentPrint.timeout_kill", { afterMs: opts.timeoutMs });
-      requestTermination(`agent timed out after ${opts.timeoutMs}ms`);
+      traceEvent(tid, "runExternalCli.timeout_kill", { afterMs: opts.timeoutMs });
+      requestTermination(`CLI timed out after ${opts.timeoutMs}ms`);
     }, opts.timeoutMs);
 
     child.on("error", (e) => {
       clearTimeout(killTimer);
       unregisterChild(child);
       const err = e as NodeJS.ErrnoException;
-      let msg = `Failed to spawn agent: ${e.message}`;
+      let msg = `Failed to spawn CLI: ${e.message}`;
       if (err.code === "ENOENT") {
-        msg +=
-          ` Cannot find "${opts.agentPath}". The extension prepends ~/.local/bin when present and also resolves common Cursor install locations. ` +
-          `If needed, set **planstack.cursor.agentPath** to an absolute executable path (Windows: output of \`where cursor\` or \`where agent\`; macOS/Linux: \`which cursor\` or \`which agent\`).`;
+        msg += ` Cannot find "${opts.executable}". For Cursor agent set **planstack.cursor.agentPath**; for Junie set **planstack.executor.juniePath** (absolute path if the binary is not on PATH).`;
       } else if (process.platform === "win32" && err.code === "EINVAL") {
         msg +=
-          ` On Windows, **EINVAL** often means the resolved file is a **.cmd/.bat** shim and could not be spawned. ` +
-          `The extension uses a shell for those; if it still fails, set **planstack.cursor.agentPath** to **cursor.exe** or **agent.exe** (full path from \`where.exe\`).`;
+          ` On Windows, **EINVAL** often means a **.cmd/.bat** shim could not be spawned. ` +
+          `Try pointing the path setting at a **.exe** (full path from \`where.exe\`).`;
       }
-      traceEvent(tid, "runAgentPrint.spawn_error", { message: msg, code: (e as NodeJS.ErrnoException).code });
+      traceEvent(tid, "runExternalCli.spawn_error", { message: msg, code: (e as NodeJS.ErrnoException).code });
       finish(() => reject(new AgentCliError(msg)));
     });
 
@@ -328,7 +355,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       }
       const stdout = Buffer.concat(outChunks).toString("utf8");
       const stderr = Buffer.concat(errChunks).toString("utf8");
-      traceEvent(tid, "runAgentPrint.close", {
+      traceEvent(tid, "runExternalCli.close", {
         exitCode,
         elapsedMs: Date.now() - t0,
         stdoutChars: stdout.length,
@@ -352,7 +379,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       }
       const wasKilled = ctl?.killed === true;
       if (wasKilled) {
-        traceEvent(tid, "runAgentPrint.killed_exit", {});
+        traceEvent(tid, "runExternalCli.killed_exit", {});
         finish(() =>
           reject(
             new AgentCliError(
@@ -365,14 +392,14 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
         return;
       }
       if (stdout.length > opts.maxStdoutChars) {
-        traceEvent(tid, "runAgentPrint.stdout_char_budget_reject", {
+        traceEvent(tid, "runExternalCli.stdout_char_budget_reject", {
           stdoutChars: stdout.length,
           maxStdoutChars: opts.maxStdoutChars,
         });
         finish(() =>
           reject(
             new AgentCliError(
-              `agent stdout exceeded ${opts.maxStdoutChars} characters. Raise planstack.cursor.agentMaxStdoutChars or narrow the request.`,
+              `CLI stdout exceeded ${opts.maxStdoutChars} characters. Raise planstack.cursor.agentMaxStdoutChars or narrow the request.`,
               exitCode,
               stderr,
             ),
@@ -380,8 +407,28 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
         );
         return;
       }
-      traceEvent(tid, "runAgentPrint.resolve_ok", { exitCode });
+      traceEvent(tid, "runExternalCli.resolve_ok", { exitCode });
       finish(() => resolve({ stdout, stderr, exitCode }));
     });
+  });
+}
+
+/** Cursor `agent` print mode; delegates to {@link runExternalCli}. */
+export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const args = buildCursorAgentArgv(opts.agentPath, opts.prompt, !!opts.applyEdits);
+  return runExternalCli({
+    executable: opts.agentPath,
+    args,
+    cwd: opts.cwd,
+    env: opts.env,
+    timeoutMs: opts.timeoutMs,
+    maxStdoutChars: opts.maxStdoutChars,
+    maxStreamChunkChars: opts.maxStreamChunkChars,
+    onStdoutChunk: opts.onStdoutChunk,
+    onStderrChunk: opts.onStderrChunk,
+    debugTraceId: opts.debugTraceId,
+    useWsl: opts.useWsl,
+    wslDistro: opts.wslDistro,
+    wslPassThroughKeys: ["CURSOR_API_KEY"],
   });
 }

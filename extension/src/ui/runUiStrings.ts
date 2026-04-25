@@ -22,6 +22,7 @@ export const PS_RUN_UI = {
   cliPhaseDefaultStreamLabel: "Run phase",
 
   vscodeProgressRunPhase: "Planstack: Run phase (Cursor CLI)…",
+  vscodeProgressRunPhaseJunie: "Planstack: Run phase (Junie CLI)…",
 
   /** Chat separator: "<action> started" */
   streamStartedSuffix: "started",

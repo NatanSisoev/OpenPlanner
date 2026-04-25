@@ -35,12 +35,13 @@ Each `.planstack/plans/*.json` file is a single plan. Every level (plan / phase 
 
 # Tasks also carry `dependsOn`, a string array of task dependencies. Use `[]` when there are no blockers. Supported task refs are `task-id` for a unique task in the same plan, `phase-id/task-id` for a task in another phase of the same plan, and `plan-id/phase-id/task-id` for a cross-plan dependency. The validator rejects malformed same-plan task refs, unknown same-plan refs, self-references, duplicate phase ids, and duplicate task ids inside one phase. The full shape lives in `[extension/src/plan/types.ts](extension/src/plan/types.ts)`, the parser in `[extension/src/plan/validate.ts](extension/src/plan/validate.ts)`.
 
-PlanStack in `cli` mode (the default) requires the **Cursor headless agent CLI**:
+PlanStack in **`cli`** execution mode (the default) runs a **headless CLI** chosen by **`planstack.executor.activeProfile`** (or the **Executor** dropdown in Planstack Chat):
 
-- Install the Cursor CLI and confirm `agent --version` works in a terminal.
-- Set your API key: **Command Palette → Planstack: Set Cursor API key** (stored in VS Code Secret Storage). Alternatively, export `CURSOR_API_KEY` in the environment that launches Cursor.
-- If the binary is not on `PATH`, set `planstack.cursor.agentPath` to the absolute path.
-- **Windows users:** if your agent CLI is inside WSL, enable `planstack.cursor.useWsl`.
+- **Cursor CLI (default):** install the Cursor agent CLI and confirm `agent --version` works in a terminal. Set **Planstack: Set Cursor API key** or export `CURSOR_API_KEY`. Optional: `planstack.cursor.agentPath` if the binary is not on `PATH`.
+- **Junie CLI:** install the [Junie CLI](https://junie.jetbrains.com/docs/junie-cli.html), set **Planstack: Set Junie API token** or export `JUNIE_API_KEY`, and set `planstack.executor.juniePath` if needed. Junie CLI is EAP; behavior may evolve.
+- **Windows:** if the CLI runs inside WSL, enable `planstack.cursor.useWsl`.
+
+Cross-IDE workflow with Junie (handoff file, same-repo contract): see [docs/planstack-junie.md](docs/planstack-junie.md).
 
 ---
 

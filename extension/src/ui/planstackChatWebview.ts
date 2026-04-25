@@ -6,6 +6,8 @@ import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
+import { getActiveExecutorProfileId } from "../plan/executorConfig";
+import type { ExecutorProfileId } from "../plan/executorProfiles";
 import { getPlanningMode } from "../plan/modes";
 import { buildPromptWithMentions, findChatMentionSuggestions } from "./chatFileMentions";
 import {
@@ -78,6 +80,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private readonly transcript: ChatTurn[] = [];
   private activeFlowCount = 0;
   private activeFlowSource: "createPlan" | "sendPrompt" | "" = "";
+  private configSubscription?: vscode.Disposable;
 
   constructor(
     private readonly extUri: vscode.Uri,
@@ -91,6 +94,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken,
   ): void {
     this._view = webviewView;
+    this.configSubscription?.dispose();
+    this.configSubscription = undefined;
     const w = webviewView.webview;
     w.options = {
       enableScripts: true,
@@ -352,13 +357,38 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         void vscode.window.showInformationMessage(`Planstack: ${line}`);
         return;
       }
+      if (m.type === "setExecutorProfile" && typeof (m as { profile?: unknown }).profile === "string") {
+        const profile = (m as { profile: string }).profile.trim() as ExecutorProfileId;
+        if (profile === "cursor-agent-cli" || profile === "junie-cli") {
+          void vscode.workspace
+            .getConfiguration("planstack.executor")
+            .update("activeProfile", profile, vscode.ConfigurationTarget.Workspace);
+          traceEvent(recvId, "chat.setExecutorProfile", { profile });
+        }
+        return;
+      }
       traceEvent(recvId, "chat.onDidReceiveMessage.unhandled", { type: m.type });
+    });
+    this.configSubscription = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        !e.affectsConfiguration("planstack.executor.activeProfile") &&
+        !e.affectsConfiguration("planstack.cursor.activeProfile")
+      ) {
+        return;
+      }
+      try {
+        w.postMessage({ type: "executorProfile", profile: getActiveExecutorProfileId() });
+      } catch {
+        /* webview disposed */
+      }
     });
     const disposeChat = webviewView.onDidDispose(() => {
       registerChatSystemSink(undefined);
       registerChatUserSink(undefined);
       registerAgentStreamSink(undefined);
       registerRichChatSink(undefined);
+      this.configSubscription?.dispose();
+      this.configSubscription = undefined;
       sub.dispose();
       disposeChat.dispose();
     });
@@ -366,7 +396,11 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     const snapshot = [...this.transcript];
     setTimeout(() => {
       try {
-        w.postMessage({ type: "init", messages: snapshot });
+        w.postMessage({
+          type: "init",
+          messages: snapshot,
+          executorProfile: getActiveExecutorProfileId(),
+        });
       } catch {
         // Webview may already be disposed.
       }
@@ -1246,17 +1280,43 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       white-space: nowrap;
       font-weight: 600;
     }
+    .executor-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0 4px;
+      font-size: 0.86em;
+      flex-wrap: wrap;
+    }
+    .executor-row label {
+      opacity: 0.85;
+      white-space: nowrap;
+    }
+    .executor-row select {
+      flex: 1;
+      min-width: 140px;
+      max-width: 100%;
+      padding: 3px 6px;
+      font-size: inherit;
+    }
   </style>
 </head>
 <body>
-  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits. Tag with <strong>@file</strong>, <strong>@folder:path/to/dir</strong>, <strong>@plan:planId</strong>, <strong>@phase:planId/phaseId</strong>, <strong>@task:planId/phaseId/taskId</strong>, or <strong>@symbol:Name</strong>.</div>
+  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits. Choose the <strong>CLI executor</strong> below for Create plan / Send / Run phase (<code>cli</code> mode). Tag with <strong>@file</strong>, <strong>@folder:path/to/dir</strong>, <strong>@plan:planId</strong>, <strong>@phase:planId/phaseId</strong>, <strong>@task:planId/phaseId/taskId</strong>, or <strong>@symbol:Name</strong>.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <div id="inputWrap">
       <div id="mentionSuggest" aria-label="@file suggestions"></div>
-      <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>
+      <textarea id="input" rows="2" placeholder="Ask the configured CLI agent to edit the codebase…" aria-label="Message"></textarea>
     </div>
     <div id="mentionChips" aria-label="@file mentions"></div>
+    <div id="executorRow" class="executor-row">
+      <label for="executorProfile">Executor</label>
+      <select id="executorProfile" aria-label="Headless CLI executor for Create plan and Send">
+        <option value="cursor-agent-cli">Cursor CLI (agent)</option>
+        <option value="junie-cli">Junie CLI</option>
+      </select>
+    </div>
     <div id="composerActions">
       <button type="button" id="stopAgents">Stop agents</button>
       <button type="button" id="createPlan">Create plan</button>
