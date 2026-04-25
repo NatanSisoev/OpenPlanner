@@ -38,6 +38,7 @@ interface PlanstackSidebarCallbacks {
 export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private plans: Plan[] = [];
+  private plansVersion = 0;
   private taskDetailsPanel?: vscode.WebviewPanel;
   private phaseDetailsPanel?: vscode.WebviewPanel;
   private planDetailsPanel?: vscode.WebviewPanel;
@@ -111,6 +112,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       const m = msg as {
         type?: string;
+        requestId?: string;
         planId?: string;
         phaseId?: string;
         taskId?: string;
@@ -132,7 +134,12 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           phaseId: m.phaseId,
           state: m.state,
         });
-        void this.onUpdatePhase(m.planId, m.phaseId, { state: m.state });
+        void this.onUpdatePhase(m.planId, m.phaseId, { state: m.state }).then((ok) => {
+          if (!m.requestId) {
+            return;
+          }
+          this.view?.webview.postMessage({ type: "mutationAck", requestId: m.requestId, ok });
+        });
       }
       if (m.type === "reorderPlans" && Array.isArray(m.orderedPlanIds)) {
         traceEvent(recvId, "sidebar.reorderPlans", { orderedPlanIds: m.orderedPlanIds });
@@ -193,6 +200,11 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           desc: m.desc,
           prompt: m.prompt,
           commit: m.commit,
+        }).then((ok) => {
+          if (!m.requestId) {
+            return;
+          }
+          this.view?.webview.postMessage({ type: "mutationAck", requestId: m.requestId, ok });
         });
       }
       if (m.type === "createPlan" && typeof m.title === "string") {
@@ -231,10 +243,12 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     });
     webviewView.onDidDispose(() => sub.dispose());
 
-    const snapshot = this.plans;
+    const sentVersion = this.plansVersion;
     setTimeout(() => {
       try {
-        w.postMessage({ type: "setPlans", plans: snapshot });
+        if (sentVersion === this.plansVersion) {
+          w.postMessage({ type: "setPlans", plans: this.plans });
+        }
       } catch {
         // Webview may already be disposed.
       }
@@ -243,6 +257,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
 
   setPlans(plans: Plan[]): void {
     this.plans = plans;
+    this.plansVersion += 1;
     try {
       this.view?.webview.postMessage({ type: "setPlans", plans });
     } catch {

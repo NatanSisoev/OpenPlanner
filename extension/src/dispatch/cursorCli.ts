@@ -8,7 +8,7 @@ import {
   getWorktreeNumstat,
   type WorktreeChangeSummary,
 } from "../git/worktreeChangeSummary";
-import { postAnimatedStatus, postRunSummary } from "../ui/richChatBridge";
+import { postAnimatedStatus, postRunFailure, postRunSummary } from "../ui/richChatBridge";
 import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, runAgentPrint } from "../plan/agentCliRunner";
 import { buildAgentEnv, resolveCursorApiKey } from "../plan/createPlanFromCli";
@@ -333,6 +333,13 @@ export async function handoffViaAgentCli(
       const tail = stderr.trim() || stdout.slice(-500);
       output.show(true);
       const detail = tail ? tail.slice(0, 280) : "see Output → Planstack";
+      postRunFailure(runId, {
+        phaseLabel: label,
+        durationSec: Math.floor((Date.now() - startedAt) / 1000),
+        summary: `Agent exited with code ${exitCode}`,
+        details: tail.slice(0, 2000),
+        retryPrompt: prompt,
+      });
       postChatSystemMessage(`${label}: agent exited with code ${exitCode}. ${detail}`);
       await vscode.window.showErrorMessage(
         `Planstack: agent exited with code ${exitCode}. ${tail ? `Details: ${tail.slice(0, 400)}` : ""}`.trim(),
@@ -345,35 +352,42 @@ export async function handoffViaAgentCli(
     const durationSec = Math.floor((Date.now() - startedAt) / 1000);
 
     if (showGitSummary) {
-      const [summary, files] = await Promise.all([
-        getWorktreeChangeSummary(cwd),
-        getWorktreeNumstat(cwd),
-      ]);
-      traceEvent(tid, "handoffViaAgentCli.git_summary", {
-        hasSummary: Boolean(summary),
-        statusLine: summary?.statusLine ?? null,
-        diffStatHead: summary?.diffStat ? summary.diffStat.slice(0, 500) : null,
-        fileCount: files.length,
-      });
-      if (summary) {
-        output.appendLine(`\n--- Git vs HEAD (${label}) ---\n`);
-        if (summary.statusLine) {
-          output.appendLine(summary.statusLine);
+      try {
+        const [summary, files] = await Promise.all([
+          getWorktreeChangeSummary(cwd),
+          getWorktreeNumstat(cwd),
+        ]);
+        traceEvent(tid, "handoffViaAgentCli.git_summary", {
+          hasSummary: Boolean(summary),
+          statusLine: summary?.statusLine ?? null,
+          diffStatHead: summary?.diffStat ? summary.diffStat.slice(0, 500) : null,
+          fileCount: files.length,
+        });
+        if (summary) {
+          output.appendLine(`\n--- Git vs HEAD (${label}) ---\n`);
+          if (summary.statusLine) {
+            output.appendLine(summary.statusLine);
+          }
+          if (summary.diffStat) {
+            output.appendLine(summary.diffStat);
+          } else {
+            output.appendLine("(no file changes vs HEAD)");
+          }
         }
-        if (summary.diffStat) {
-          output.appendLine(summary.diffStat);
-        } else {
-          output.appendLine("(no file changes vs HEAD)");
-        }
+        postRunSummary(runId, {
+          phaseLabel: label,
+          durationSec,
+          files,
+          totalAdditions: files.reduce((s, f) => s + f.additions, 0),
+          totalDeletions: files.reduce((s, f) => s + f.deletions, 0),
+          exitCode: 0,
+        });
+      } catch (summaryErr) {
+        const msg = summaryErr instanceof Error ? summaryErr.message : String(summaryErr);
+        traceEvent(tid, "handoffViaAgentCli.git_summary_error", { message: msg });
+        output.appendLine(`Planstack: non-fatal Git summary error: ${msg}`);
+        postChatSystemMessage(`${label}: run finished, but Git summary failed (see Output → Planstack).`);
       }
-      postRunSummary(runId, {
-        phaseLabel: label,
-        durationSec,
-        files,
-        totalAdditions: files.reduce((s, f) => s + f.additions, 0),
-        totalDeletions: files.reduce((s, f) => s + f.deletions, 0),
-        exitCode: 0,
-      });
     } else {
       postChatSystemMessage(`${label}: finished — check the workspace for changes (Output → Planstack for a log tail).`);
       await vscode.window.showInformationMessage(
@@ -387,6 +401,7 @@ export async function handoffViaAgentCli(
       agentRunBusy: e instanceof AgentRunBusyError,
     });
     if (e instanceof AgentRunBusyError) {
+      await notifyFinished("error");
       postChatSystemMessage(`${label}: skipped — ${e.message}`);
       void vscode.window.showWarningMessage(e.message);
       return;
@@ -394,6 +409,13 @@ export async function handoffViaAgentCli(
     const msg = e instanceof AgentCliError ? e.message : e instanceof Error ? e.message : String(e);
     const stopped = e instanceof AgentCliError && msg.includes("stopped");
     await notifyFinished(stopped ? "stopped" : "error");
+    postRunFailure(randomUUID(), {
+      phaseLabel: label,
+      durationSec: Math.floor((Date.now() - startedAt) / 1000),
+      summary: stopped ? "Run stopped by user" : "Run failed",
+      details: msg.slice(0, 2000),
+      retryPrompt: prompt,
+    });
     if (e instanceof AgentCliError && e.stderr?.trim() && !stopped) {
       appendRunLog("", e.stderr);
     }

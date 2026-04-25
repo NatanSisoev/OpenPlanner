@@ -44,8 +44,15 @@ export class AgentRunBusyError extends AgentCliError {
 
 let agentRunLocked = false;
 
-type ActiveRunCtl = { killed: boolean; child: ChildProcess };
+type ActiveRunCtl = {
+  killed: boolean;
+  terminating: boolean;
+  child: ChildProcess;
+  killTimer?: ReturnType<typeof setTimeout>;
+  terminalError?: AgentCliError;
+};
 let activeRunCtl: ActiveRunCtl | undefined;
+const FORCE_KILL_GRACE_MS = 5_000;
 
 const registeredChildren = new Set<ChildProcess>();
 
@@ -67,6 +74,16 @@ export function killAllAgentCliProcesses(): number {
     const ctl = activeRunCtl;
     if (ctl?.child === c) {
       ctl.killed = true;
+      if (ctl.killTimer) {
+        clearTimeout(ctl.killTimer);
+      }
+      ctl.killTimer = setTimeout(() => {
+        try {
+          ctl.child.kill("SIGKILL");
+        } catch {
+          // Process already exited.
+        }
+      }, FORCE_KILL_GRACE_MS);
     }
     c.kill("SIGTERM");
   }
@@ -120,8 +137,38 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       }
       settled = true;
       agentRunLocked = false;
+      const ctl = activeRunCtl;
+      if (ctl?.killTimer) {
+        clearTimeout(ctl.killTimer);
+      }
       activeRunCtl = undefined;
       fn();
+    };
+
+    const requestTermination = (message: string): void => {
+      const ctl = activeRunCtl;
+      if (!ctl) {
+        return;
+      }
+      if (!ctl.terminalError) {
+        ctl.terminalError = new AgentCliError(message);
+      }
+      if (ctl.terminating) {
+        return;
+      }
+      ctl.terminating = true;
+      try {
+        ctl.child.kill("SIGTERM");
+      } catch {
+        // Child may have already exited.
+      }
+      ctl.killTimer = setTimeout(() => {
+        try {
+          ctl.child.kill("SIGKILL");
+        } catch {
+          // Child may have already exited.
+        }
+      }, FORCE_KILL_GRACE_MS);
     };
 
     const baseArgs = opts.applyEdits ? ["-p", "--trust", "--force", opts.prompt] : ["-p", "--trust", opts.prompt];
@@ -158,7 +205,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
 
     traceEvent(tid, "runAgentPrint.spawned", { pid: child.pid ?? null });
 
-    activeRunCtl = { killed: false, child };
+    activeRunCtl = { killed: false, child, terminating: false };
     registerChild(child);
 
     const outChunks: Buffer[] = [];
@@ -190,13 +237,8 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
           byteLen,
           budgetBytes: opts.maxStdoutChars * 4,
         });
-        child.kill("SIGTERM");
-        finish(() =>
-          reject(
-            new AgentCliError(
-              `agent stdout exceeded byte budget (>${opts.maxStdoutChars * 4} bytes). Raise planstack.cursor.agentMaxStdoutChars or narrow the request.`,
-            ),
-          ),
+        requestTermination(
+          `agent stdout exceeded byte budget (>${opts.maxStdoutChars * 4} bytes). Raise planstack.cursor.agentMaxStdoutChars or narrow the request.`,
         );
       }
     });
@@ -215,8 +257,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
 
     const killTimer = setTimeout(() => {
       traceEvent(tid, "runAgentPrint.timeout_kill", { afterMs: opts.timeoutMs });
-      child.kill("SIGTERM");
-      finish(() => reject(new AgentCliError(`agent timed out after ${opts.timeoutMs}ms`)));
+      requestTermination(`agent timed out after ${opts.timeoutMs}ms`);
     }, opts.timeoutMs);
 
     child.on("error", (e) => {
@@ -253,7 +294,21 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
         stdoutChunks: stdoutChunkCount,
         stderrChunks: stderrChunkCount,
       });
-      const wasKilled = activeRunCtl?.killed === true;
+      const ctl = activeRunCtl;
+      const terminalError = ctl?.terminalError;
+      if (terminalError) {
+        finish(() =>
+          reject(
+            new AgentCliError(
+              terminalError.message,
+              exitCode,
+              stderr || terminalError.stderr,
+            ),
+          ),
+        );
+        return;
+      }
+      const wasKilled = ctl?.killed === true;
       if (wasKilled) {
         traceEvent(tid, "runAgentPrint.killed_exit", {});
         finish(() =>

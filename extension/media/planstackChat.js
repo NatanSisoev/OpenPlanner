@@ -29,6 +29,29 @@
     }
   }
 
+  function appendRunSeparator(label) {
+    const shouldStick = isNearBottom(messagesEl);
+    const row = document.createElement("div");
+    row.className = "row system run-separator-row";
+    const sep = document.createElement("div");
+    sep.className = "run-separator";
+    const lineA = document.createElement("span");
+    lineA.className = "run-separator-line";
+    const title = document.createElement("span");
+    title.className = "run-separator-label";
+    title.textContent = `${label || "Run"} started`;
+    const lineB = document.createElement("span");
+    lineB.className = "run-separator-line";
+    sep.appendChild(lineA);
+    sep.appendChild(title);
+    sep.appendChild(lineB);
+    row.appendChild(sep);
+    messagesEl.appendChild(row);
+    if (shouldStick) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
   function isNearBottom(el, thresholdPx = 80) {
     return el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx;
   }
@@ -56,12 +79,13 @@
     state.len = tail.length;
   }
 
-  function setBusy(busy) {
+  function setBusy(busy, source) {
     inputEl.disabled = busy;
     sendBtn.disabled = busy;
     createPlanBtn.disabled = busy;
+    stopAgentsBtn.disabled = false;
     if (busy) {
-      createPlanBtn.textContent = "Generating…";
+      createPlanBtn.textContent = source === "sendPrompt" ? "Applying edits…" : "Creating plan…";
     } else {
       createPlanBtn.textContent = "Create plan";
     }
@@ -173,7 +197,18 @@
 
         const diffEl = document.createElement("span");
         diffEl.className = "run-summary-file-diff";
-        diffEl.textContent = `+${file.additions} / -${file.deletions}`;
+        const addEl = document.createElement("span");
+        addEl.className = "run-summary-file-diff-add";
+        addEl.textContent = `+${file.additions}`;
+        const sepEl = document.createElement("span");
+        sepEl.className = "run-summary-file-diff-sep";
+        sepEl.textContent = " / ";
+        const delEl = document.createElement("span");
+        delEl.className = "run-summary-file-diff-del";
+        delEl.textContent = `-${file.deletions}`;
+        diffEl.appendChild(addEl);
+        diffEl.appendChild(sepEl);
+        diffEl.appendChild(delEl);
 
         const diffBtn = document.createElement("button");
         diffBtn.className = "run-summary-diff-btn";
@@ -205,6 +240,75 @@
     });
     card.appendChild(scmBtn);
 
+    wrap.appendChild(card);
+    messagesEl.appendChild(wrap);
+    if (shouldStick) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  function renderRunFailure(runId, failure) {
+    clearAnimatedStatus(runId);
+    const shouldStick = isNearBottom(messagesEl);
+    const wrap = document.createElement("div");
+    wrap.className = "row system run-summary-row";
+    const card = document.createElement("div");
+    card.className = "run-summary-card run-failure-card";
+
+    const header = document.createElement("div");
+    header.className = "run-summary-header";
+    header.textContent = `✗ ${failure.phaseLabel} · ${failure.durationSec}s`;
+    card.appendChild(header);
+
+    const stats = document.createElement("div");
+    stats.className = "run-summary-stats";
+    stats.textContent = failure.summary || "Run failed.";
+    card.appendChild(stats);
+
+    if (failure.details) {
+      const details = document.createElement("pre");
+      details.className = "run-failure-details";
+      details.textContent = failure.details;
+      card.appendChild(details);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "run-failure-actions";
+
+    const mkBtn = (label, onClick) => {
+      const btn = document.createElement("button");
+      btn.className = "run-summary-diff-btn";
+      btn.textContent = label;
+      btn.addEventListener("click", onClick);
+      return btn;
+    };
+
+    actions.appendChild(
+      mkBtn("Retry", () => {
+        if (typeof failure.retryPrompt === "string" && failure.retryPrompt.trim()) {
+          vscode.postMessage({ type: "retryPrompt", prompt: failure.retryPrompt });
+        }
+      }),
+    );
+    actions.appendChild(mkBtn("Open Output", () => vscode.postMessage({ type: "openOutput" })));
+    actions.appendChild(mkBtn("Debug CLI", () => vscode.postMessage({ type: "debugCliConnection" })));
+    actions.appendChild(mkBtn("Open Source Control", () => vscode.postMessage({ type: "openScm" })));
+    actions.appendChild(
+      mkBtn("Copy details", () => {
+        const text = `${failure.summary}\n${failure.details || ""}`.trim();
+        if (!text) {
+          return;
+        }
+        if (navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(text).catch(() => {
+            vscode.postMessage({ type: "copyText", text });
+          });
+        } else {
+          vscode.postMessage({ type: "copyText", text });
+        }
+      }),
+    );
+    card.appendChild(actions);
     wrap.appendChild(card);
     messagesEl.appendChild(wrap);
     if (shouldStick) {
@@ -254,7 +358,7 @@
     }
 
     if (msg.type === "busy") {
-      setBusy(!!msg.busy);
+      setBusy(!!msg.busy, typeof msg.source === "string" ? msg.source : "");
       return;
     }
 
@@ -291,6 +395,10 @@
       renderRunSummary(msg.runId, msg.summary);
       return;
     }
+    if (msg.type === "runFailure" && typeof msg.runId === "string" && msg.failure) {
+      renderRunFailure(msg.runId, msg.failure);
+      return;
+    }
 
     // ── Agent stream ───────────────────────────────────────────────────────────
     if (msg.type === "agentStreamStart" && typeof msg.runId === "string") {
@@ -299,6 +407,7 @@
       if (agentStreams.has(runId)) {
         return;
       }
+      appendRunSeparator(typeof msg.label === "string" ? msg.label : "Run");
       const shouldStick = isNearBottom(messagesEl);
       const wrap = document.createElement("div");
       wrap.className = "row system agent-stream-row";

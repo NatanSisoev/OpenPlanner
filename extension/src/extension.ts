@@ -7,15 +7,15 @@ import { mergePlanBranchNoFf } from "./git/mergePlanBranch";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
-import { deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
+import { blockingDependencies, deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace } from "./plan/createPlanFromCli";
 import { debugCliConnection } from "./plan/debugCliConnection";
-import { killAllAgentCliProcesses } from "./plan/agentCliRunner";
+import { isAgentRunBusy, killAllAgentCliProcesses } from "./plan/agentCliRunner";
 import { logLine } from "./log";
 import { savePlanPreservingFile, deletePlanFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
-import { postChatSystemMessage } from "./ui/chatStatusBridge";
+import { postChatSystemMessage, postChatUserMessage } from "./ui/chatStatusBridge";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
 import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem, TaskTreeItem } from "./ui/planTreeProvider";
 import { WORK_STATES, type ExecutionState } from "./plan/types";
@@ -112,13 +112,33 @@ export function activate(context: vscode.ExtensionContext): void {
   const phaseRunHooks: {
     applyOutcome?: (planId: string, phaseId: string, outcome: CliPhaseRunFinishedKind) => Promise<void>;
   } = {};
+  let refreshGeneration = 0;
+  const planMutationQueues = new Map<string, Promise<unknown>>();
 
   async function refreshPlansOrdered(provider: PlanTreeProvider, sidebar: PlanstackSidebarWebview): Promise<void> {
+    const generation = ++refreshGeneration;
     const loaded = await loadPlansFromWorkspace();
+    if (generation !== refreshGeneration) {
+      return;
+    }
     const savedOrder = context.workspaceState.get<string[]>(PLAN_ORDER_KEY);
     currentPlans = orderPlans(loaded, savedOrder);
     provider.setPlans(currentPlans);
     sidebar.setPlans(currentPlans);
+  }
+
+  function enqueuePlanMutation<T>(planId: string, op: () => Promise<T>): Promise<T> {
+    const prev = planMutationQueues.get(planId) ?? Promise.resolve();
+    const next = prev.then(op, op);
+    planMutationQueues.set(
+      planId,
+      next.finally(() => {
+        if (planMutationQueues.get(planId) === next) {
+          planMutationQueues.delete(planId);
+        }
+      }),
+    );
+    return next;
   }
 
   async function createPlan(input: { title: string; description?: string }): Promise<boolean> {
@@ -226,6 +246,11 @@ export function activate(context: vscode.ExtensionContext): void {
     return title.length > 0 ? `${title} (${plan.id})` : plan.id;
   }
 
+  function emitRunRequestMessage(plan: Plan, phase: Plan["phases"][number], source: RunEntrySource): void {
+    const sourceLabel = source === "tree_command" ? "tree" : "sidebar";
+    postChatUserMessage(`Run phase request: ${plan.title} › ${phase.title} (${sourceLabel})`);
+  }
+
   async function askRunBranchDecision(
     plan: Plan,
     phase: Plan["phases"][number],
@@ -277,6 +302,21 @@ export function activate(context: vscode.ExtensionContext): void {
     traceId: string,
     source: RunEntrySource,
   ): Promise<boolean> {
+    const blockers = blockingDependencies(plan, phase);
+    if (blockers.length > 0) {
+      void vscode.window.showWarningMessage(
+        `Planstack: phase "${phase.title}" is blocked by incomplete dependencies: ${blockers.join(", ")}`,
+      );
+      traceEvent(traceId, "runphase.blocked_dependencies", { planId: plan.id, phaseId: phase.id, blockers });
+      return false;
+    }
+    if (isAgentRunBusy()) {
+      void vscode.window.showWarningMessage(
+        "Planstack: an agent run is already in progress. Stop it or wait for completion, then retry.",
+      );
+      traceEvent(traceId, "runphase.agent_busy_preflight", { planId: plan.id, phaseId: phase.id });
+      return false;
+    }
     const decision = await askRunBranchDecision(plan, phase, source);
     traceEvent(traceId, "runphase.branch_decision", { source, decision, planId: plan.id, phaseId: phase.id });
     if (decision === "cancel") {
@@ -284,6 +324,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     if (decision === "prepare_branch") {
+      emitRunRequestMessage(plan, phase, source);
       const branchOk = await ensurePlanWorkBranch(plan, context.workspaceState);
       traceEvent(traceId, "runphase.branch_prep", { path: source, ok: branchOk, mode: "prepare_branch" });
       if (!branchOk) {
@@ -291,6 +332,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       postChatSystemMessage(`${planChatLabel(plan)}: branch prep accepted for phase "${phase.title}".`);
     } else {
+      emitRunRequestMessage(plan, phase, source);
       postChatSystemMessage(
         `${planChatLabel(plan)}: running phase "${phase.title}" on current branch (branch prep skipped).`,
       );
@@ -308,10 +350,17 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     traceMultiline(traceId, "runphase.generated_prompt", prompt);
     if (root) {
-      phase.state = "in_progress";
-      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
-      await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
+      const marked = await mutatePlan(plan.id, (latest) => {
+        const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
+        if (!latestPhase) {
+          return false;
+        }
+        latestPhase.state = "in_progress";
+      });
+      if (!marked) {
+        void vscode.window.showWarningMessage("Planstack: phase could not be marked in progress.");
+        return false;
+      }
     }
     traceEvent(traceId, "runphase.dispatch", {
       statusLabel: `${plan.title} › ${phase.title}`,
@@ -325,6 +374,33 @@ export function activate(context: vscode.ExtensionContext): void {
         phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(plan.id, phase.id, kind) : Promise.resolve(),
     });
     return true;
+  }
+
+  async function mutatePlan(
+    planId: string,
+    mutator: (plan: Plan) => boolean | void,
+  ): Promise<boolean> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      return false;
+    }
+    return enqueuePlanMutation(planId, async () => {
+      const loaded = await loadPlansFromWorkspace();
+      const ordered = orderPlans(loaded, context.workspaceState.get<string[]>(PLAN_ORDER_KEY));
+      const plan = ordered.find((p) => p.id === planId);
+      if (!plan) {
+        return false;
+      }
+      const changed = mutator(plan);
+      if (changed === false) {
+        return false;
+      }
+      recomputeAggregates(plan);
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+      return true;
+    });
   }
 
   const sidebarUi = new PlanstackSidebarWebview(extUri, {
@@ -361,67 +437,57 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     },
     onUpdatePhase: async (planId, phaseId, patch) => {
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-      if (!root) {
-        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
-        return false;
+      const ok = await mutatePlan(planId, (plan) => {
+        const phase = plan.phases.find((ph) => ph.id === phaseId);
+        if (!phase) {
+          return false;
+        }
+        // Phase/plan state is derived from task states; reject direct phase state edits.
+        if (patch.state !== undefined) {
+          return false;
+        }
+        if (patch.title !== undefined) {
+          phase.title = patch.title;
+        }
+        if (patch.description !== undefined) {
+          phase.description = patch.description;
+        }
+      });
+      if (!ok && patch.state !== undefined) {
+        void vscode.window.showWarningMessage(
+          "Planstack: phase status is derived from its tasks. Update task states instead.",
+        );
       }
-      const plan = currentPlans.find((p) => p.id === planId);
-      const phase = plan?.phases.find((ph) => ph.id === phaseId);
-      if (!plan || !phase) {
-        void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
-        return false;
-      }
-
-      if (patch.state) {
-        phase.state = patch.state;
-      }
-      if (patch.title !== undefined) {
-        phase.title = patch.title;
-      }
-      if (patch.description !== undefined) {
-        phase.description = patch.description;
-      }
-      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
-
-      await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
-      return true;
+      return ok;
     },
     onUpdateTask: async (planId, phaseId, taskId, patch) => {
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-      if (!root) {
-        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
-        return false;
+      if (patch.state === "in_progress") {
+        const plan = currentPlans.find((p) => p.id === planId);
+        const phase = plan?.phases.find((ph) => ph.id === phaseId);
+        const task = phase?.tasks.find((t) => t.id === taskId);
+        if (plan && phase && task) {
+          postChatUserMessage(`Run task request: ${plan.title} › ${phase.title} › ${task.desc}`);
+        }
       }
-      const plan = currentPlans.find((p) => p.id === planId);
-      const phase = plan?.phases.find((ph) => ph.id === phaseId);
-      const task = phase?.tasks.find((t) => t.id === taskId);
-      if (!plan || !phase || !task) {
-        void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
-        return false;
-      }
-
-      if (patch.state) {
-        task.state = patch.state;
-      }
-      if (patch.desc !== undefined) {
-        task.desc = patch.desc;
-      }
-      if (patch.prompt !== undefined) {
-        task.prompt = patch.prompt;
-      }
-      if (patch.commit !== undefined) {
-        task.commit = patch.commit;
-      }
-
-      // Keep phase and plan states in sync after task-level edits.
-      phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
-      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
-
-      await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
-      return true;
+      return mutatePlan(planId, (plan) => {
+        const phase = plan.phases.find((ph) => ph.id === phaseId);
+        const task = phase?.tasks.find((t) => t.id === taskId);
+        if (!phase || !task) {
+          return false;
+        }
+        if (patch.state) {
+          task.state = patch.state;
+        }
+        if (patch.desc !== undefined) {
+          task.desc = patch.desc;
+        }
+        if (patch.prompt !== undefined) {
+          task.prompt = patch.prompt;
+        }
+        if (patch.commit !== undefined) {
+          task.commit = patch.commit;
+        }
+      });
     },
     onUpdatePlan: async (planId, patch) => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -505,11 +571,6 @@ export function activate(context: vscode.ExtensionContext): void {
       await refreshPlansOrdered(tree, sidebarUi);
     },
     onDeletePhase: async (planId, phaseId) => {
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-      if (!root) {
-        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
-        return;
-      }
       const plan = currentPlans.find((p) => p.id === planId);
       const phase = plan?.phases.find((ph) => ph.id === phaseId);
       if (!plan || !phase) {
@@ -525,34 +586,29 @@ export function activate(context: vscode.ExtensionContext): void {
       if (choice !== "Delete") {
         return;
       }
-      plan.phases = plan.phases.filter((ph) => ph.id !== phaseId);
-      // Remove dangling dependsOn references that pointed at the deleted phase.
-      for (const remaining of plan.phases) {
-        if (Array.isArray(remaining.dependsOn) && remaining.dependsOn.includes(phaseId)) {
-          remaining.dependsOn = remaining.dependsOn.filter((id) => id !== phaseId);
+      await mutatePlan(planId, (latest) => {
+        latest.phases = latest.phases.filter((ph) => ph.id !== phaseId);
+        for (const remaining of latest.phases) {
+          if (Array.isArray(remaining.dependsOn) && remaining.dependsOn.includes(phaseId)) {
+            remaining.dependsOn = remaining.dependsOn.filter((id) => id !== phaseId);
+          }
         }
-      }
-      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
-      await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
+      });
     },
     onDeleteTask: async (planId, phaseId, taskId) => {
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-      if (!root) {
-        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
-        return;
-      }
       const plan = currentPlans.find((p) => p.id === planId);
       const phase = plan?.phases.find((ph) => ph.id === phaseId);
       if (!plan || !phase) {
         void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
         return;
       }
-      phase.tasks = phase.tasks.filter((t) => t.id !== taskId);
-      phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
-      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
-      await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
+      await mutatePlan(planId, (latest) => {
+        const latestPhase = latest.phases.find((ph) => ph.id === phaseId);
+        if (!latestPhase) {
+          return false;
+        }
+        latestPhase.tasks = latestPhase.tasks.filter((t) => t.id !== taskId);
+      });
     },
   });
   context.subscriptions.push(
@@ -573,45 +629,38 @@ export function activate(context: vscode.ExtensionContext): void {
     phaseId: string,
     outcome: CliPhaseRunFinishedKind,
   ): Promise<void> => {
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-    if (!root) {
-      return;
-    }
     try {
-      const loaded = await loadPlansFromWorkspace();
-      const ordered = orderPlans(loaded, context.workspaceState.get<string[]>(PLAN_ORDER_KEY));
-      const plan = ordered.find((p) => p.id === planId);
-      const phase = plan?.phases.find((ph) => ph.id === phaseId);
-      if (!plan || !phase) {
+      const ok = await mutatePlan(planId, (plan) => {
+        const phase = plan.phases.find((ph) => ph.id === phaseId);
+        if (!phase) {
+          return false;
+        }
+        if (outcome === "success") {
+          phase.state = "completed";
+          for (const t of phase.tasks) {
+            if (t.state !== "cancelled" && t.state !== "failed") {
+              t.state = "completed";
+            }
+          }
+        } else if (outcome === "stopped") {
+          phase.state = "cancelled";
+          for (const t of phase.tasks) {
+            if (t.state === "in_progress") {
+              t.state = "cancelled";
+            }
+          }
+        } else {
+          phase.state = "failed";
+          for (const t of phase.tasks) {
+            if (t.state === "in_progress") {
+              t.state = "failed";
+            }
+          }
+        }
+      });
+      if (!ok) {
         logLine(`applyPhaseRunOutcome: missing plan/phase ${planId}/${phaseId}`);
-        return;
       }
-
-      if (outcome === "success") {
-        phase.state = "completed";
-        for (const t of phase.tasks) {
-          if (t.state !== "cancelled" && t.state !== "failed") {
-            t.state = "completed";
-          }
-        }
-      } else if (outcome === "stopped") {
-        phase.state = "cancelled";
-        for (const t of phase.tasks) {
-          if (t.state === "in_progress") {
-            t.state = "cancelled";
-          }
-        }
-      } else {
-        phase.state = "failed";
-        for (const t of phase.tasks) {
-          if (t.state === "in_progress") {
-            t.state = "failed";
-          }
-        }
-      }
-      recomputeAggregates(plan);
-      await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
     } catch (e) {
       logLine(`applyPhaseRunOutcome: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -1251,12 +1300,18 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
 
-        taskItem.task.state = state;
-        taskItem.phase.state = deriveAggregateState(taskItem.phase.tasks.map((t) => t.state));
-        taskItem.plan.state = deriveAggregateState(taskItem.plan.phases.map((p) => p.state));
-
-        await savePlanPreservingFile(taskItem.plan, root);
-        await refreshPlansOrdered(tree, sidebarUi);
+        const ok = await mutatePlan(taskItem.plan.id, (plan) => {
+          const phase = plan.phases.find((ph) => ph.id === taskItem.phase.id);
+          const task = phase?.tasks.find((t) => t.id === taskItem.task.id);
+          if (!phase || !task) {
+            return false;
+          }
+          task.state = state;
+        });
+        if (!ok) {
+          void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+          return;
+        }
         traceEvent(tid, "command.exit", {
           command: `hackupc.planstack.taskSetState.${state}`,
           ok: true,

@@ -17,9 +17,18 @@ export interface RunSummaryData {
   exitCode: number;
 }
 
+export interface RunFailureData {
+  phaseLabel: string;
+  durationSec: number;
+  summary: string;
+  details?: string;
+  retryPrompt?: string;
+}
+
 type RichChatMessage =
   | { type: "animatedStatus"; runId: string; phrases: string[] }
-  | { type: "runSummary"; runId: string; summary: RunSummaryData };
+  | { type: "runSummary"; runId: string; summary: RunSummaryData }
+  | { type: "runFailure"; runId: string; failure: RunFailureData };
 
 type RichChatSink = (msg: RichChatMessage) => void;
 
@@ -67,4 +76,8 @@ export function postAnimatedStatus(runId: string): void {
 
 export function postRunSummary(runId: string, summary: RunSummaryData): void {
   post({ type: "runSummary", runId, summary });
+}
+
+export function postRunFailure(runId: string, failure: RunFailureData): void {
+  post({ type: "runFailure", runId, failure });
 }

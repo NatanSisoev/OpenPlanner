@@ -27,6 +27,8 @@ type ReplayBuf = {
   ended?: AgentStreamEndReason;
 };
 const replayRuns = new Map<string, ReplayBuf>();
+const MAX_REPLAY_RUNS = 6;
+const MAX_REPLAY_CHARS_PER_RUN = 120_000;
 
 const COALESCE_MS = 8;
 
@@ -47,6 +49,24 @@ function replayBufferedTo(s: AgentStreamSink): void {
     }
   }
   replayRuns.clear();
+}
+
+function appendBounded(prev: string, add: string): string {
+  const next = prev + add;
+  if (next.length <= MAX_REPLAY_CHARS_PER_RUN) {
+    return next;
+  }
+  return next.slice(-MAX_REPLAY_CHARS_PER_RUN);
+}
+
+function enforceReplayRunCap(): void {
+  while (replayRuns.size > MAX_REPLAY_RUNS) {
+    const oldest = replayRuns.keys().next().value as string | undefined;
+    if (!oldest) {
+      break;
+    }
+    replayRuns.delete(oldest);
+  }
 }
 
 export function registerAgentStreamSink(s: AgentStreamSink | undefined): void {
@@ -77,8 +97,8 @@ function flushPending(runId: string): void {
   } else {
     const rb = replayRuns.get(runId);
     if (rb) {
-      rb.out += b.out;
-      rb.err += b.err;
+      rb.out = appendBounded(rb.out, b.out);
+      rb.err = appendBounded(rb.err, b.err);
     }
   }
 }
@@ -91,9 +111,9 @@ function scheduleChunk(runId: string, stream: "stdout" | "stderr", text: string)
     const rb = replayRuns.get(runId);
     if (rb) {
       if (stream === "stdout") {
-        rb.out += text;
+        rb.out = appendBounded(rb.out, text);
       } else {
-        rb.err += text;
+        rb.err = appendBounded(rb.err, text);
       }
     }
     return;
@@ -127,6 +147,7 @@ export function postAgentStreamStart(runId: string, meta: AgentStreamMeta): void
     sink.onStart(runId, meta);
   } else {
     replayRuns.set(runId, { meta, out: "", err: "" });
+    enforceReplayRunCap();
   }
 }
 

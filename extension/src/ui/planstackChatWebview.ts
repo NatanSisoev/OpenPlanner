@@ -14,8 +14,8 @@ import {
   registerAgentStreamSink,
   type AgentStreamEndReason,
 } from "./agentChatStreamBridge";
-import { registerChatSystemSink } from "./chatStatusBridge";
-import { postAnimatedStatus, registerRichChatSink } from "./richChatBridge";
+import { registerChatSystemSink, registerChatUserSink } from "./chatStatusBridge";
+import { postAnimatedStatus, postRunFailure, registerRichChatSink } from "./richChatBridge";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
@@ -70,8 +70,8 @@ type ChatTurn = { role: ChatRole; text: string };
 export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private readonly transcript: ChatTurn[] = [];
-  private createPlanInFlight = false;
-  private sendInFlight = false;
+  private activeFlowCount = 0;
+  private activeFlowSource: "createPlan" | "sendPrompt" | "" = "";
 
   constructor(
     private readonly extUri: vscode.Uri,
@@ -108,7 +108,16 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         // Webview disposed.
       }
     };
+    const pushUser = (text: string): void => {
+      this.transcript.push({ role: "user", text });
+      try {
+        w.postMessage({ type: "append", role: "user", text });
+      } catch {
+        // Webview disposed.
+      }
+    };
     registerChatSystemSink(pushSystem);
+    registerChatUserSink(pushUser);
 
     registerAgentStreamSink({
       onStart: (runId, meta) => {
@@ -188,6 +197,27 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "openScm") {
         void vscode.commands.executeCommand("workbench.view.scm");
+        return;
+      }
+      if (m.type === "openOutput") {
+        getOutput().show(true);
+        return;
+      }
+      if (m.type === "debugCliConnection") {
+        void vscode.commands.executeCommand("hackupc.planstack.debugCliConnection");
+        return;
+      }
+      if (m.type === "retryPrompt" && typeof (m as { prompt?: unknown }).prompt === "string") {
+        const text = (m as { prompt: string }).prompt.trim();
+        if (text) {
+          this.transcript.push({ role: "user", text });
+          w.postMessage({ type: "append", role: "user", text });
+          void this.runSendPromptFlow(w, text);
+        }
+        return;
+      }
+      if (m.type === "copyText" && typeof (m as { text?: unknown }).text === "string") {
+        void vscode.env.clipboard.writeText((m as { text: string }).text);
         return;
       }
       if (m.type === "openFileDiff" && typeof (m as { filePath?: unknown }).filePath === "string") {
@@ -290,6 +320,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     });
     const disposeChat = webviewView.onDidDispose(() => {
       registerChatSystemSink(undefined);
+      registerChatUserSink(undefined);
       registerAgentStreamSink(undefined);
       registerRichChatSink(undefined);
       sub.dispose();
@@ -311,7 +342,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     traceEvent(flowId, "createPlanFlow.start", { userRequestChars: userRequest.length });
     traceMultiline(flowId, "createPlanFlow.userRequest", userRequest);
 
-    if (this.createPlanInFlight) {
+    if (this.activeFlowCount > 0) {
       traceEvent(flowId, "createPlanFlow.skip", { reason: "already_in_flight" });
       void vscode.window.showWarningMessage("Planstack: a plan is already being generated.");
       return;
@@ -323,8 +354,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.createPlanInFlight = true;
-    w.postMessage({ type: "busy", busy: true });
+    this.activeFlowCount += 1;
+    this.activeFlowSource = "createPlan";
+    w.postMessage({ type: "busy", busy: true, source: this.activeFlowSource });
 
     try {
       const planningMode = getPlanningMode();
@@ -470,6 +502,13 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         traceMultiline(flowId, "createPlanFlow.error.stack", e.stack);
       }
       const stopped = e instanceof AgentCliError && detail.includes("stopped");
+      postRunFailure(runIdFromFlow(flowId), {
+        phaseLabel: "Create plan",
+        durationSec: 0,
+        summary: stopped ? "Run stopped by user" : "Create plan failed",
+        details: detail.slice(0, 2000),
+        retryPrompt: userRequest,
+      });
       this.transcript.push({ role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
       w.postMessage({ type: "append", role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
       if (stopped) {
@@ -479,8 +518,11 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
     } finally {
       traceEvent(flowId, "createPlanFlow.finally", { createPlanInFlight_cleared: true });
-      this.createPlanInFlight = false;
-      w.postMessage({ type: "busy", busy: false });
+      this.activeFlowCount = Math.max(0, this.activeFlowCount - 1);
+      if (this.activeFlowCount === 0) {
+        this.activeFlowSource = "";
+      }
+      w.postMessage({ type: "busy", busy: this.activeFlowCount > 0, source: this.activeFlowSource });
     }
   }
 
@@ -497,7 +539,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     const flowId = newTraceId("sendPromptFlow");
     traceEvent(flowId, "sendPromptFlow.start", { promptChars: userPrompt.length });
     traceMultiline(flowId, "sendPromptFlow.userPrompt", userPrompt);
-    if (this.sendInFlight) {
+    if (this.activeFlowCount > 0) {
       this.pushSystem(w, "Send is busy with another request. Please wait.");
       return;
     }
@@ -507,8 +549,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.sendInFlight = true;
-    w.postMessage({ type: "busy", busy: true });
+    this.activeFlowCount += 1;
+    this.activeFlowSource = "sendPrompt";
+    w.postMessage({ type: "busy", busy: true, source: this.activeFlowSource });
 
     const cfg = vscode.workspace.getConfiguration("planstack.cursor");
     const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
@@ -612,6 +655,13 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
       const stopped = e instanceof AgentCliError && detail.includes("stopped");
       endReason = stopped ? "stopped" : "error";
+      postRunFailure(runId, {
+        phaseLabel: "Send prompt",
+        durationSec: 0,
+        summary: stopped ? "Run stopped by user" : "Send failed",
+        details: detail.slice(0, 2000),
+        retryPrompt: userPrompt,
+      });
       this.pushSystem(w, `Send failed: ${detail.slice(0, 500)}`);
       if (e instanceof AgentRunBusyError) {
         void vscode.window.showWarningMessage(e.message);
@@ -624,10 +674,17 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (streamActive) {
         postAgentStreamEnd(runId, endReason);
       }
-      this.sendInFlight = false;
-      w.postMessage({ type: "busy", busy: false });
+      this.activeFlowCount = Math.max(0, this.activeFlowCount - 1);
+      if (this.activeFlowCount === 0) {
+        this.activeFlowSource = "";
+      }
+      w.postMessage({ type: "busy", busy: this.activeFlowCount > 0, source: this.activeFlowSource });
     }
   }
+}
+
+function runIdFromFlow(flowId: string): string {
+  return `flow-${flowId}`;
 }
 
 function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
@@ -676,6 +733,8 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       border: 1px solid rgba(127,127,127,0.15);
       border-bottom-left-radius: 2px;
       opacity: 0.85;
+      width: 100%;
+      max-width: 100%;
     }
     #composer {
       display: flex; flex-direction: column; gap: 6px;
@@ -836,11 +895,12 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     .animated-phrase { transition: opacity 0.25s ease; }
     /* Run summary card */
-    .run-summary-row { max-width: 95%; align-self: stretch; }
+    .run-summary-row { width: 100%; max-width: 100%; align-self: stretch; }
     .run-summary-card {
       background: var(--vscode-editor-background, rgba(0,0,0,0.15));
       border: 1px solid rgba(127,127,127,0.25);
       border-radius: 8px; padding: 10px 12px; font-size: 0.88em;
+      width: 100%;
     }
     .run-summary-header { font-weight: 600; margin-bottom: 3px; }
     .run-summary-stats { opacity: 0.7; font-size: 0.9em; margin-bottom: 8px; }
@@ -857,9 +917,15 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
     }
     .run-summary-file-diff {
-      color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
       white-space: nowrap; font-size: 0.85em; flex-shrink: 0;
     }
+    .run-summary-file-diff-add {
+      color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
+    }
+    .run-summary-file-diff-del {
+      color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c);
+    }
+    .run-summary-file-diff-sep { opacity: 0.7; }
     .run-summary-diff-btn {
       flex-shrink: 0; padding: 1px 6px; cursor: pointer; font-size: 0.78em;
       border: 1px solid rgba(127,127,127,0.3); border-radius: 3px;
@@ -878,6 +944,52 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     .run-summary-scm-btn:hover {
       background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
+    }
+    .run-failure-card {
+      border-color: color-mix(in srgb, var(--vscode-terminal-ansiRed, #f14c4c) 45%, rgba(127,127,127,0.25));
+    }
+    .run-failure-details {
+      margin: 8px 0 10px;
+      max-height: min(24vh, 200px);
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.82em;
+      line-height: 1.35;
+      border: 1px solid rgba(127,127,127,0.2);
+      border-radius: 6px;
+      background: var(--vscode-editor-background, rgba(0,0,0,0.2));
+      padding: 8px 9px;
+    }
+    .run-failure-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .run-separator-row {
+      width: 100%;
+      margin-top: 10px;
+      margin-bottom: 4px;
+    }
+    .run-separator {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      opacity: 0.78;
+      font-size: 0.74em;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .run-separator-line {
+      flex: 1;
+      height: 1px;
+      background: rgba(127,127,127,0.24);
+    }
+    .run-separator-label {
+      white-space: nowrap;
+      font-weight: 600;
     }
   </style>
 </head>
