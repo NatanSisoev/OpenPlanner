@@ -6,6 +6,6 @@ export async function handoffViaCursorSdk(
   _target: "local" | "cloud",
 ): Promise<void> {
   await vscode.window.showWarningMessage(
-    "Planstack: SDK handoff is not wired yet. Set planstack.cursor.handoff to native-first, or implement cursorSdk.ts for your environment.",
+    "Planstack: SDK execution is not wired yet. Set planstack.cursor.executionMode to native-first for clipboard handoff, or implement cursorSdk.ts for your environment.",
   );
 }

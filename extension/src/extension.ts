@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
+import { handoffToNativeComposer } from "./dispatch/cursorNativeHandoff";
 import { dispatchPhaseHandoff } from "./dispatch/router";
+import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace } from "./plan/loader";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
@@ -79,6 +81,10 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         return;
       }
+      const branchOk = await ensurePlanWorkBranch(phaseItem.plan, context.workspaceState);
+      if (!branchOk) {
+        return;
+      }
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
       const git = root
         ? await summarizeGitForPlan(root, phaseItem.phase, phaseItem.plan)
@@ -89,7 +95,9 @@ export function activate(context: vscode.ExtensionContext): void {
         effectiveWorkBranch: eff,
         baseBranch: phaseItem.plan.git?.baseBranch,
       });
-      await dispatchPhaseHandoff(prompt);
+      await dispatchPhaseHandoff(prompt, context, {
+        statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
+      });
     }),
   );
 
@@ -119,7 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const demo =
         `HackUPC native handoff demo (${new Date().toISOString()}):\n\n` +
         `Summarize docs/base_idea.md in two bullet points. Only that file for context.`;
-      await dispatchPhaseHandoff(demo);
+      await handoffToNativeComposer(demo);
     }),
   );
 

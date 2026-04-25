@@ -30,8 +30,9 @@ export async function handoffToNativeComposer(prompt: string): Promise<void> {
 
   if (!commandId) {
     await vscode.window.showInformationMessage(
-      "HackUPC handoff: prompt copied to clipboard. Open Composer or Chat (e.g. Cmd+I or Cmd+L) and paste (Cmd+V). " +
-        "To auto-open the panel, set Settings → HackUPC native handoff → Open Composer Command to a command ID from the Command Palette (gear → Copy Command ID).",
+      "Planstack (native-first): prompt copied to clipboard — open Composer or Chat (Cmd+I / Cmd+L) and paste (Cmd+V). " +
+        "Optional: set planstack.cursor.openComposerCommand to a command ID from the palette (Copy Command ID). " +
+        "Default Run phase is headless CLI; you chose native-first execution in settings.",
     );
     return;
   }
@@ -40,13 +41,13 @@ export async function handoffToNativeComposer(prompt: string): Promise<void> {
     await revealHandoffDocument(prompt);
     await vscode.commands.executeCommand(commandId);
     await vscode.window.showInformationMessage(
-      `HackUPC handoff: prompt is on the clipboard and open in a preview tab. Ran "${commandId}". ` +
+      `Planstack handoff: prompt is on the clipboard and open in a preview tab. Ran "${commandId}". ` +
         `If Composer still shows only an @-mention to another file (e.g. the plan JSON), clear it and paste (Cmd+V), or rely on the open handoff tab as context.`,
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await vscode.window.showErrorMessage(
-      `HackUPC handoff: prompt was copied, but executeCommand("${commandId}") failed: ${msg}. Check hackupc.nativeHandoff.openComposerCommand.`,
+      `Planstack handoff: prompt was copied, but executeCommand("${commandId}") failed: ${msg}. Check planstack.cursor.openComposerCommand.`,
     );
   }
 }

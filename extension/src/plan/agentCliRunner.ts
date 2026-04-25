@@ -7,6 +7,8 @@ export interface RunAgentPrintOptions {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   maxStdoutChars: number;
+  /** When true, passes `--force` so print mode may modify files (see Cursor headless CLI docs). */
+  applyEdits?: boolean;
 }
 
 export class AgentCliError extends Error {
@@ -34,7 +36,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       fn();
     };
 
-    const args = ["-p", "--trust", opts.prompt];
+    const args = opts.applyEdits ? ["-p", "--trust", "--force", opts.prompt] : ["-p", "--trust", opts.prompt];
     const child = spawn(opts.agentPath, args, {
       cwd: opts.cwd,
       env: opts.env,
