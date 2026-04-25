@@ -1,5 +1,5 @@
 import type { GitInfo, Phase, PhaseState, Plan, PlanState, Task, TaskState } from "./types";
-import { parsePhaseDependencyRef, parseTaskDependencyRef } from "./dependencies";
+import { parsePhaseDependencyRef } from "./dependencies";
 
 const PLAN_STATES: ReadonlySet<PlanState> = new Set([
   "pending",
@@ -108,12 +108,13 @@ function parseTask(raw: unknown, phaseIndex: number, taskIndex: number): Task {
     throw new Error(`phases[${phaseIndex}].tasks[${taskIndex}] must be an object`);
   }
   const fieldPrefix = `phases[${phaseIndex}].tasks[${taskIndex}]`;
+  // Legacy plans may carry a `dependsOn` field on tasks; we silently ignore it.
+  // Dependencies are only allowed at the phase level.
   return {
     id: asString(raw.id, `${fieldPrefix}.id`),
     state: asTaskState(raw.state, `${fieldPrefix}.state`),
     desc: typeof raw.desc === "string" ? raw.desc.trim() : "",
     commit: asBoolean(raw.commit, `${fieldPrefix}.commit`),
-    dependsOn: asOptionalStringArray(raw.dependsOn, `${fieldPrefix}.dependsOn`) ?? [],
     prompt: asOptionalString(raw.prompt),
   };
 }
@@ -178,11 +179,8 @@ function checkPhaseInvariants(plan: Plan): void {
   }
 }
 
-/** Cross-task checks that need the containing plan parsed first. */
+/** Task-id uniqueness within each phase. Tasks no longer carry dependencies. */
 function checkTaskInvariants(plan: Plan): void {
-  const tasksById = new Map<string, { phaseId: string; task: Task }[]>();
-  const tasksByQualifiedId = new Map<string, Task>();
-
   for (const phase of plan.phases) {
     const idsInPhase = new Set<string>();
     for (const task of phase.tasks) {
@@ -190,49 +188,6 @@ function checkTaskInvariants(plan: Plan): void {
         throw new Error(`duplicate task id "${task.id}" in phase "${phase.id}"`);
       }
       idsInPhase.add(task.id);
-
-      const list = tasksById.get(task.id) ?? [];
-      list.push({ phaseId: phase.id, task });
-      tasksById.set(task.id, list);
-      tasksByQualifiedId.set(`${phase.id}/${task.id}`, task);
-    }
-  }
-
-  for (const phase of plan.phases) {
-    for (const task of phase.tasks) {
-      for (const dep of task.dependsOn) {
-        const parsed = parseTaskDependencyRef(dep);
-        if (!parsed) {
-          throw new Error(
-            `task "${task.id}" has malformed dependency "${dep}" (use task-id, phase-id/task-id, or plan-id/phase-id/task-id)`,
-          );
-        }
-
-        if (parsed.planId && parsed.planId !== plan.id) {
-          continue;
-        }
-
-        let target: Task | undefined;
-        if (parsed.phaseId) {
-          target = tasksByQualifiedId.get(`${parsed.phaseId}/${parsed.taskId}`);
-          if (!target) {
-            throw new Error(`task "${task.id}" depends on unknown task "${dep}"`);
-          }
-        } else {
-          const matches = tasksById.get(parsed.taskId) ?? [];
-          if (matches.length === 0) {
-            throw new Error(`task "${task.id}" depends on unknown task "${dep}"`);
-          }
-          if (matches.length > 1) {
-            throw new Error(`task "${task.id}" has ambiguous dependency "${dep}"; use phase-id/task-id`);
-          }
-          target = matches[0]!.task;
-        }
-
-        if (target === task) {
-          throw new Error(`task "${task.id}" depends on itself`);
-        }
-      }
     }
   }
 }

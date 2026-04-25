@@ -1,18 +1,15 @@
 {
   "id": "plan-auth-001",
-  "state": "in_progress",
+  "state": "pending",
   "title": "Auth System Refactor",
   "description": "Modernize authentication by removing legacy sessions, rolling out JWT + refresh rotation, and safely migrating existing users with minimal downtime and strong security guarantees.",
   "createdAt": "2026-04-24T08:00:00Z",
   "phases": [
     {
       "id": "phase-auth-001",
-      "state": "in_progress",
+      "state": "completed",
       "title": "Remove legacy session middleware",
       "description": "Strip out the old cookie-based session store and all references to it across the codebase.",
-      "dependsOn": [
-        "plan-ci-001/phase-ci-001"
-      ],
       "tasks": [
         {
           "id": "task-auth-001",
@@ -32,17 +29,16 @@
           "desc": "Update CHANGELOG and deprecation notice in README",
           "commit": true
         }
+      ],
+      "dependsOn": [
+        "plan-ci-001/phase-ci-001"
       ]
     },
     {
       "id": "phase-auth-002",
-      "state": "in_progress",
+      "state": "pending",
       "title": "Implement JWT authentication",
       "description": "Add stateless JWT-based auth with refresh token rotation and secure HttpOnly cookie delivery.",
-      "dependsOn": [
-        "phase-auth-001",
-        "plan-ci-001/phase-ci-002"
-      ],
       "tasks": [
         {
           "id": "task-auth-004",
@@ -68,17 +64,17 @@
           "desc": "Write integration tests for login, refresh, and logout flows",
           "commit": true
         }
+      ],
+      "dependsOn": [
+        "phase-auth-001",
+        "plan-ci-001/phase-ci-002"
       ]
     },
     {
       "id": "phase-auth-003",
-      "state": "cancelled",
+      "state": "pending",
       "title": "Migrate existing users",
       "description": "Run a one-time migration script to invalidate all legacy sessions and force re-authentication.",
-      "dependsOn": [
-        "phase-auth-002",
-        "plan-ci-001/phase-ci-004"
-      ],
       "tasks": [
         {
           "id": "task-auth-008",
@@ -98,6 +94,10 @@
           "desc": "Schedule maintenance window and run migration in production",
           "commit": false
         }
+      ],
+      "dependsOn": [
+        "phase-auth-002",
+        "plan-ci-001/phase-ci-004"
       ]
     }
   ],

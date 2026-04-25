@@ -15,9 +15,8 @@ export class TaskTreeItem extends vscode.TreeItem {
     const label = task.desc.trim().length > 0 ? truncate(task.desc, 56) : task.id;
     super(label, vscode.TreeItemCollapsibleState.None);
     this.contextValue = "hackupcTask";
-    this.description = task.dependsOn.length > 0 ? `${task.state} · deps ${task.dependsOn.length}` : task.state;
-    const deps = task.dependsOn.length > 0 ? `\ndependsOn: ${task.dependsOn.join(", ")}` : "";
-    this.tooltip = `${task.id}\n${task.state}${task.commit ? " · commit" : ""}${deps}\n\n${task.desc}`;
+    this.description = task.state;
+    this.tooltip = `${task.id}\n${task.state}${task.commit ? " · commit" : ""}\n\n${task.desc}`;
     this.iconPath = stateIconTask(task.state);
   }
 }

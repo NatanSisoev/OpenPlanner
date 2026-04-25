@@ -11,10 +11,7 @@ import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
 import { deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import {
   blockingPhaseDependencies,
-  blockingTaskDependencies,
-  blockingTaskDependenciesForPhase,
-  formatPhaseDependencyBlockers,
-  formatTaskDependencyBlockers,
+  type PhaseDependencyBlocker,
 } from "./plan/dependencies";
 import { buildPhaseHandoffPrompt, buildTaskHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace, runAgentPromptEdits } from "./plan/createPlanFromCli";
@@ -122,34 +119,8 @@ function normalizeStaleInProgressToPending(plan: Plan): void {
   recomputeAggregates(plan);
 }
 
-function removeTaskDependencyRefs(plan: Plan, phaseId: string, taskId: string): void {
-  const refs = new Set([taskId, `${phaseId}/${taskId}`, `${plan.id}/${phaseId}/${taskId}`]);
-  for (const phase of plan.phases) {
-    for (const task of phase.tasks) {
-      task.dependsOn = (task.dependsOn ?? []).filter((dep) => !refs.has(dep));
-    }
-  }
-}
-
-function removePhaseTaskDependencyRefs(plan: Plan, phaseId: string, removedTaskIds: ReadonlySet<string>): void {
-  for (const phase of plan.phases) {
-    for (const task of phase.tasks) {
-      task.dependsOn = (task.dependsOn ?? []).filter((dep) => {
-        const parts = dep.split("/");
-        if (parts.length === 1) {
-          return !removedTaskIds.has(parts[0]!);
-        }
-        if (parts.length === 2) {
-          return parts[0] !== phaseId;
-        }
-        if (parts.length === 3) {
-          return !(parts[0] === plan.id && parts[1] === phaseId);
-        }
-        return true;
-      });
-    }
-  }
-}
+// Tasks no longer carry dependencies; only phases do. Helpers that used to
+// scrub task-level refs have been removed.
 
 export function activate(context: vscode.ExtensionContext): void {
   const extUri = context.extensionUri;
@@ -279,7 +250,6 @@ export function activate(context: vscode.ExtensionContext): void {
       state: "pending",
       desc: trimmedDesc,
       commit: input.commit,
-      dependsOn: [],
       prompt: input.prompt?.trim() || undefined,
     });
     phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
@@ -330,17 +300,29 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       return false;
     }
-    const blockers = blockingTaskDependencies(currentPlans, plan, phase, task);
-    if (blockers.length > 0) {
-      const summary = formatTaskDependencyBlockers(blockers);
-      void vscode.window.showWarningMessage(
-        `Planstack: task "${task.desc}" is blocked by incomplete dependencies: ${summary}`,
+    // Tasks now inherit blocking state from their parent phase's dependsOn —
+    // there are no task-level dependencies any more. If the parent phase has
+    // unmet phase dependencies, propose running them first.
+    const phaseBlockers = blockingPhaseDependencies(currentPlans, plan, phase);
+    if (phaseBlockers.length > 0) {
+      const handled = await offerToRunBlockingDepsThen(
+        plan,
+        phase,
+        phaseBlockers,
+        {
+          subjectLabel: `task "${task.desc}"`,
+          traceId,
+          onResume: () => {
+            void runTaskWithPrompt(planId, phaseId, taskId, source);
+          },
+        },
       );
       traceEvent(traceId, "runtask.blocked_dependencies", {
         planId: plan.id,
         phaseId: phase.id,
         taskId: task.id,
-        blockers,
+        blockers: phaseBlockers,
+        outcome: handled,
       });
       return false;
     }
@@ -569,6 +551,145 @@ export function activate(context: vscode.ExtensionContext): void {
   // for each subsequent phase so the user is not re-prompted.
   const autoRunningPlans = new Map<string, Exclude<BranchDecision, "cancel">>();
 
+  /**
+   * After a "Run dependencies first" choice, we queue follow-up runs that
+   * fire once the just-finished phase reports success. Keyed by
+   * `${planId}::${phaseId}`. Each entry replaces any previous one for that
+   * key, so re-prompts collapse onto the latest user intent.
+   */
+  const pendingChainContinuations = new Map<string, () => Promise<void> | void>();
+
+  function chainKey(planId: string, phaseId: string): string {
+    return `${planId}::${phaseId}`;
+  }
+
+  /**
+   * Topologically order the resolved phase blockers so direct prerequisites
+   * run first. Cycles are broken by leaving the offending node in place.
+   */
+  function orderBlockerChain(
+    blockers: readonly PhaseDependencyBlocker[],
+  ): Array<{ plan: Plan; phase: Plan["phases"][number] }> {
+    const incomplete = blockers.filter((b) => b.reason === "incomplete" && b.target);
+    const targets = incomplete.map((b) => b.target!);
+    const indexByKey = new Map<string, number>();
+    targets.forEach((t, i) => indexByKey.set(chainKey(t.plan.id, t.phase.id), i));
+
+    const visited = new Set<string>();
+    const visiting = new Set<string>();
+    const result: typeof targets = [];
+
+    const visit = (entry: { plan: Plan; phase: Plan["phases"][number] }): void => {
+      const key = chainKey(entry.plan.id, entry.phase.id);
+      if (visited.has(key) || visiting.has(key)) {
+        return;
+      }
+      visiting.add(key);
+      for (const ref of entry.phase.dependsOn ?? []) {
+        const parts = ref.split("/").map((s) => s.trim());
+        const planId = parts.length === 2 ? parts[0]! : entry.plan.id;
+        const phaseId = parts.length === 2 ? parts[1]! : parts[0]!;
+        const subKey = chainKey(planId, phaseId);
+        const idx = indexByKey.get(subKey);
+        if (idx !== undefined) {
+          visit(targets[idx]!);
+        }
+      }
+      visiting.delete(key);
+      visited.add(key);
+      result.push(entry);
+    };
+
+    for (const t of targets) {
+      visit(t);
+    }
+    return result;
+  }
+
+  /**
+   * Show a warning that lists the unmet phase dependencies and offers to
+   * either run them first (queueing the original phase/task to resume after)
+   * or cancel. Returns the user's chosen action.
+   */
+  async function offerToRunBlockingDepsThen(
+    plan: Plan,
+    phase: Plan["phases"][number],
+    blockers: readonly PhaseDependencyBlocker[],
+    opts: {
+      subjectLabel: string;
+      traceId: string;
+      onResume: () => void | Promise<void>;
+    },
+  ): Promise<"run_deps_then_subject" | "cancel"> {
+    const ordered = orderBlockerChain(blockers);
+    const blockerSummary = blockers.map((b) => b.label).join(", ");
+    const runDepsLabel = ordered.length > 0
+      ? `Run ${ordered.length} dependenc${ordered.length === 1 ? "y" : "ies"} first, then this`
+      : "Run dependencies first";
+
+    const choice = await vscode.window.showWarningMessage(
+      `Planstack: ${opts.subjectLabel} cannot start — phase "${phase.title}" depends on incomplete phases: ${blockerSummary}.`,
+      { modal: true, detail: ordered.length > 0
+          ? `Order:\n${ordered.map((e, i) => `  ${i + 1}. ${e.plan.title} › ${e.phase.title}`).join("\n")}\n\nThe original ${opts.subjectLabel} will run automatically once every dependency completes successfully.`
+          : "No runnable dependencies were resolved (some may be malformed). Fix the plan JSON and try again.",
+      },
+      runDepsLabel,
+    );
+
+    if (choice !== runDepsLabel || ordered.length === 0) {
+      traceEvent(opts.traceId, "deps.proposal.cancelled", {
+        planId: plan.id,
+        phaseId: phase.id,
+        ordered: ordered.length,
+      });
+      return "cancel";
+    }
+
+    // Build the chain back-to-front: the final continuation re-runs the
+    // original phase/task; each preceding link runs the next dependency.
+    let continuation: () => Promise<void> | void = async () => opts.onResume();
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const link = ordered[i]!;
+      const after = continuation;
+      const linkKey = chainKey(link.plan.id, link.phase.id);
+      continuation = async () => {
+        pendingChainContinuations.set(linkKey, after);
+        const tid = newTraceId("runphase-deps-chain");
+        traceEvent(tid, "deps.chain.runlink", {
+          planId: link.plan.id,
+          phaseId: link.phase.id,
+          remaining: i,
+        });
+        const started = await runPhaseWithBranchDecision(
+          link.plan,
+          link.phase,
+          tid,
+          "sidebar_webview",
+        );
+        if (!started) {
+          // User cancelled the branch picker (or another preflight failed).
+          // Drop the queued resume so the chain doesn't fire stale on the
+          // next unrelated success.
+          pendingChainContinuations.delete(linkKey);
+          postChatSystemMessage(
+            `${planChatLabel(link.plan)}: dependency chain stopped — "${link.phase.title}" did not start.`,
+          );
+        }
+      };
+    }
+
+    postChatSystemMessage(
+      `${planChatLabel(plan)}: queued ${ordered.length} dependenc${ordered.length === 1 ? "y" : "ies"} before ${opts.subjectLabel}.`,
+    );
+    traceEvent(opts.traceId, "deps.proposal.accepted", {
+      planId: plan.id,
+      phaseId: phase.id,
+      chain: ordered.map((e) => `${e.plan.id}/${e.phase.id}`),
+    });
+    void continuation();
+    return "run_deps_then_subject";
+  }
+
   async function executePhaseRun(
     plan: Plan,
     phase: Plan["phases"][number],
@@ -578,23 +699,23 @@ export function activate(context: vscode.ExtensionContext): void {
   ): Promise<boolean> {
     const blockers = blockingPhaseDependencies(currentPlans, plan, phase);
     if (blockers.length > 0) {
-      const summary = formatPhaseDependencyBlockers(blockers);
-      void vscode.window.showWarningMessage(
-        `Planstack: phase "${phase.title}" is blocked by incomplete dependencies: ${summary}`,
+      const handled = await offerToRunBlockingDepsThen(
+        plan,
+        phase,
+        blockers,
+        {
+          subjectLabel: `phase "${phase.title}"`,
+          traceId,
+          onResume: () => {
+            void runPhaseWithBranchDecision(plan, phase, newTraceId("runphase-resume"), source);
+          },
+        },
       );
-      traceEvent(traceId, "runphase.blocked_dependencies", { planId: plan.id, phaseId: phase.id, blockers });
-      return false;
-    }
-    const taskBlockers = blockingTaskDependenciesForPhase(currentPlans, plan, phase);
-    if (taskBlockers.length > 0) {
-      const summary = formatTaskDependencyBlockers(taskBlockers);
-      void vscode.window.showWarningMessage(
-        `Planstack: phase "${phase.title}" is blocked by incomplete task dependencies: ${summary}`,
-      );
-      traceEvent(traceId, "runphase.blocked_task_dependencies", {
+      traceEvent(traceId, "runphase.blocked_dependencies", {
         planId: plan.id,
         phaseId: phase.id,
-        blockers: taskBlockers,
+        blockers,
+        outcome: handled,
       });
       return false;
     }
@@ -958,9 +1079,6 @@ export function activate(context: vscode.ExtensionContext): void {
         if (patch.commit !== undefined) {
           task.commit = patch.commit;
         }
-        if (patch.dependsOn !== undefined) {
-          task.dependsOn = [...patch.dependsOn];
-        }
       });
     },
     onUpdatePlan: async (planId, patch) => {
@@ -1061,15 +1179,12 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       await mutatePlan(planId, (latest) => {
-        const removedPhase = latest.phases.find((ph) => ph.id === phaseId);
-        const removedTaskIds = new Set((removedPhase?.tasks ?? []).map((task) => task.id));
         latest.phases = latest.phases.filter((ph) => ph.id !== phaseId);
         for (const remaining of latest.phases) {
           if (Array.isArray(remaining.dependsOn)) {
             remaining.dependsOn = remaining.dependsOn.filter((id) => id !== phaseId && id !== `${latest.id}/${phaseId}`);
           }
         }
-        removePhaseTaskDependencyRefs(latest, phaseId, removedTaskIds);
       });
     },
     onRunPlanFully: async (planId) => {
@@ -1088,7 +1203,6 @@ export function activate(context: vscode.ExtensionContext): void {
           return false;
         }
         latestPhase.tasks = latestPhase.tasks.filter((t) => t.id !== taskId);
-        removeTaskDependencyRefs(latest, phaseId, taskId);
       });
     },
     onSyncPushAll: async () => {
@@ -1157,6 +1271,30 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       if (!ok) {
         logLine(`applyPhaseRunOutcome: missing plan/phase ${planId}/${phaseId}`);
+      }
+
+      // Dependency chain follow-up: when the user accepted "Run dependencies
+      // first, then this", each completed dependency triggers the next link;
+      // the final link re-runs the originally requested phase or task.
+      const continuationKey = chainKey(planId, phaseId);
+      const continuation = pendingChainContinuations.get(continuationKey);
+      if (continuation) {
+        pendingChainContinuations.delete(continuationKey);
+        if (outcome === "success") {
+          setTimeout(() => {
+            try {
+              void continuation();
+            } catch (e) {
+              logLine(`deps chain continuation failed: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }, 250);
+        } else {
+          const latestPlan = currentPlans.find((p) => p.id === planId);
+          const planLabel = latestPlan ? planChatLabel(latestPlan) : `Plan ${planId}`;
+          postChatSystemMessage(
+            `${planLabel}: dependency chain stopped — phase "${phaseId}" ${outcome === "stopped" ? "was cancelled" : "failed"}.`,
+          );
+        }
       }
 
       if (autoRunningPlans.has(planId)) {

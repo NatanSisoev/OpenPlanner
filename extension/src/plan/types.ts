@@ -37,17 +37,8 @@ export interface GitInfo {
 }
 
 /**
- * A task dependency reference.
- *
- * Supported JSON forms:
- * - `task-id` for a unique task id in the same plan.
- * - `phase-id/task-id` for a task in another phase of the same plan.
- * - `plan-id/phase-id/task-id` for a task in another plan.
- */
-export type TaskDependencyRef = string;
-
-/**
- * A phase dependency reference.
+ * A phase dependency reference. Tasks have no dependencies — only phases do,
+ * and they may only reference other phases.
  *
  * Supported JSON forms:
  * - `phase-id` for a phase in the same plan.
@@ -61,8 +52,6 @@ export interface Task {
   desc: string;
   /** Whether this task should end with a git commit when run. */
   commit: boolean;
-  /** Other tasks that must complete before this task should run. */
-  dependsOn: TaskDependencyRef[];
   /** Optional override prompt used when handing the task off. */
   prompt?: string;
 }

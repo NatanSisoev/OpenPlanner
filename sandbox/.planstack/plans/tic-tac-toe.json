@@ -14,20 +14,15 @@
           "id": "init-structure",
           "state": "pending",
           "desc": "Add project skeleton: package manifest or simple static HTML/JS/CSS layout and document how to run it locally.",
-          "commit": true,
-          "dependsOn": []
+          "commit": true
         },
         {
           "id": "entry-screen",
           "state": "pending",
           "desc": "Implement empty board placeholder and a title/header so you can verify the app loads.",
-          "commit": true,
-          "dependsOn": [
-            "scaffold/init-structure"
-          ]
+          "commit": true
         }
-      ],
-      "dependsOn": []
+      ]
     },
     {
       "id": "core-rules",
@@ -39,28 +34,19 @@
           "id": "board-model",
           "state": "pending",
           "desc": "Represent board cells, apply moves, reject illegal moves, and expose read-only game state.",
-          "commit": true,
-          "dependsOn": [
-            "scaffold/init-structure"
-          ]
+          "commit": true
         },
         {
           "id": "win-draw",
           "state": "pending",
           "desc": "Detect row/column/diagonal wins and full-board draws; emit a clear terminal game-over outcome.",
-          "commit": true,
-          "dependsOn": [
-            "core-rules/board-model"
-          ]
+          "commit": true
         },
         {
           "id": "turn-flow",
           "state": "pending",
           "desc": "Wire turn order, reset/new-game action, and keep history optional but consistent with state.",
-          "commit": true,
-          "dependsOn": [
-            "core-rules/win-draw"
-          ]
+          "commit": true
         }
       ],
       "dependsOn": [
@@ -77,28 +63,19 @@
           "id": "render-board",
           "state": "pending",
           "desc": "Draw the grid and current marks from engine state; reflect illegal moves with user-visible feedback.",
-          "commit": true,
-          "dependsOn": [
-            "core-rules/turn-flow"
-          ]
+          "commit": true
         },
         {
           "id": "input-handling",
           "state": "pending",
           "desc": "Hook clicks or keyboard to engine moves; highlight last move or winner line if feasible.",
-          "commit": true,
-          "dependsOn": [
-            "ui-play/render-board"
-          ]
+          "commit": true
         },
         {
           "id": "reset-ux",
           "state": "pending",
           "desc": "Add reset/new match control and short instructions (keys or click targets).",
-          "commit": true,
-          "dependsOn": [
-            "ui-play/input-handling"
-          ]
+          "commit": true
         }
       ],
       "dependsOn": [
@@ -115,19 +92,13 @@
           "id": "edge-cases",
           "state": "pending",
           "desc": "Verify rapid clicks, double submission, and post-game input do not corrupt state.",
-          "commit": true,
-          "dependsOn": [
-            "ui-play/reset-ux"
-          ]
+          "commit": true
         },
         {
           "id": "readme-runbook",
           "state": "pending",
           "desc": "Update README with run command, controls, and known limitations.",
-          "commit": true,
-          "dependsOn": [
-            "polish/edge-cases"
-          ]
+          "commit": true
         }
       ],
       "dependsOn": [

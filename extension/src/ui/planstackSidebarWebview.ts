@@ -17,7 +17,7 @@ interface PlanstackSidebarCallbacks {
     planId: string,
     phaseId: string,
     taskId: string,
-    patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean; dependsOn?: string[] },
+    patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
   ) => Promise<boolean>;
   onUpdatePlan: (planId: string, patch: { title?: string; description?: string }) => Promise<boolean>;
   onCreatePlan: (input: { title: string; description?: string }) => Promise<void>;
@@ -134,7 +134,6 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         desc?: string;
         prompt?: string;
         commit?: boolean;
-        dependsOn?: string[];
         orderedPlanIds?: string[];
       };
       if (m.type === "runPhase" && m.planId && m.phaseId) {
@@ -217,7 +216,6 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           desc: m.desc,
           prompt: m.prompt,
           commit: m.commit,
-          dependsOn: Array.isArray(m.dependsOn) ? m.dependsOn : undefined,
         }).then((ok) => {
           if (!m.requestId) {
             return;
@@ -626,7 +624,9 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       --c-hover:       var(--vscode-list-hoverBackground, rgba(255,255,255,0.05));
       --c-card-bg:     var(--vscode-editor-background, rgba(0,0,0,0.12));
       --c-header-bg:   var(--vscode-sideBarSectionHeader-background, rgba(255,255,255,0.04));
-      --graph-edge:    color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+      --graph-edge:           color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+    --graph-edge-dimmed:    color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+    --graph-edge-highlight: var(--vscode-charts-blue, #3794ff);
       --graph-node-bg: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-sideBar-background));
       --graph-node-border: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
     }
@@ -812,7 +812,11 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .graph-legend-line {
       width: 22px;
       height: 0;
-      border-top: 2px dashed var(--vscode-charts-purple, #b180d7);
+      border-top: 2px solid var(--graph-edge);
+    }
+    .graph-legend-line.selected {
+      border-top-color: var(--graph-edge-highlight);
+      border-top-width: 2.5px;
     }
 
     .graph-filter-row {
@@ -914,26 +918,48 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       overflow: visible;
       pointer-events: none;
     }
+    /* Default: every dependency arrow is muted grey so the graph reads as
+       "structure" rather than alerts. Selection highlights one set. */
     .graph-edges path {
       stroke: var(--graph-edge);
-      stroke-width: 1.8;
+      stroke-width: 1.6;
       fill: none;
-      opacity: 0.82;
+      opacity: 0.85;
+      transition: stroke 120ms ease, opacity 120ms ease, stroke-width 120ms ease;
     }
-    .graph-edges marker path { fill: var(--graph-edge); }
-    .graph-edges marker#graph-arrow-cross-global path { fill: var(--vscode-charts-purple, #b180d7); }
+    .graph-edges marker#graph-arrow-global path { fill: var(--graph-edge); }
+    .graph-edges marker#graph-arrow-highlight-global path { fill: var(--graph-edge-highlight); }
+    /* Cross-plan still distinguished by a dashed pattern, but grey by default. */
     .graph-edges path.cross-plan {
-      stroke: var(--vscode-charts-purple, #b180d7);
-      stroke-width: 2.4;
       stroke-dasharray: 7 5;
-      opacity: 0.95;
     }
     .graph-edges path.phase-dep {
-      stroke-width: 2.1;
-      opacity: 0.9;
+      stroke-width: 1.6;
     }
+    /* Plan -> first-phase fan-out lines are even more subtle; they're not
+       dependencies per se, just structural anchors. */
     .graph-edges path.plan-dep {
+      opacity: 0.35;
+    }
+    /* Dimmed: a phase is selected and this edge is NOT one of its deps. */
+    .graph-edges path.dimmed {
+      stroke: var(--graph-edge-dimmed);
       opacity: 0.45;
+    }
+    /* Selected: this edge is one of the selected phase's incoming deps
+       (i.e., a phase the selection depends on). */
+    .graph-edges path.selected {
+      stroke: var(--graph-edge-highlight);
+      stroke-width: 2.6;
+      opacity: 1;
+    }
+    .graph-edges path.cross-plan.selected {
+      stroke-dasharray: 0;
+    }
+    .graph-edge-label.dimmed { opacity: 0.45; }
+    .graph-edge-label.selected {
+      fill: var(--graph-edge-highlight);
+      stroke: var(--vscode-editor-background);
     }
     .graph-edge-label {
       fill: var(--vscode-foreground);
@@ -1373,10 +1399,6 @@ function htmlEscape(s: unknown): string {
 
 function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Plan["phases"][number]["tasks"][number]): string {
   const prompt = task.prompt?.trim() ?? "";
-  const deps = task.dependsOn ?? [];
-  const depsMarkup = deps.length
-    ? deps.map((dep) => `<code>${htmlEscape(dep)}</code>`).join(", ")
-    : `<span class="subtle">none</span>`;
   const promptBlock = prompt
     ? `<div class="section">
          <div class="label">Prompt</div>
@@ -1476,7 +1498,6 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     <div class="k">Task</div><div class="v"><code>${htmlEscape(task.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(task.state)}</code></div>
     <div class="k">Commit</div><div class="v"><button class="toggle-btn" type="button" data-action="toggleCommit" data-value="${task.commit ? "true" : "false"}" title="Click to toggle">${task.commit ? "true" : "false"}</button></div>
-    <div class="k">Depends on</div><div class="v">${depsMarkup}</div>
   </div>
   ${promptBlock}
   <script>
@@ -1506,13 +1527,10 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
   const tasksMarkup = tasks.length
     ? `<ul>${tasks
         .map(
-          (task) => {
-            const deps = task.dependsOn?.length ? ` · deps=<code>${htmlEscape(task.dependsOn.join(", "))}</code>` : "";
-            return `<li>
+          (task) => `<li>
               <div><strong>${htmlEscape(task.desc)}</strong></div>
-              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code>${deps}</div>
-            </li>`;
-          },
+              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code></div>
+            </li>`,
         )
         .join("")}</ul>`
     : `<div class="subtle">This phase has no tasks.</div>`;

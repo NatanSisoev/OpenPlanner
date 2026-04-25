@@ -1,0 +1,35 @@
+# Unit, integration, and e2e Jest suites for sandbox/auth-api. Each matrix job runs
+# `jest --shard=<k>/4` so the four shards partition test files in parallel and reduce wall time.
+name: test
+
+on:
+  push:
+    branches: [main, "planstack/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        working-directory: sandbox/auth-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run check
+      - name: Run Jest (shard ${{ matrix.shard }}/4)
+        run: npx jest --shard=${{ matrix.shard }}/4
+        env:
+          CI: true
+          JEST_SHARD_COUNT: "4"
+          NODE_OPTIONS: --experimental-vm-modules

@@ -19,14 +19,12 @@ Schema:
     - state: same enum
     - desc: string (concrete work item)
     - commit: boolean (whether this item should end in a git commit)
-    - dependsOn: string[] of task dependency refs; use [] when none.
-      Ref forms: "task-id" (unique task in same plan), "phase-id/task-id" (same plan),
-      or "plan-id/phase-id/task-id" (another plan).
+    Tasks have NO dependencies — only phases do.
   - dependsOn: optional string[] of phase dependency refs.
     Ref forms: "phase-id" (same plan) or "plan-id/phase-id" (another plan).
 
 Example (shape only):
-{"id":"my-plan","state":"pending","title":"My plan","phases":[{"id":"p1","state":"pending","title":"First","description":"Do X","tasks":[{"id":"t1","state":"pending","desc":"Step one","commit":true,"dependsOn":[]}]}]}`;
+{"id":"my-plan","state":"pending","title":"My plan","phases":[{"id":"p1","state":"pending","title":"First","description":"Do X","tasks":[{"id":"t1","state":"pending","desc":"Step one","commit":true}]}]}`;
 
 export function buildPlanCreationPrompt(userRequest: string): string {
   const body = userRequest.trim();

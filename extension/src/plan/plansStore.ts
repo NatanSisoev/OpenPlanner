@@ -3,7 +3,6 @@ import { recomputeAggregates } from "./aggregate";
 import { parsePhaseDependencyRef } from "./dependencies";
 import { loadPlansFromWorkspace, watchPlans } from "./loader";
 import type { Phase, Plan, Task, WorkState } from "./types";
-import { validatePlanJson } from "./validate";
 import { savePlanPreservingFile } from "./writePlan";
 
 export type TaskPatch = {
@@ -11,7 +10,6 @@ export type TaskPatch = {
   desc?: string;
   prompt?: string;
   commit?: boolean;
-  dependsOn?: string[];
 };
 
 export type PhasePatch = {
@@ -77,15 +75,6 @@ export class PlansStore implements vscode.Disposable {
     return true;
   }
 
-  private removeTaskDependencyRefs(plan: Plan, phaseId: string, taskId: string): void {
-    const refs = new Set([taskId, `${phaseId}/${taskId}`, `${plan.id}/${phaseId}/${taskId}`]);
-    for (const phase of plan.phases) {
-      for (const task of phase.tasks) {
-        task.dependsOn = (task.dependsOn ?? []).filter((dep) => !refs.has(dep));
-      }
-    }
-  }
-
   /**
    * Reload plans from disk. Concurrent calls collapse onto the in-flight load
    * so we never finish out of order.
@@ -142,16 +131,6 @@ export class PlansStore implements vscode.Disposable {
     }
     if (patch.commit !== undefined) {
       task.commit = patch.commit;
-    }
-    if (patch.dependsOn !== undefined) {
-      const previous = task.dependsOn;
-      task.dependsOn = [...patch.dependsOn];
-      try {
-        validatePlanJson(plan);
-      } catch {
-        task.dependsOn = previous;
-        return false;
-      }
     }
     recomputeAggregates(plan);
 
@@ -220,7 +199,7 @@ export class PlansStore implements vscode.Disposable {
 
     plan.phases.push({
       ...phase,
-      tasks: phase.tasks.map((task) => ({ ...task, dependsOn: [...(task.dependsOn ?? [])] })),
+      tasks: phase.tasks.map((task) => ({ ...task })),
       dependsOn: phase.dependsOn && phase.dependsOn.length > 0 ? [...phase.dependsOn] : undefined,
     });
     recomputeAggregates(plan);
@@ -244,8 +223,6 @@ export class PlansStore implements vscode.Disposable {
     if (!plan) {
       return false;
     }
-    const removedPhase = plan.phases.find((p) => p.id === phaseId);
-    const removedTaskIds = new Set((removedPhase?.tasks ?? []).map((task) => task.id));
     const originalLen = plan.phases.length;
     plan.phases = plan.phases.filter((p) => p.id !== phaseId);
     if (plan.phases.length === originalLen) {
@@ -259,23 +236,6 @@ export class PlansStore implements vscode.Disposable {
       phase.dependsOn = phase.dependsOn.filter((dep) => dep !== phaseId && dep !== `${plan.id}/${phaseId}`);
       if (phase.dependsOn.length === 0) {
         delete phase.dependsOn;
-      }
-    }
-    for (const remaining of plan.phases) {
-      for (const task of remaining.tasks) {
-        task.dependsOn = (task.dependsOn ?? []).filter((dep) => {
-          const parts = dep.split("/");
-          if (parts.length === 1) {
-            return !removedTaskIds.has(parts[0]!);
-          }
-          if (parts.length === 2) {
-            return parts[0] !== phaseId;
-          }
-          if (parts.length === 3) {
-            return !(parts[0] === plan.id && parts[1] === phaseId);
-          }
-          return true;
-        });
       }
     }
     recomputeAggregates(plan);
@@ -301,7 +261,7 @@ export class PlansStore implements vscode.Disposable {
       return false;
     }
     const { plan, phase } = found;
-    phase.tasks.push({ ...task, dependsOn: [...(task.dependsOn ?? [])] });
+    phase.tasks.push({ ...task });
     recomputeAggregates(plan);
 
     try {
@@ -330,7 +290,6 @@ export class PlansStore implements vscode.Disposable {
     if (phase.tasks.length === originalLen) {
       return false;
     }
-    this.removeTaskDependencyRefs(plan, phaseId, taskId);
     recomputeAggregates(plan);
 
     try {

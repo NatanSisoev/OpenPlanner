@@ -168,7 +168,8 @@
         <span><span class="graph-legend-dot tone-in_progress"></span>running</span>
         <span><span class="graph-legend-dot tone-pending"></span>pending</span>
         <span><span class="graph-legend-dot tone-cancelled"></span>cancelled</span>
-        <span><span class="graph-legend-line cross-plan"></span>cross-plan dependency</span>
+        <span><span class="graph-legend-line"></span>dependency</span>
+        <span><span class="graph-legend-line selected"></span>selected phase's deps</span>
       </div>
     `;
     const filter = `
@@ -203,6 +204,7 @@
           </div>
         </div>
         <div class="graph-controls">
+          ${selectedPhaseKey ? `<button class="graph-control-btn" data-action="graphClearSelection" title="Show all dependencies again">Clear selection</button>` : ""}
           <button class="graph-control-btn" data-action="graphZoomIn" data-graph="${GLOBAL_GRAPH_KEY}" title="Zoom in">+</button>
           <button class="graph-control-btn" data-action="graphZoomOut" data-graph="${GLOBAL_GRAPH_KEY}" title="Zoom out">-</button>
           <button class="graph-control-btn" data-action="graphZoomReset" data-graph="${GLOBAL_GRAPH_KEY}" title="Reset view">Reset</button>
@@ -264,7 +266,8 @@
 
   function renderGraphEdges(graph) {
     const markerId = "graph-arrow-global";
-    const markerCrossId = "graph-arrow-cross-global";
+    const markerHighlightId = "graph-arrow-highlight-global";
+    const hasSelection = !!selectedPhaseKey;
     const lines = graph.edges.map((edge) => {
       const from = graph.nodesById.get(edge.from);
       const to = graph.nodesById.get(edge.to);
@@ -277,12 +280,27 @@
       const endY = to.y + to.height / 2;
       const bend = Math.max(34, (endX - startX) * 0.45);
       const d = `M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}`;
-      const cls = edge.kind === "cross-plan" ? "cross-plan" : edge.kind === "phase" ? "phase-dep" : "plan-dep";
-      const marker = edge.kind === "cross-plan" ? markerCrossId : markerId;
+      // Selection-aware highlighting:
+      //   - Default (no selection): every dependency arrow is muted grey.
+      //   - With a selected phase: arrows feeding INTO it (the phases it
+      //     depends on, drawn dep -> dependent) are highlighted; everything
+      //     else is dimmed further so the dependency set pops out.
+      let stateClass = "";
+      if (hasSelection) {
+        const selectedNodeId = "phase::" + selectedPhaseKey;
+        const isIncomingToSelection = edge.to === selectedNodeId && edge.kind !== "plan";
+        stateClass = isIncomingToSelection ? " selected" : " dimmed";
+      }
+      const baseClass = edge.kind === "cross-plan"
+        ? "cross-plan"
+        : edge.kind === "phase"
+          ? "phase-dep"
+          : "plan-dep";
+      const marker = stateClass.includes("selected") ? markerHighlightId : markerId;
       const label = edge.kind === "cross-plan"
-        ? `<text class="graph-edge-label" x="${(startX + endX) / 2}" y="${(startY + endY) / 2 - 6}">${esc(edge.label || "cross-plan")}</text>`
+        ? `<text class="graph-edge-label${stateClass}" x="${(startX + endX) / 2}" y="${(startY + endY) / 2 - 6}">${esc(edge.label || "cross-plan")}</text>`
         : "";
-      return `<path class="${cls}" d="${d}" marker-end="url(#${marker})" />${label}`;
+      return `<path class="${baseClass}${stateClass}" d="${d}" marker-end="url(#${marker})" />${label}`;
     }).join("");
     return `
       <svg class="graph-edges" viewBox="0 0 ${graph.width} ${graph.height}">
@@ -290,7 +308,7 @@
           <marker id="${markerId}" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
             <path d="M0,0 L10,4 L0,8 z"></path>
           </marker>
-          <marker id="${markerCrossId}" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+          <marker id="${markerHighlightId}" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
             <path d="M0,0 L10,4 L0,8 z"></path>
           </marker>
         </defs>
@@ -654,80 +672,9 @@
     });
   }
 
-  function parseTaskDependencyRef(ref) {
-    const parts = String(ref).split("/").map((part) => part.trim());
-    if (parts.some((part) => !part)) return null;
-    if (parts.length === 1) return { taskId: parts[0] };
-    if (parts.length === 2) return { phaseId: parts[0], taskId: parts[1] };
-    if (parts.length === 3) return { planId: parts[0], phaseId: parts[1], taskId: parts[2] };
-    return null;
-  }
-
-  function formatTaskTarget(target) {
-    return target.plan.id + "/" + target.phase.id + "/" + target.task.id;
-  }
-
-  function resolveTaskDependency(plan, ref) {
-    const parsed = parseTaskDependencyRef(ref);
-    if (!parsed) {
-      return { ok: false, label: `malformed dependency "${ref}"` };
-    }
-    if (parsed.planId) {
-      const targetPlan = plans.find((p) => p.id === parsed.planId);
-      const targetPhase = targetPlan?.phases?.find((ph) => ph.id === parsed.phaseId);
-      const targetTask = targetPhase?.tasks?.find((task) => task.id === parsed.taskId);
-      return targetPlan && targetPhase && targetTask
-        ? { ok: true, plan: targetPlan, phase: targetPhase, task: targetTask }
-        : { ok: false, label: `unknown task dependency "${ref}"` };
-    }
-    if (parsed.phaseId) {
-      const targetPhase = plan.phases?.find((ph) => ph.id === parsed.phaseId);
-      const targetTask = targetPhase?.tasks?.find((task) => task.id === parsed.taskId);
-      return targetPhase && targetTask
-        ? { ok: true, plan, phase: targetPhase, task: targetTask }
-        : { ok: false, label: `unknown task dependency "${ref}"` };
-    }
-    const matches = [];
-    (plan.phases || []).forEach((phase) => {
-      (phase.tasks || []).forEach((task) => {
-        if (task.id === parsed.taskId) matches.push({ plan, phase, task });
-      });
-    });
-    if (matches.length === 1) return { ok: true, ...matches[0] };
-    if (matches.length > 1) return { ok: false, label: `ambiguous task dependency "${ref}"` };
-    return { ok: false, label: `unknown task dependency "${ref}"` };
-  }
-
-  function taskBlockingDeps(plan, phase, task) {
-    const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
-    return deps.flatMap((ref) => {
-      const resolved = resolveTaskDependency(plan, ref);
-      if (!resolved.ok) return [resolved.label];
-      if (resolved.plan.id === plan.id && resolved.phase.id === phase.id && resolved.task.id === task.id) {
-        return [`${formatTaskTarget(resolved)} (self)`];
-      }
-      return resolved.task.state === "completed"
-        ? []
-        : [`${formatTaskTarget(resolved)} (${resolved.task.state})`];
-    });
-  }
-
-  function phaseTaskBlockingDeps(plan, phase) {
-    return (phase.tasks || []).flatMap((task) => {
-      const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
-      return deps.flatMap((ref) => {
-        const resolved = resolveTaskDependency(plan, ref);
-        if (!resolved.ok) return [`${task.id} depends on ${resolved.label}`];
-        if (resolved.plan.id === plan.id && resolved.phase.id === phase.id && resolved.task.id === task.id) {
-          return [`${task.id} depends on itself`];
-        }
-        if (resolved.plan.id === plan.id && resolved.phase.id === phase.id) return [];
-        return resolved.task.state === "completed"
-          ? []
-          : [`${task.id} depends on ${formatTaskTarget(resolved)} (${resolved.task.state})`];
-      });
-    });
-  }
+  // Tasks no longer carry dependencies — only phases do — so there's no
+  // task-level blocking computation. The phase-level helpers above are
+  // sufficient.
 
   function renderPhase(plan, phase) {
     const key = plan.id + "::" + phase.id;
@@ -737,7 +684,7 @@
     const pid = esc(plan.id);
     const phid = esc(phase.id);
 
-    const blockers = [...blockingDeps(plan, phase), ...phaseTaskBlockingDeps(plan, phase)];
+    const blockers = blockingDeps(plan, phase);
     const isBlocked = blockers.length > 0;
     const blockedTitle = isBlocked ? `Blocked by: ${blockers.join(", ")}` : "Run this phase";
 
@@ -774,18 +721,15 @@
     const pid = esc(plan.id);
     const phid = esc(phase.id);
     const tid = esc(task.id);
-    const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
-    const blockers = taskBlockingDeps(plan, phase, task);
-    const isBlocked = blockers.length > 0;
-    const depHint = isBlocked
-      ? ` · blocked by ${esc(blockers.join(", "))}`
-      : deps.length > 0
-        ? ` · deps ${deps.length}`
-        : "";
+    // A task inherits its blocked state from its parent phase's dependsOn:
+    // if the phase has unmet phase deps, surfacing it on the task is honest
+    // (the run flow blocks the same way) but we keep the message short.
+    const phaseBlockers = blockingDeps(plan, phase);
+    const isBlocked = phaseBlockers.length > 0;
     const runTitle = isRunning
       ? "Already running"
       : isBlocked
-        ? `Blocked by: ${blockers.join(", ")}`
+        ? `Phase blocked by: ${phaseBlockers.join(", ")}`
         : "Run task";
 
     const runBtn = `<button class="task-btn run-task" data-action="taskRun"
@@ -796,7 +740,7 @@
     return `
       <div class="task-row${isBlocked ? " blocked" : ""}" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
         ${taskIconHtml(task.state, pid, phid, tid)}
-        <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}${depHint ? `<span class="task-deps-hint">${depHint}</span>` : ""}</span>
+        <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
         <div class="task-actions">${runBtn}</div>
       </div>`;
   }
@@ -914,10 +858,19 @@
       return;
     }
 
+    if (action === "graphClearSelection") {
+      e.stopPropagation();
+      selectedPhaseKey = null;
+      render();
+      return;
+    }
+
     if (action === "selectGraphPhase") {
       e.stopPropagation();
       if (planId && phaseId) {
-        selectedPhaseKey = planId + "::" + phaseId;
+        const key = planId + "::" + phaseId;
+        // Click again to deselect — easier than hunting the Clear button.
+        selectedPhaseKey = selectedPhaseKey === key ? null : key;
         render();
       }
       return;

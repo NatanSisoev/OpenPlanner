@@ -18,8 +18,7 @@ export function buildPhaseHandoffPrompt(
   if (phase.tasks.length > 0) {
     lines.push("", "### Tasks");
     for (const t of phase.tasks) {
-      const deps = t.dependsOn.length > 0 ? ` dependsOn=[${t.dependsOn.join(", ")}]` : "";
-      lines.push(`- **${t.id}** [${t.state}]${t.commit ? " (commit)" : ""}${deps}: ${t.desc}`);
+      lines.push(`- **${t.id}** [${t.state}]${t.commit ? " (commit)" : ""}: ${t.desc}`);
     }
   }
 
@@ -61,9 +60,6 @@ export function buildTaskHandoffPrompt(
       "",
       "When the task is done, end with a single git commit summarizing the change.",
     );
-  }
-  if (task.dependsOn.length > 0) {
-    lines.push("", "### Dependencies", ...task.dependsOn.map((dep) => `- ${dep}`));
   }
   if (task.prompt && task.prompt.trim()) {
     lines.push("", "### Task-specific guidance", task.prompt.trim());
