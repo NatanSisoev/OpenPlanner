@@ -225,7 +225,7 @@
             <button class="run-btn graph-run-btn graph-plan-run-btn"
                     data-action="runPlanFromGraph"
                     data-plan="${pid}"
-                    title="Run all phases in order">▶ Run plan</button>
+                    title="Run all phases in order">▶</button>
           </div>
           <span class="graph-plan-title">${esc(node.title)}</span>
         </div>
@@ -253,7 +253,7 @@
                   data-action="runPhaseFromGraph"
                   data-plan="${pid}"
                   data-phase="${phid}"
-                  title="Run this phase">▶ Run</button>
+                  title="Run this phase">▶</button>
         </div>
       </div>
     `;

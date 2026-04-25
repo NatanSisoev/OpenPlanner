@@ -799,15 +799,31 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       line-height: 1.4; font-size: 0.9em;
     }
     .bubble.user {
-      background: var(--vscode-input-background);
-      border: 1px solid rgba(127,127,127,0.2);
+      background: color-mix(
+        in srgb,
+        var(--vscode-input-background) 78%,
+        var(--vscode-button-secondaryBackground, rgba(127,127,127,0.22)) 22%
+      );
+      border: 1px solid color-mix(
+        in srgb,
+        var(--vscode-button-background, var(--vscode-focusBorder, #007acc)) 34%,
+        rgba(127,127,127,0.3)
+      );
       border-bottom-right-radius: 2px;
     }
     .bubble.system {
-      background: var(--vscode-editor-background, rgba(0,0,0,0.15));
-      border: 1px solid rgba(127,127,127,0.15);
+      background: color-mix(
+        in srgb,
+        var(--vscode-editor-background, rgba(0,0,0,0.15)) 84%,
+        var(--vscode-textLink-foreground, #3794ff) 16%
+      );
+      border: 1px solid color-mix(
+        in srgb,
+        var(--vscode-textLink-foreground, #3794ff) 32%,
+        rgba(127,127,127,0.25)
+      );
       border-bottom-left-radius: 2px;
-      opacity: 0.85;
+      opacity: 0.94;
       width: 100%;
       max-width: 100%;
     }
