@@ -27,6 +27,8 @@
   const wizardSecondary = document.getElementById("wizardSecondary");
   const graphViewState = Object.create(null);
   let activeGraphPan = null;
+  let mutationSeq = 0;
+  const pendingMutations = new Map();
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -69,6 +71,40 @@
     return `<span class="badge badge-${state}">${labels[state] || state}</span>`;
   }
 
+  function nextMutationId() {
+    mutationSeq += 1;
+    return "m" + mutationSeq;
+  }
+
+  function sendTaskStateMutation(planId, phaseId, taskId, nextState) {
+    const plan = plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    const task = phase?.tasks?.find((t) => t.id === taskId);
+    if (!task) {
+      return;
+    }
+    const prevState = task.state;
+    task.state = nextState;
+    const requestId = nextMutationId();
+    pendingMutations.set(requestId, { kind: "task", planId, phaseId, taskId, prevState });
+    vscode.postMessage({ type: "updateTask", requestId, planId, phaseId, taskId, state: nextState });
+    render();
+  }
+
+  function sendPhaseStateMutation(planId, phaseId, nextState) {
+    const plan = plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    if (!phase) {
+      return;
+    }
+    const prevState = phase.state;
+    phase.state = nextState;
+    const requestId = nextMutationId();
+    pendingMutations.set(requestId, { kind: "phase", planId, phaseId, prevState });
+    vscode.postMessage({ type: "updatePhase", requestId, planId, phaseId, state: nextState });
+    render();
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   function render() {
@@ -107,9 +143,15 @@
       <div class="top-toolbar">
         ${createButtons}
         <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-          <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list">List view</button>
-          <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes">View as nodes</button>
+        <div class="toolbar-row">
+          <div class="toolbar-group">
+            <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list">List view</button>
+            <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes">View as nodes</button>
+          </div>
+          <div class="toolbar-group toolbar-group-right">
+            <button class="view-btn" data-action="syncPull" title="Pull all plans from remote server">Pull</button>
+            <button class="view-btn" data-action="syncPush" title="Push all plans to remote server">Push</button>
+          </div>
         </div>
       </div>
     `;
@@ -690,6 +732,16 @@
       return;
     }
 
+    if (action === "syncPull") {
+      vscode.postMessage({ type: "syncPullAll" });
+      return;
+    }
+
+    if (action === "syncPush") {
+      vscode.postMessage({ type: "syncPushAll" });
+      return;
+    }
+
     if (action === "filterStatus") {
       const status = el.dataset.status;
       if (!PHASE_STATES.includes(status)) {
@@ -819,15 +871,7 @@
     if (action === "taskStatus") {
       e.stopPropagation();
       const newState = el.dataset.status;
-      vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: newState });
-      // Optimistic local update
-      const plan = plans.find((p) => p.id === planId);
-      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
-      const task = phase?.tasks?.find((t) => t.id === taskId);
-      if (task) {
-        task.state = newState;
-        render();
-      }
+      sendTaskStateMutation(planId, phaseId, taskId, newState);
       return;
     }
 
@@ -838,9 +882,7 @@
       const task = phase?.tasks?.find((t) => t.id === taskId);
       if (task) {
         const next = nextStateInCycle(task.state);
-        task.state = next;
-        vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: next });
-        render();
+        sendTaskStateMutation(planId, phaseId, taskId, next);
       }
       return;
     }
@@ -851,9 +893,7 @@
       const phase = plan?.phases?.find((ph) => ph.id === phaseId);
       if (phase) {
         const next = nextStateInCycle(phase.state);
-        phase.state = next;
-        vscode.postMessage({ type: "updatePhase", planId, phaseId, state: next });
-        render();
+        sendPhaseStateMutation(planId, phaseId, next);
       }
       return;
     }
@@ -1542,6 +1582,32 @@
     if (msg.type === "setPlans") {
       plans = msg.plans || [];
       plans.forEach((p) => expandedPlans.add(p.id));
+      render();
+      return;
+    }
+    if (msg.type === "mutationAck" && typeof msg.requestId === "string") {
+      const pending = pendingMutations.get(msg.requestId);
+      if (!pending) {
+        return;
+      }
+      pendingMutations.delete(msg.requestId);
+      if (msg.ok) {
+        return;
+      }
+      if (pending.kind === "task") {
+        const plan = plans.find((p) => p.id === pending.planId);
+        const phase = plan?.phases?.find((ph) => ph.id === pending.phaseId);
+        const task = phase?.tasks?.find((t) => t.id === pending.taskId);
+        if (task) {
+          task.state = pending.prevState;
+        }
+      } else if (pending.kind === "phase") {
+        const plan = plans.find((p) => p.id === pending.planId);
+        const phase = plan?.phases?.find((ph) => ph.id === pending.phaseId);
+        if (phase) {
+          phase.state = pending.prevState;
+        }
+      }
       render();
     }
   });

@@ -7,6 +7,7 @@ export const SIDEBAR_WEBVIEW_ID = "hackupc.planstack.ui";
 
 interface PlanstackSidebarCallbacks {
   onRunPhase: (planId: string, phaseId: string) => void;
+  onRunTask: (planId: string, phaseId: string, taskId: string) => void;
   onUpdatePhase: (
     planId: string,
     phaseId: string,
@@ -34,16 +35,19 @@ interface PlanstackSidebarCallbacks {
   onDeletePhase: (planId: string, phaseId: string) => Promise<void>;
   onDeleteTask: (planId: string, phaseId: string, taskId: string) => Promise<void>;
   onRunPlanFully: (planId: string) => Promise<void>;
-  onRunTask: (planId: string, phaseId: string, taskId: string) => Promise<void>;
+  onSyncPushAll: () => Promise<void>;
+  onSyncPullAll: () => Promise<void>;
 }
 
 export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private plans: Plan[] = [];
+  private plansVersion = 0;
   private taskDetailsPanel?: vscode.WebviewPanel;
   private phaseDetailsPanel?: vscode.WebviewPanel;
   private planDetailsPanel?: vscode.WebviewPanel;
   private readonly onRunPhase: PlanstackSidebarCallbacks["onRunPhase"];
+  private readonly onRunTask: PlanstackSidebarCallbacks["onRunTask"];
   private readonly onUpdatePhase: PlanstackSidebarCallbacks["onUpdatePhase"];
   private readonly onUpdateTask: PlanstackSidebarCallbacks["onUpdateTask"];
   private readonly onUpdatePlan: PlanstackSidebarCallbacks["onUpdatePlan"];
@@ -56,7 +60,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private readonly onDeletePhase: PlanstackSidebarCallbacks["onDeletePhase"];
   private readonly onDeleteTask: PlanstackSidebarCallbacks["onDeleteTask"];
   private readonly onRunPlanFully: PlanstackSidebarCallbacks["onRunPlanFully"];
-  private readonly onRunTask: PlanstackSidebarCallbacks["onRunTask"];
+  private readonly onSyncPushAll: PlanstackSidebarCallbacks["onSyncPushAll"];
+  private readonly onSyncPullAll: PlanstackSidebarCallbacks["onSyncPullAll"];
   private readonly promptEditors = new Map<
     string,
     { kind: "plan" | "phase"; planId: string; phaseId?: string }
@@ -64,6 +69,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
 
   constructor(private readonly extUri: vscode.Uri, callbacks: PlanstackSidebarCallbacks) {
     this.onRunPhase = callbacks.onRunPhase;
+    this.onRunTask = callbacks.onRunTask;
     this.onUpdatePhase = callbacks.onUpdatePhase;
     this.onUpdateTask = callbacks.onUpdateTask;
     this.onUpdatePlan = callbacks.onUpdatePlan;
@@ -76,7 +82,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     this.onDeletePhase = callbacks.onDeletePhase;
     this.onDeleteTask = callbacks.onDeleteTask;
     this.onRunPlanFully = callbacks.onRunPlanFully;
-    this.onRunTask = callbacks.onRunTask;
+    this.onSyncPushAll = callbacks.onSyncPushAll;
+    this.onSyncPullAll = callbacks.onSyncPullAll;
   }
 
   resolveWebviewView(
@@ -117,6 +124,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       const m = msg as {
         type?: string;
+        requestId?: string;
         planId?: string;
         phaseId?: string;
         taskId?: string;
@@ -132,13 +140,22 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         traceEvent(recvId, "sidebar.runPhase", { planId: m.planId, phaseId: m.phaseId });
         this.onRunPhase(m.planId, m.phaseId);
       }
+      if (m.type === "runTask" && m.planId && m.phaseId && m.taskId) {
+        traceEvent(recvId, "sidebar.runTask", { planId: m.planId, phaseId: m.phaseId, taskId: m.taskId });
+        this.onRunTask(m.planId, m.phaseId, m.taskId);
+      }
       if (m.type === "updatePhase" && m.planId && m.phaseId) {
         traceEvent(recvId, "sidebar.updatePhase", {
           planId: m.planId,
           phaseId: m.phaseId,
           state: m.state,
         });
-        void this.onUpdatePhase(m.planId, m.phaseId, { state: m.state });
+        void this.onUpdatePhase(m.planId, m.phaseId, { state: m.state }).then((ok) => {
+          if (!m.requestId) {
+            return;
+          }
+          this.view?.webview.postMessage({ type: "mutationAck", requestId: m.requestId, ok });
+        });
       }
       if (m.type === "reorderPlans" && Array.isArray(m.orderedPlanIds)) {
         traceEvent(recvId, "sidebar.reorderPlans", { orderedPlanIds: m.orderedPlanIds });
@@ -199,6 +216,11 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           desc: m.desc,
           prompt: m.prompt,
           commit: m.commit,
+        }).then((ok) => {
+          if (!m.requestId) {
+            return;
+          }
+          this.view?.webview.postMessage({ type: "mutationAck", requestId: m.requestId, ok });
         });
       }
       if (m.type === "createPlan" && typeof m.title === "string") {
@@ -240,13 +262,21 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       if (m.type === "runTask" && m.planId && m.phaseId && m.taskId) {
         void this.onRunTask(m.planId, m.phaseId, m.taskId);
       }
+      if (m.type === "syncPushAll") {
+        void this.onSyncPushAll();
+      }
+      if (m.type === "syncPullAll") {
+        void this.onSyncPullAll();
+      }
     });
     webviewView.onDidDispose(() => sub.dispose());
 
-    const snapshot = this.plans;
+    const sentVersion = this.plansVersion;
     setTimeout(() => {
       try {
-        w.postMessage({ type: "setPlans", plans: snapshot });
+        if (sentVersion === this.plansVersion) {
+          w.postMessage({ type: "setPlans", plans: this.plans });
+        }
       } catch {
         // Webview may already be disposed.
       }
@@ -255,6 +285,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
 
   setPlans(plans: Plan[]): void {
     this.plans = plans;
+    this.plansVersion += 1;
     try {
       this.view?.webview.postMessage({ type: "setPlans", plans });
     } catch {
@@ -617,6 +648,14 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
+    }
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toolbar-group-right {
+      margin-left: auto;
     }
     .toolbar-divider {
       height: 1px;

@@ -224,6 +224,11 @@
           "default": "",
           "description": "Legacy: same as planstack.cursor.openComposerCommand. Used when planstack.cursor.openComposerCommand is empty."
         },
+        "planstack.cursor.syncApiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for Planstack remote sync API (used by Push/Pull in Overview). Example: http://localhost:8787. If empty, PLANSTACK_SYNC_API_BASE_URL is used."
+        },
         "planstack.cursor.agentPath": {
           "type": "string",
           "default": "agent",
@@ -264,6 +269,27 @@
           "minimum": 3000,
           "maximum": 120000,
           "description": "Minimum interval (ms) between Chat system lines when mirroring agent output during CLI runs."
+        },
+        "planstack.cursor.chatMentionsMaxFiles": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Maximum number of @file mentions resolved per Chat message."
+        },
+        "planstack.cursor.chatMentionsMaxFileBytes": {
+          "type": "number",
+          "default": 65536,
+          "minimum": 1024,
+          "maximum": 2097152,
+          "description": "Maximum file size in bytes allowed for a single @file mention."
+        },
+        "planstack.cursor.chatMentionsMaxTotalChars": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 2000,
+          "maximum": 2000000,
+          "description": "Maximum combined characters injected from all @file mentions in one message."
         },
         "planstack.cursor.showGitSummaryAfterCliRun": {
           "type": "boolean",
