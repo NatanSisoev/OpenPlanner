@@ -663,6 +663,14 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .toolbar-group-right {
       margin-left: auto;
     }
+    .toolbar-create-row {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+    .toolbar-create-group {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
     .toolbar-divider {
       height: 1px;
       background: var(--c-border);
@@ -1011,6 +1019,12 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       gap: 8px;
     }
     .graph-plan-run-btn { flex-shrink: 0; }
+    .graph-node-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
     .graph-plan-kicker {
       font-size: 0.64em;
       text-transform: uppercase;
@@ -1103,6 +1117,13 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .graph-plan-node .graph-run-btn:hover {
       background: var(--vscode-button-hoverBackground, var(--vscode-button-background, #0e70c0));
     }
+    .graph-phase-node .graph-add-btn,
+    .graph-plan-node .graph-add-btn {
+      opacity: 1;
+      height: 24px;
+      font-size: 0.72em;
+      padding: 2px 8px;
+    }
 
     .graph-controls {
       display: flex;
@@ -1183,7 +1204,8 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       gap: 8px; user-select: none;
     }
     .plan-header:hover { background: var(--c-hover); }
-    .plan-header:hover .run-btn { opacity: 1; }
+    .plan-header:hover .run-btn,
+    .plan-header:hover .add-btn { opacity: 1; }
     .plan-header.drag-over { outline: 1px dashed rgba(86,156,214,0.6); outline-offset: -2px; }
     .plan-header.dragging { opacity: 0.65; }
 
@@ -1228,7 +1250,8 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       padding: 4px 7px; gap: 5px; border-radius: 4px;
     }
     .phase-header:hover { background: var(--c-hover); }
-    .phase-header:hover .run-btn { opacity: 1; }
+    .phase-header:hover .run-btn,
+    .phase-header:hover .add-btn { opacity: 1; }
 
     .phase-header-left {
       display: flex; align-items: center; gap: 5px;
@@ -1302,6 +1325,19 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       display: flex; align-items: center; gap: 3px;
     }
     .run-btn:hover { background: var(--vscode-button-hoverBackground); }
+
+    .add-btn {
+      font-size: 0.72em; padding: 2px 7px; height: 20px; cursor: pointer;
+      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      border-radius: 3px;
+      background: transparent;
+      color: var(--vscode-foreground);
+      white-space: nowrap; opacity: 0; transition: opacity 0.1s, background 0.1s;
+      display: flex; align-items: center; gap: 2px;
+    }
+    .add-btn:hover {
+      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+    }
 
     /* ── Tasks ── */
     .phase-tasks {

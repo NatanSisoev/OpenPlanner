@@ -7,7 +7,7 @@ import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
-import { buildPromptWithMentionedFiles, findMentionCandidates } from "./chatFileMentions";
+import { buildPromptWithMentions, findChatMentionSuggestions } from "./chatFileMentions";
 import {
   postAgentStreamChunk,
   postAgentStreamEnd,
@@ -211,21 +211,21 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "mentionSuggest" && typeof m.requestId === "string" && typeof m.query === "string") {
         const requestId = m.requestId;
-        const query = m.query;
+        const rawQuery = m.query;
         const folder = vscode.workspace.workspaceFolders?.[0];
         if (!folder) {
-          w.postMessage({ type: "mentionSuggestResult", requestId, candidates: [] });
+          w.postMessage({ type: "mentionSuggestResult", requestId, suggestions: [] });
           return;
         }
         void (async () => {
-          let candidates: string[] = [];
+          let suggestions: Awaited<ReturnType<typeof findChatMentionSuggestions>> = [];
           try {
-            candidates = await findMentionCandidates(folder.uri, { query, limit: 12 });
+            suggestions = await findChatMentionSuggestions(folder.uri, { rawQuery, limit: 12 });
           } catch {
-            candidates = [];
+            suggestions = [];
           }
           try {
-            w.postMessage({ type: "mentionSuggestResult", requestId, candidates });
+            w.postMessage({ type: "mentionSuggestResult", requestId, suggestions });
           } catch {
             // Webview disposed.
           }
@@ -380,23 +380,50 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     if (!folder) {
       return { promptForAgent: userPrompt };
     }
-    const ctx = await buildPromptWithMentionedFiles(folder.uri, userPrompt);
+    const flowLabel = flowKind === "createPlan" ? "Create plan" : "Send";
+    const ctx = await buildPromptWithMentions(folder.uri, userPrompt);
+    const attachedParts: string[] = [];
     if (ctx.files.length > 0) {
-      const used = ctx.files.map((f) => f.displayPath).join(", ");
-      this.pushSystem(
-        w,
-        `${flowKind === "createPlan" ? "Create plan" : "Send"}: attached ${ctx.files.length} @file context item(s): ${used}`,
+      attachedParts.push(
+        `${ctx.files.length} file(s): ${ctx.files.map((f) => f.displayPath).join(", ")}`,
       );
+    }
+    if (ctx.folders.length > 0) {
+      attachedParts.push(
+        `${ctx.folders.length} folder(s): ${ctx.folders.map((f) => `${f.displayPath}/`).join(", ")}`,
+      );
+    }
+    if (ctx.plans.length > 0) {
+      attachedParts.push(
+        `${ctx.plans.length} plan(s): ${ctx.plans.map((p) => p.title).join(", ")}`,
+      );
+    }
+    if (ctx.phases.length > 0) {
+      attachedParts.push(
+        `${ctx.phases.length} phase(s): ${ctx.phases.map((p) => `@${p.raw}`).join(", ")}`,
+      );
+    }
+    if (ctx.tasks.length > 0) {
+      attachedParts.push(
+        `${ctx.tasks.length} task(s): ${ctx.tasks.map((t) => `@${t.raw}`).join(", ")}`,
+      );
+    }
+    if (ctx.symbols.length > 0) {
+      attachedParts.push(
+        `${ctx.symbols.length} symbol(s): ${ctx.symbols
+          .map((s) => `${s.name} [${s.kindLabel}] @ ${s.filePath}:${s.startLine}`)
+          .join(", ")}`,
+      );
+    }
+    if (attachedParts.length > 0) {
+      this.pushSystem(w, `${flowLabel}: attached ${attachedParts.join("; ")}`);
     }
     if (ctx.errors.length > 0) {
       const detail = ctx.errors
         .slice(0, 8)
         .map((e) => `@${e.mention}: ${e.reason}`)
         .join(" | ");
-      this.pushSystem(
-        w,
-        `${flowKind === "createPlan" ? "Create plan" : "Send"}: skipped some @ mentions - ${detail}`,
-      );
+      this.pushSystem(w, `${flowLabel}: skipped some @ mentions - ${detail}`);
     }
     return { promptForAgent: ctx.promptForAgent };
   }
@@ -864,6 +891,20 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       line-height: 1.5;
       font-family: var(--vscode-editor-font-family);
     }
+    .mention-chip-kind {
+      font-size: 0.78em;
+      padding: 0 5px;
+      border-radius: 8px;
+      background: rgba(127,127,127,0.25);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .mention-chip-plan .mention-chip-kind { background: rgba(120, 200, 255, 0.38); }
+    .mention-chip-phase .mention-chip-kind { background: rgba(99, 132, 255, 0.35); }
+    .mention-chip-task .mention-chip-kind { background: rgba(110, 200, 130, 0.35); }
+    .mention-chip-symbol .mention-chip-kind { background: rgba(220, 130, 230, 0.35); }
+    .mention-chip-folder .mention-chip-kind { background: rgba(200, 170, 90, 0.38); }
+    .mention-chip-label { white-space: nowrap; }
     .mention-chip-remove {
       border: none;
       background: transparent;
@@ -891,7 +932,9 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     #mentionSuggest.show { display: block; }
     .mention-suggest-item {
-      display: block;
+      display: flex;
+      align-items: center;
+      gap: 6px;
       width: 100%;
       border: none;
       border-bottom: 1px solid rgba(127,127,127,0.12);
@@ -907,6 +950,33 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     .mention-suggest-item:hover,
     .mention-suggest-item.active {
       background: var(--vscode-list-activeSelectionBackground, rgba(127,127,127,0.2));
+    }
+    .mention-suggest-kind {
+      flex-shrink: 0;
+      font-size: 0.74em;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: rgba(127,127,127,0.25);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .mention-suggest-plan .mention-suggest-kind { background: rgba(120, 200, 255, 0.38); }
+    .mention-suggest-phase .mention-suggest-kind { background: rgba(99, 132, 255, 0.35); }
+    .mention-suggest-task .mention-suggest-kind { background: rgba(110, 200, 130, 0.35); }
+    .mention-suggest-symbol .mention-suggest-kind { background: rgba(220, 130, 230, 0.35); }
+    .mention-suggest-folder .mention-suggest-kind { background: rgba(200, 170, 90, 0.38); }
+    .mention-suggest-label {
+      flex-shrink: 0;
+      font-family: var(--vscode-editor-font-family);
+    }
+    .mention-suggest-detail {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0.7;
+      font-size: 0.92em;
     }
     #composerActions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
     #send, #createPlan, #stopAgents {
@@ -1177,7 +1247,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits, and <strong>@file</strong> includes workspace file context.</div>
+  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits. Tag with <strong>@file</strong>, <strong>@folder:path/to/dir</strong>, <strong>@plan:planId</strong>, <strong>@phase:planId/phaseId</strong>, <strong>@task:planId/phaseId/taskId</strong>, or <strong>@symbol:Name</strong>.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <div id="inputWrap">

@@ -130,10 +130,10 @@
 
   function renderToolbar(onlyCreate) {
     const createButtons = `
-      <div class="toolbar-group">
-        <button class="quick-btn" data-action="quickCreatePlan">+ Plan</button>
-        <button class="quick-btn" data-action="quickCreatePhase">+ Phase</button>
-        <button class="quick-btn" data-action="quickCreateTask">+ Task</button>
+      <div class="toolbar-row toolbar-create-row">
+        <div class="toolbar-group toolbar-create-group">
+          <button class="quick-btn" data-action="quickCreatePlan">+ Plan</button>
+        </div>
       </div>
     `;
     if (onlyCreate) {
@@ -141,8 +141,6 @@
     }
     return `
       <div class="top-toolbar">
-        ${createButtons}
-        <div class="toolbar-divider"></div>
         <div class="toolbar-row">
           <div class="toolbar-group">
             <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list">List view</button>
@@ -161,6 +159,8 @@
             </div>
           </div>
         </div>
+        <div class="toolbar-divider"></div>
+        ${createButtons}
       </div>
     `;
   }
@@ -231,10 +231,15 @@
           <span class="graph-plan-kicker">plan</span>
           <div class="graph-plan-footer">
             <span class="graph-plan-title">${esc(node.title)}</span>
-            <button class="run-btn graph-run-btn graph-plan-run-btn"
-                    data-action="runPlanFromGraph"
-                    data-plan="${pid}"
-                    title="Run all phases in order">▶</button>
+            <div class="graph-node-actions">
+              <button type="button" class="add-btn graph-add-btn"
+                      data-action="quickCreatePhase" data-plan="${pid}"
+                      title="Add phase to this plan">+ Phase</button>
+              <button class="run-btn graph-run-btn graph-plan-run-btn"
+                      data-action="runPlanFromGraph"
+                      data-plan="${pid}"
+                      title="Run all phases in order">▶</button>
+            </div>
           </div>
         </div>
       `;
@@ -257,11 +262,16 @@
         </button>
         <div class="graph-phase-footer">
           <span class="graph-phase-plan">${esc(node.plan.title)}</span>
-          <button class="run-btn graph-run-btn"
-                  data-action="runPhaseFromGraph"
-                  data-plan="${pid}"
-                  data-phase="${phid}"
-                  title="Run this phase">▶</button>
+          <div class="graph-node-actions">
+            <button type="button" class="add-btn graph-add-btn"
+                    data-action="quickCreateTask" data-plan="${pid}" data-phase="${phid}"
+                    title="Add task to this phase">+ Task</button>
+            <button class="run-btn graph-run-btn"
+                    data-action="runPhaseFromGraph"
+                    data-plan="${pid}"
+                    data-phase="${phid}"
+                    title="Run this phase">▶</button>
+          </div>
         </div>
       </div>
     `;
@@ -536,6 +546,7 @@
           </div>
           <div class="phase-header-right">
             ${badgeHtml(phase.state)}
+            <button type="button" class="add-btn" data-action="quickCreateTask" data-plan="${pid}" data-phase="${phid}" title="Add task to this phase">+ Task</button>
             <button class="run-btn" data-action="runPhase" data-plan="${pid}" data-phase="${phid}" title="Run this phase">▶ Run</button>
           </div>
         </div>
@@ -590,6 +601,7 @@
             <span class="plan-progress">${done}/${total}</span>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
             ${mergeButton}
+            <button type="button" class="add-btn" data-action="quickCreatePhase" data-plan="${pid}" title="Add phase to this plan">+ Phase</button>
             <button class="run-btn" data-action="runPlan" data-plan="${pid}" title="Run next phase">▶ Run</button>
           </div>
         </div>
@@ -636,6 +648,7 @@
           </div>
           <div class="phase-header-right">
             ${badgeHtml(phase.state)}
+            <button type="button" class="add-btn" data-action="quickCreateTask" data-plan="${pid}" data-phase="${phid}" title="Add task to this phase">+ Task</button>
             <button class="run-btn"
                     data-action="runPhase" data-plan="${pid}" data-phase="${phid}"
                     title="${esc(blockedTitle)}">▶ Run</button>
@@ -731,12 +744,25 @@
     }
 
     if (action === "quickCreatePhase") {
-      openWizard("phase");
+      const presetPlan = planId && plans.some((p) => p.id === planId) ? planId : "";
+      openWizard("phase", presetPlan ? { planId: presetPlan } : {});
       return;
     }
 
     if (action === "quickCreateTask") {
-      openWizard("task");
+      const presetPlan = planId && plans.some((p) => p.id === planId) ? planId : "";
+      let presetPhase = "";
+      if (presetPlan && phaseId) {
+        const phases = plans.find((p) => p.id === presetPlan)?.phases || [];
+        if (phases.some((ph) => ph.id === phaseId)) {
+          presetPhase = phaseId;
+        }
+      }
+      const ctx = {
+        ...(presetPlan ? { planId: presetPlan } : {}),
+        ...(presetPhase ? { phaseId: presetPhase } : {}),
+      };
+      openWizard("task", ctx);
       return;
     }
 
@@ -1237,36 +1263,69 @@
     activeContextMenu = menu;
   }
 
-  function openWizard(kind) {
+  function openWizard(kind, ctx = {}) {
     if (kind !== "plan" && !plans.length) {
       return;
     }
+    const presetPlanId =
+      typeof ctx.planId === "string" && plans.some((p) => p.id === ctx.planId) ? ctx.planId : "";
+    const presetPhaseId = typeof ctx.phaseId === "string" ? ctx.phaseId : "";
+
     wizardState = {
       kind,
       step: 1,
-      planId: plans[0]?.id || "",
+      planId: presetPlanId || plans[0]?.id || "",
       phaseId: "",
     };
-    if (kind === "phase" && plans.length === 1) {
-      wizardState.planId = plans[0].id;
-      wizardState.step = 2;
-    }
-    if (kind === "task") {
-      if (plans.length === 1) {
+
+    let postOpenError = "";
+
+    if (kind === "phase") {
+      if (presetPlanId) {
+        wizardState.planId = presetPlanId;
+        wizardState.step = 2;
+      } else if (plans.length === 1) {
         wizardState.planId = plans[0].id;
-        const phases = Array.isArray(plans[0].phases) ? plans[0].phases : [];
-        if (phases.length === 0) {
-          showWizardError("This plan has no phases yet. Create a phase first.");
-        } else if (phases.length === 1) {
+        wizardState.step = 2;
+      }
+    } else if (kind === "task") {
+      const resolveStepsForPlan = (plan) => {
+        const phases = Array.isArray(plan?.phases) ? plan.phases : [];
+        if (!phases.length) {
+          postOpenError = "This plan has no phases yet. Create a phase first.";
+          wizardState.phaseId = "";
+          wizardState.step = 1;
+          return;
+        }
+        if (presetPhaseId && phases.some((ph) => ph.id === presetPhaseId)) {
+          wizardState.phaseId = presetPhaseId;
+          wizardState.step = 3;
+          return;
+        }
+        if (phases.length === 1) {
           wizardState.phaseId = phases[0].id;
           wizardState.step = 3;
         } else {
+          wizardState.phaseId = "";
           wizardState.step = 2;
         }
+      };
+
+      if (presetPlanId) {
+        wizardState.planId = presetPlanId;
+        const plan = plans.find((p) => p.id === presetPlanId);
+        resolveStepsForPlan(plan);
+      } else if (plans.length === 1) {
+        wizardState.planId = plans[0].id;
+        resolveStepsForPlan(plans[0]);
       }
     }
+
     wizardOverlay.style.display = "flex";
     renderWizard();
+    if (postOpenError) {
+      showWizardError(postOpenError);
+    }
   }
 
   function closeWizard() {
