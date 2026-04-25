@@ -4,6 +4,7 @@
   let plans = [];
   const expandedPlans = new Set();
   const expandedPhases = new Set();
+  let activeContextMenu = null;
 
   const root = document.getElementById("root");
 
@@ -89,7 +90,7 @@
 
     return `
       <div class="phase-row">
-        <div class="phase-header">
+        <div class="phase-header" data-plan="${pid}" data-phase="${phid}">
           <div class="phase-header-left"
                ${hasTasks ? `data-action="togglePhase" data-plan="${pid}" data-phase="${phid}"` : ""}>
             ${hasTasks
@@ -141,7 +142,7 @@
     }
 
     return `
-      <div class="task-row">
+      <div class="task-row" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
         ${taskIconHtml(task.state)}
         <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
         <div class="task-actions">${btns.join("")}</div>
@@ -151,6 +152,7 @@
   // ── Event delegation ─────────────────────────────────────────────────────
 
   document.addEventListener("click", (e) => {
+    hideContextMenu();
     const el = e.target.closest("[data-action]");
     if (!el) {
       return;
@@ -190,7 +192,7 @@
     if (action === "taskStatus") {
       e.stopPropagation();
       const newState = el.dataset.status;
-      vscode.postMessage({ type: "updateTaskStatus", planId, phaseId, taskId, state: newState });
+      vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: newState });
       // Optimistic local update
       const plan = plans.find((p) => p.id === planId);
       const phase = plan?.phases?.find((ph) => ph.id === phaseId);
@@ -201,6 +203,223 @@
       }
     }
   });
+
+  document.addEventListener("contextmenu", (e) => {
+    hideContextMenu();
+    if (e.target.closest("button")) {
+      return;
+    }
+    const taskRow = e.target.closest(".task-row");
+    if (taskRow) {
+      e.preventDefault();
+      openTaskContextMenu(e, taskRow);
+      return;
+    }
+    const phaseHeader = e.target.closest(".phase-header");
+    if (!phaseHeader) {
+      return;
+    }
+    e.preventDefault();
+    openPhaseContextMenu(e, phaseHeader);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      hideContextMenu();
+    }
+  });
+
+  function openTaskContextMenu(event, row) {
+    const planId = row.dataset.plan;
+    const phaseId = row.dataset.phase;
+    const taskId = row.dataset.task;
+    if (!planId || !phaseId || !taskId) {
+      return;
+    }
+    const task = getTask(planId, phaseId, taskId);
+    if (!task) {
+      return;
+    }
+
+    const menu = createContextMenu(event.clientX, event.clientY, [
+      {
+        label: "Open task details",
+        onClick: () => vscode.postMessage({ type: "openTaskDetails", planId, phaseId, taskId }),
+      },
+      {
+        label: "Rename task",
+        onClick: () => {
+          const nextDesc = prompt("Task description", task.desc || "");
+          if (nextDesc === null) {
+            return;
+          }
+          const trimmed = nextDesc.trim();
+          if (!trimmed) {
+            return;
+          }
+          task.desc = trimmed;
+          vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, desc: trimmed });
+          render();
+        },
+      },
+      {
+        label: task.commit ? "Disable commit requirement" : "Enable commit requirement",
+        onClick: () => {
+          const nextCommit = !Boolean(task.commit);
+          task.commit = nextCommit;
+          vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, commit: nextCommit });
+          render();
+        },
+      },
+      {
+        label: "Edit task prompt",
+        onClick: () => {
+          const nextPrompt = prompt("Task prompt", task.prompt || "");
+          if (nextPrompt === null) {
+            return;
+          }
+          task.prompt = nextPrompt;
+          vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, prompt: nextPrompt });
+          render();
+        },
+      },
+      {
+        label: "Set state: pending",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "pending"),
+      },
+      {
+        label: "Set state: in progress",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "in_progress"),
+      },
+      {
+        label: "Set state: completed",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "completed"),
+      },
+      {
+        label: "Set state: failed",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "failed"),
+      },
+      {
+        label: "Set state: cancelled",
+        onClick: () => updateTaskState(planId, phaseId, taskId, "cancelled"),
+      },
+    ]);
+    document.body.appendChild(menu);
+    activeContextMenu = menu;
+  }
+
+  function openPhaseContextMenu(event, phaseHeader) {
+    const planId = phaseHeader.dataset.plan;
+    const phaseId = phaseHeader.dataset.phase;
+    if (!planId || !phaseId) {
+      return;
+    }
+    const phase = getPhase(planId, phaseId);
+    if (!phase) {
+      return;
+    }
+    const taskCount = Array.isArray(phase.tasks) ? phase.tasks.length : 0;
+    const menu = createContextMenu(event.clientX, event.clientY, [
+      {
+        label: `Phase info (${phase.state})`,
+        onClick: () => vscode.postMessage({ type: "openPhaseDetails", planId, phaseId }),
+      },
+      {
+        label: `Show tasks (${taskCount})`,
+        onClick: () => {
+          const key = planId + "::" + phaseId;
+          expandedPhases.add(key);
+          render();
+          vscode.postMessage({ type: "openPhaseDetails", planId, phaseId });
+        },
+      },
+      {
+        label: expandedPhases.has(planId + "::" + phaseId) ? "Collapse tasks" : "Expand tasks",
+        onClick: () => {
+          const key = planId + "::" + phaseId;
+          if (expandedPhases.has(key)) {
+            expandedPhases.delete(key);
+          } else {
+            expandedPhases.add(key);
+          }
+          render();
+        },
+      },
+    ]);
+    document.body.appendChild(menu);
+    activeContextMenu = menu;
+  }
+
+  function updateTaskState(planId, phaseId, taskId, newState) {
+    const task = getTask(planId, phaseId, taskId);
+    if (!task) {
+      return;
+    }
+    task.state = newState;
+    vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: newState });
+    render();
+  }
+
+  function getPhase(planId, phaseId) {
+    const plan = plans.find((p) => p.id === planId);
+    return plan?.phases?.find((ph) => ph.id === phaseId);
+  }
+
+  function getTask(planId, phaseId, taskId) {
+    const phase = getPhase(planId, phaseId);
+    return phase?.tasks?.find((t) => t.id === taskId);
+  }
+
+  function hideContextMenu() {
+    if (activeContextMenu && activeContextMenu.parentNode) {
+      activeContextMenu.parentNode.removeChild(activeContextMenu);
+    }
+    activeContextMenu = null;
+  }
+
+  function createContextMenu(x, y, items) {
+    const menu = document.createElement("div");
+    menu.style.position = "fixed";
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.style.minWidth = "220px";
+    menu.style.maxWidth = "320px";
+    menu.style.background = "var(--vscode-menu-background, var(--vscode-editor-background))";
+    menu.style.color = "var(--vscode-menu-foreground, var(--vscode-foreground))";
+    menu.style.border = "1px solid var(--vscode-menu-border, rgba(127,127,127,0.4))";
+    menu.style.borderRadius = "6px";
+    menu.style.padding = "4px 0";
+    menu.style.zIndex = "9999";
+    menu.style.boxShadow = "0 4px 14px rgba(0,0,0,0.35)";
+    menu.style.userSelect = "none";
+
+    items.forEach((item) => {
+      const line = document.createElement("button");
+      line.type = "button";
+      line.textContent = item.label;
+      line.style.display = "block";
+      line.style.width = "100%";
+      line.style.textAlign = "left";
+      line.style.padding = "6px 10px";
+      line.style.background = "transparent";
+      line.style.border = "none";
+      line.style.color = "inherit";
+      line.style.font = "inherit";
+      line.style.cursor = "pointer";
+      line.addEventListener("mouseenter", () => {
+        line.style.background = "var(--vscode-list-hoverBackground, rgba(127,127,127,0.2))";
+      });
+      line.addEventListener("mouseleave", () => {
+        line.style.background = "transparent";
+      });
+      line.addEventListener("click", () => {
+        hideContextMenu();
+        item.onClick();
+      });
+      menu.appendChild(line);
+    });
+    return menu;
+  }
 
   // ── Message handler ──────────────────────────────────────────────────────
 
