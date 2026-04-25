@@ -14,6 +14,9 @@
     "onView:hackupc.planstack.chat",
     "onView:hackupc.planstackPlans",
     "onCommand:hackupc.planstack.refresh",
+    "onCommand:hackupc.planstack.createPlan",
+    "onCommand:hackupc.planstack.createPhase",
+    "onCommand:hackupc.planstack.createTask",
     "onCommand:hackupc.planstack.runPhase",
     "onCommand:hackupc.planstack.taskSetState.pending",
     "onCommand:hackupc.planstack.taskSetState.in_progress",
@@ -58,6 +61,18 @@
         "command": "hackupc.planstack.refresh",
         "title": "Planstack: Refresh plans",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "hackupc.planstack.createPlan",
+        "title": "Planstack: Add Plan"
+      },
+      {
+        "command": "hackupc.planstack.createPhase",
+        "title": "Planstack: Add Phase"
+      },
+      {
+        "command": "hackupc.planstack.createTask",
+        "title": "Planstack: Add Task"
       },
       {
         "command": "hackupc.planstack.runPhase",
