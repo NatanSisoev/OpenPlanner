@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { getOutput } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
-import { createPlanFromUserRequest } from "../plan/createPlanFromCli";
+import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
 import {
   postAgentStreamChunk,
@@ -34,6 +34,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private readonly transcript: ChatTurn[] = [];
   private createPlanInFlight = false;
+  private sendInFlight = false;
 
   constructor(
     private readonly extUri: vscode.Uri,
@@ -126,7 +127,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         this.transcript.push({ role: "user", text });
         w.postMessage({ type: "append", role: "user", text });
-        traceEvent(recvId, "chat.send.done", { storedChars: text.length });
+        void this.runSendPromptFlow(w, text);
+        traceEvent(recvId, "chat.send.done", { storedChars: text.length, handled: true });
         return;
       }
       if (m.type === "createPlan" && typeof m.text === "string") {
@@ -353,6 +355,153 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       w.postMessage({ type: "busy", busy: false });
     }
   }
+
+  private pushSystem(w: vscode.Webview, text: string): void {
+    this.transcript.push({ role: "system", text });
+    try {
+      w.postMessage({ type: "append", role: "system", text });
+    } catch {
+      // Webview disposed.
+    }
+  }
+
+  private async runSendPromptFlow(w: vscode.Webview, userPrompt: string): Promise<void> {
+    const flowId = newTraceId("sendPromptFlow");
+    traceEvent(flowId, "sendPromptFlow.start", { promptChars: userPrompt.length });
+    traceMultiline(flowId, "sendPromptFlow.userPrompt", userPrompt);
+    if (this.sendInFlight) {
+      this.pushSystem(w, "Send is busy with another request. Please wait.");
+      return;
+    }
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      this.pushSystem(w, "Send failed: open a workspace folder first.");
+      return;
+    }
+
+    this.sendInFlight = true;
+    w.postMessage({ type: "busy", busy: true });
+
+    const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+    const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
+    const chatThrottleMs = cfg.get<number>("cliStreamChatThrottleMs") ?? 25_000;
+    const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
+    const out = getOutput();
+    out.show(true);
+    out.appendLine(`\n=== Send prompt: agent run ${new Date().toISOString()} ===\n`);
+
+    const runId = randomUUID();
+    let streamActive = false;
+    let endReason: AgentStreamEndReason = "complete";
+    let lastChatAt = 0;
+    const pushStreamChat = (prefix: string, chunk: string): void => {
+      const t = chunk.trim();
+      if (!t) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastChatAt < chatThrottleMs) {
+        return;
+      }
+      lastChatAt = now;
+      this.pushSystem(w, `${prefix}${t.slice(-220)}`);
+    };
+
+    try {
+      this.pushSystem(w, "Send: starting Cursor CLI run (agent -p --trust --force)…");
+      if (useLiveChat) {
+        streamActive = true;
+        postAgentStreamStart(runId, {
+          label: "Send prompt",
+          source: "sendPrompt",
+          initialLine:
+            "Waiting for agent stdout/stderr…\n\nThe run can edit files directly in your workspace.\n\n",
+        });
+      }
+
+      const result = await runAgentPromptEdits({
+        extensionContext: this.extensionContext,
+        workspaceRoot: folder.uri,
+        prompt: userPrompt,
+        debugTraceId: flowId,
+        onAgentStdoutChunk:
+          streamToOutput || useLiveChat
+            ? (text) => {
+                if (streamToOutput && text) {
+                  out.append(text);
+                }
+                if (!text) {
+                  return;
+                }
+                if (useLiveChat) {
+                  postAgentStreamChunk(runId, "stdout", text);
+                } else if (streamToOutput) {
+                  pushStreamChat("Send: ", text);
+                }
+              }
+            : undefined,
+        onAgentStderrChunk:
+          streamToOutput || useLiveChat
+            ? (text) => {
+                if (streamToOutput && text) {
+                  out.append(text);
+                }
+                if (!text) {
+                  return;
+                }
+                if (useLiveChat) {
+                  postAgentStreamChunk(runId, "stderr", text);
+                } else if (streamToOutput) {
+                  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+                  const last = lines.length > 0 ? lines[lines.length - 1]! : text;
+                  pushStreamChat("Send (stderr): ", last);
+                }
+              }
+            : undefined,
+      });
+
+      if (result.exitCode !== 0) {
+        const tail = result.stderr.trim() || result.stdout.slice(-400);
+        throw new AgentCliError(
+          `agent exited with code ${result.exitCode}. ${tail ? `Details: ${tail}` : ""}`.trim(),
+          result.exitCode,
+          result.stderr,
+        );
+      }
+
+      const saidNoChanges = /no changes|no files? (were )?modified|nothing to (edit|change)/i.test(
+        result.stdout,
+      );
+      this.pushSystem(
+        w,
+        saidNoChanges
+          ? "Send completed: Cursor reported no changes."
+          : "Send completed: Cursor applied edits (check git diff / workspace changes).",
+      );
+      await this.onPlanSaved();
+    } catch (e) {
+      let detail = e instanceof Error ? e.message : String(e);
+      if (e instanceof AgentCliError && e.stderr?.trim()) {
+        detail = `${detail}\n${e.stderr.trim().slice(0, 800)}`;
+      }
+      const stopped = e instanceof AgentCliError && detail.includes("stopped");
+      endReason = stopped ? "stopped" : "error";
+      this.pushSystem(w, `Send failed: ${detail.slice(0, 500)}`);
+      if (e instanceof AgentRunBusyError) {
+        void vscode.window.showWarningMessage(e.message);
+      } else if (stopped) {
+        void vscode.window.showWarningMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      } else {
+        void vscode.window.showErrorMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      }
+    } finally {
+      if (streamActive) {
+        postAgentStreamEnd(runId, endReason);
+      }
+      this.sendInFlight = false;
+      w.postMessage({ type: "busy", busy: false });
+    }
+  }
 }
 
 function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
@@ -476,10 +625,10 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> for <code>.planstack/plans/&lt;id&gt;.json</code>. Agent stdout/stderr can appear in a <strong>live block</strong> below (and in <strong>Output → Planstack</strong>). Toggle <code>planstack.cursor.agentChatLiveStream</code> off for throttled bubbles only. One agent at a time; <strong>Stop agents</strong> sends SIGTERM. <strong>Send</strong> stays local.</div>
+  <div class="hint">Use <strong>Create plan</strong> for new <code>.planstack/plans/&lt;id&gt;.json</code> files. Use <strong>Send</strong> for freeform editing prompts; it runs Cursor CLI headless and can edit your workspace directly. Agent stdout/stderr can appear in a <strong>live block</strong> below (and in <strong>Output → Planstack</strong>). One run at a time; <strong>Stop agents</strong> sends SIGTERM.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
-    <textarea id="input" rows="2" placeholder="Describe the plan you want…" aria-label="Message"></textarea>
+    <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>
     <div id="composerActions">
       <button type="button" id="stopAgents">Stop agents</button>
       <button type="button" id="createPlan">Create plan</button>

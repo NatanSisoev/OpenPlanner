@@ -14,6 +14,8 @@
     "onView:hackupc.planstack.chat",
     "onView:hackupc.planstackPlans",
     "onCommand:hackupc.planstack.refresh",
+    "onCommand:hackupc.planstack.resyncPlan",
+    "onCommand:hackupc.planstack.mergePlan",
     "onCommand:hackupc.planstack.runPhase",
     "onCommand:hackupc.planstack.taskSetState.pending",
     "onCommand:hackupc.planstack.taskSetState.in_progress",
@@ -61,8 +63,17 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "hackupc.planstack.resyncPlan",
+        "title": "Planstack: Re-sync plan to current codebase",
+        "icon": "$(sync)"
+      },
+      {
         "command": "hackupc.planstack.runPhase",
         "title": "Planstack: Run phase (execution)"
+      },
+      {
+        "command": "hackupc.planstack.mergePlan",
+        "title": "Planstack: Merge completed plan branch into base branch"
       },
       {
         "command": "hackupc.planstack.taskSetState.pending",
@@ -113,6 +124,11 @@
           "command": "hackupc.planstack.refresh",
           "when": "view == hackupc.planstackPlans",
           "group": "navigation"
+        },
+        {
+          "command": "hackupc.planstack.resyncPlan",
+          "when": "view == hackupc.planstackPlans",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -120,6 +136,11 @@
           "command": "hackupc.planstack.runPhase",
           "when": "view == hackupc.planstackPlans && viewItem == hackupcPhase",
           "group": "inline@0"
+        },
+        {
+          "command": "hackupc.planstack.resyncPlan",
+          "when": "view == hackupc.planstackPlans && viewItem == hackupcPhase",
+          "group": "inline@2"
         },
         {
           "submenu": "hackupc.planstack.taskSetState",

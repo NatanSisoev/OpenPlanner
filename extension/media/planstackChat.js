@@ -114,7 +114,12 @@
       const header = document.createElement("div");
       header.className = "agent-stream-header";
       const label = typeof msg.label === "string" ? msg.label : "Agent";
-      const src = msg.source === "createPlan" ? "Create plan" : "Run phase";
+      const src =
+        msg.source === "createPlan"
+          ? "Create plan"
+          : msg.source === "sendPrompt"
+            ? "Send"
+            : "Run phase";
       header.textContent = `${label} · ${src} · live`;
 
       const pre = document.createElement("pre");
