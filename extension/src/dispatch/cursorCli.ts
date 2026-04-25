@@ -175,13 +175,7 @@ export async function handoffViaAgentCli(
     cwd,
   });
 
-  const heartbeatEveryMs = 45_000;
   const startedAt = Date.now();
-  const heartbeat = setInterval(() => {
-    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
-    const elapsedHuman = elapsedSec < 60 ? `${elapsedSec}s` : `~${Math.floor(elapsedSec / 60)} min`;
-    postChatSystemMessage(`${label}: still running (${elapsedHuman} elapsed)…`);
-  }, heartbeatEveryMs);
 
   const output = getOutput();
   output.show(true);
@@ -329,8 +323,6 @@ export async function handoffViaAgentCli(
       },
     );
 
-    clearInterval(heartbeat);
-
     appendRunLog(stdout, stderr);
     traceEvent(tid, "handoffViaAgentCli.agent_finished", {
       exitCode,
@@ -418,7 +410,6 @@ export async function handoffViaAgentCli(
       await vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
     }
   } finally {
-    clearInterval(heartbeat);
     traceEvent(tid, "handoffViaAgentCli.finally", {});
   }
 }

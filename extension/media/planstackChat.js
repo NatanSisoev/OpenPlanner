@@ -138,11 +138,16 @@
       for (const file of summary.files) {
         const row = document.createElement("div");
         row.className = "run-summary-file-row";
+        const openPath = typeof file.path === "string" ? file.path : "";
+        const displayPath =
+          typeof file.displayPath === "string" && file.displayPath.trim().length > 0
+            ? file.displayPath
+            : openPath;
 
         const pathEl = document.createElement("span");
         pathEl.className = "run-summary-file-path";
-        pathEl.textContent = file.path;
-        pathEl.title = file.path;
+        pathEl.textContent = displayPath;
+        pathEl.title = displayPath;
 
         const diffEl = document.createElement("span");
         diffEl.className = "run-summary-file-diff";
@@ -151,9 +156,13 @@
         const diffBtn = document.createElement("button");
         diffBtn.className = "run-summary-diff-btn";
         diffBtn.textContent = "↗ diff";
-        diffBtn.title = `Open diff for ${file.path}`;
+        diffBtn.title = `Open diff for ${displayPath}`;
+        diffBtn.disabled = !openPath;
         diffBtn.addEventListener("click", () => {
-          vscode.postMessage({ type: "openFileDiff", filePath: file.path });
+          if (!openPath) {
+            return;
+          }
+          vscode.postMessage({ type: "openFileDiff", filePath: openPath });
         });
 
         row.appendChild(pathEl);

@@ -15,6 +15,7 @@ import { killAllAgentCliProcesses } from "./plan/agentCliRunner";
 import { logLine } from "./log";
 import { savePlanPreservingFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
+import { postChatSystemMessage } from "./ui/chatStatusBridge";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
 import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem, TaskTreeItem } from "./ui/planTreeProvider";
 import { WORK_STATES, type ExecutionState } from "./plan/types";
@@ -84,6 +85,8 @@ function normalizeStaleInProgressToPending(plan: Plan): void {
 
 export function activate(context: vscode.ExtensionContext): void {
   const extUri = context.extensionUri;
+  type RunEntrySource = "sidebar_webview" | "tree_command";
+  type BranchDecision = "prepare_branch" | "current_branch" | "cancel";
 
   const phaseRunHooks: {
     applyOutcome?: (planId: string, phaseId: string, outcome: CliPhaseRunFinishedKind) => Promise<void>;
@@ -95,6 +98,112 @@ export function activate(context: vscode.ExtensionContext): void {
     currentPlans = orderPlans(loaded, savedOrder);
     provider.setPlans(currentPlans);
     sidebar.setPlans(currentPlans);
+  }
+
+  function planChatLabel(plan: Plan): string {
+    const title = plan.title.trim();
+    return title.length > 0 ? `${title} (${plan.id})` : plan.id;
+  }
+
+  async function askRunBranchDecision(
+    plan: Plan,
+    phase: Plan["phases"][number],
+    source: RunEntrySource,
+  ): Promise<BranchDecision> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const git = root
+      ? await summarizeGitForPlan(root, phase, plan)
+      : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
+
+    const planBranch = plan.git?.planBranch?.trim();
+    const baseBranch = plan.git?.baseBranch?.trim() || "main";
+    const currentBranch = git.currentBranchLabel ?? "unknown";
+    const sourceLabel = source === "tree_command" ? "Plans tree" : "Overview";
+
+    const prepareDetail = planBranch
+      ? `planBranch=${planBranch} · baseBranch=${baseBranch}`
+      : "No git.planBranch configured; setup step will be skipped.";
+
+    const pick = await vscode.window.showQuickPick<
+      vscode.QuickPickItem & { decision: Exclude<BranchDecision, "cancel"> }
+    >(
+      [
+        {
+          label: "$(git-branch) Prepare/switch branch, then run",
+          description: prepareDetail,
+          detail: `Current branch: ${currentBranch}`,
+          decision: "prepare_branch",
+        },
+        {
+          label: "$(play) Run on current branch",
+          description: `Skip branch setup and run now`,
+          detail: `Current branch: ${currentBranch}`,
+          decision: "current_branch",
+        },
+      ],
+      {
+        title: `Planstack: Run "${phase.title}" (${sourceLabel})`,
+        placeHolder: "Choose how to run this phase",
+        ignoreFocusOut: true,
+      },
+    );
+    return pick?.decision ?? "cancel";
+  }
+
+  async function runPhaseWithBranchDecision(
+    plan: Plan,
+    phase: Plan["phases"][number],
+    traceId: string,
+    source: RunEntrySource,
+  ): Promise<boolean> {
+    const decision = await askRunBranchDecision(plan, phase, source);
+    traceEvent(traceId, "runphase.branch_decision", { source, decision, planId: plan.id, phaseId: phase.id });
+    if (decision === "cancel") {
+      return false;
+    }
+
+    if (decision === "prepare_branch") {
+      const branchOk = await ensurePlanWorkBranch(plan, context.workspaceState);
+      traceEvent(traceId, "runphase.branch_prep", { path: source, ok: branchOk, mode: "prepare_branch" });
+      if (!branchOk) {
+        return false;
+      }
+      postChatSystemMessage(`${planChatLabel(plan)}: branch prep accepted for phase "${phase.title}".`);
+    } else {
+      postChatSystemMessage(
+        `${planChatLabel(plan)}: running phase "${phase.title}" on current branch (branch prep skipped).`,
+      );
+    }
+
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const git = root
+      ? await summarizeGitForPlan(root, phase, plan)
+      : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
+    const eff = effectiveWorkBranch(phase, plan);
+    const prompt = buildPhaseHandoffPrompt(plan, phase, {
+      currentHead: git.currentBranchLabel,
+      effectiveWorkBranch: eff,
+      baseBranch: plan.git?.baseBranch,
+    });
+    traceMultiline(traceId, "runphase.generated_prompt", prompt);
+    if (root) {
+      phase.state = "in_progress";
+      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+    }
+    traceEvent(traceId, "runphase.dispatch", {
+      statusLabel: `${plan.title} › ${phase.title}`,
+      traceId,
+      source,
+    });
+    await dispatchPhaseHandoff(prompt, context, {
+      statusLabel: `${plan.title} › ${phase.title}`,
+      traceId,
+      onCliRunFinished: (kind) =>
+        phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(plan.id, phase.id, kind) : Promise.resolve(),
+    });
+    return true;
   }
 
   const sidebarUi = new PlanstackSidebarWebview(
@@ -114,33 +223,11 @@ export function activate(context: vscode.ExtensionContext): void {
           planTitle: plan.title,
           phaseTitle: phase.title,
         });
-        const branchOk = await ensurePlanWorkBranch(plan, context.workspaceState);
-        traceEvent(tid, "runphase.branch_prep", { path: "sidebar_webview", ok: branchOk });
-        if (!branchOk) {
-          traceEvent(tid, "runphase.sidebar.abort", { reason: "branch_prep_failed" });
+        const started = await runPhaseWithBranchDecision(plan, phase, tid, "sidebar_webview");
+        if (!started) {
+          traceEvent(tid, "runphase.sidebar.abort", { reason: "user_cancelled_or_branch_prep_failed" });
           return;
         }
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        const git = root
-          ? await summarizeGitForPlan(root, phase, plan)
-          : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
-        const eff = effectiveWorkBranch(phase, plan);
-        const prompt = buildPhaseHandoffPrompt(plan, phase, {
-          currentHead: git.currentBranchLabel,
-          effectiveWorkBranch: eff,
-          baseBranch: plan.git?.baseBranch,
-        });
-        traceMultiline(tid, "runphase.generated_prompt", prompt);
-        traceEvent(tid, "runphase.dispatch", {
-          statusLabel: `${plan.title} › ${phase.title}`,
-          traceId: tid,
-        });
-        await dispatchPhaseHandoff(prompt, context, {
-          statusLabel: `${plan.title} › ${phase.title}`,
-          traceId: tid,
-          onCliRunFinished: (kind) =>
-            phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(planId, phaseId, kind) : Promise.resolve(),
-        });
         traceEvent(tid, "runphase.sidebar.exit", { ok: true });
       } catch (e) {
         traceEvent(tid, "runphase.sidebar.exit", {
@@ -610,46 +697,16 @@ export function activate(context: vscode.ExtensionContext): void {
           planTitle: phaseItem.plan.title,
           phaseTitle: phaseItem.phase.title,
         });
-        const branchOk = await ensurePlanWorkBranch(phaseItem.plan, context.workspaceState);
-        traceEvent(tid, "runphase.branch_prep", { path: "tree_command", ok: branchOk });
-        if (!branchOk) {
-          traceEvent(tid, "runphase.tree.abort", { reason: "branch_prep_failed" });
+        const started = await runPhaseWithBranchDecision(phaseItem.plan, phaseItem.phase, tid, "tree_command");
+        if (!started) {
+          traceEvent(tid, "runphase.tree.abort", { reason: "user_cancelled_or_branch_prep_failed" });
           traceEvent(tid, "command.exit", {
             command: "hackupc.planstack.runPhase",
             ok: true,
-            skipped: "branch_prep_failed",
+            skipped: "user_cancelled_or_branch_prep_failed",
           });
           return;
         }
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        const git = root
-          ? await summarizeGitForPlan(root, phaseItem.phase, phaseItem.plan)
-          : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
-        const eff = effectiveWorkBranch(phaseItem.phase, phaseItem.plan);
-        const prompt = buildPhaseHandoffPrompt(phaseItem.plan, phaseItem.phase, {
-          currentHead: git.currentBranchLabel,
-          effectiveWorkBranch: eff,
-          baseBranch: phaseItem.plan.git?.baseBranch,
-        });
-        traceMultiline(tid, "runphase.generated_prompt", prompt);
-        if (root) {
-          phaseItem.phase.state = "in_progress";
-          phaseItem.plan.state = deriveAggregateState(phaseItem.plan.phases.map((p) => p.state));
-          await savePlanPreservingFile(phaseItem.plan, root);
-          await refreshPlansOrdered(tree, sidebarUi);
-        }
-        traceEvent(tid, "runphase.dispatch", {
-          statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
-          traceId: tid,
-        });
-        await dispatchPhaseHandoff(prompt, context, {
-          statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
-          traceId: tid,
-          onCliRunFinished: (kind) =>
-            phaseRunHooks.applyOutcome
-              ? phaseRunHooks.applyOutcome(phaseItem.plan.id, phaseItem.phase.id, kind)
-              : Promise.resolve(),
-        });
         traceEvent(tid, "command.exit", { command: "hackupc.planstack.runPhase", ok: true });
       } catch (e) {
         traceEvent(tid, "command.exit", {

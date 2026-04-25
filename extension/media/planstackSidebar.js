@@ -634,14 +634,6 @@
 
     if (action === "runPhase") {
       e.stopPropagation();
-      // Optimistic local update + persist phase running state
-      const plan = plans.find((p) => p.id === planId);
-      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
-      if (phase) {
-        phase.state = "in_progress";
-        vscode.postMessage({ type: "updatePhase", planId, phaseId, state: "in_progress" });
-        render();
-      }
       vscode.postMessage({ type: "runPhase", planId, phaseId });
       return;
     }
@@ -655,9 +647,6 @@
       if (!next) {
         return;
       }
-      next.state = "in_progress";
-      vscode.postMessage({ type: "updatePhase", planId, phaseId: next.id, state: "in_progress" });
-      render();
       vscode.postMessage({ type: "runPhase", planId, phaseId: next.id });
       return;
     }

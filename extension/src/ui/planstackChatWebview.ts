@@ -1,7 +1,9 @@
 import { randomUUID } from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
-import { getOutput } from "../log";
+import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
@@ -18,12 +20,46 @@ import { postAnimatedStatus, registerRichChatSink } from "./richChatBridge";
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
 const MAX_MESSAGE_CHARS = 8000;
+const execFileAsync = promisify(execFile);
 
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
     return String(value);
+  }
+}
+
+function normalizeRelPath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").replace(/^\.?\//, "");
+}
+
+function fileNameFromPath(filePath: string): string {
+  const parts = normalizeRelPath(filePath).split("/");
+  return parts[parts.length - 1] || filePath;
+}
+
+async function exists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getHeadFileContent(cwd: string, relPath: string): Promise<string | undefined> {
+  const git = process.platform === "win32" ? "git.exe" : "git";
+  try {
+    const { stdout } = await execFileAsync(git, ["show", `HEAD:${normalizeRelPath(relPath)}`], {
+      cwd,
+      timeout: 15_000,
+      maxBuffer: 8 * 1024 * 1024,
+      windowsHide: true,
+    });
+    return String(stdout);
+  } catch {
+    return undefined;
   }
 }
 
@@ -155,27 +191,71 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         return;
       }
       if (m.type === "openFileDiff" && typeof (m as { filePath?: unknown }).filePath === "string") {
-        const filePath = (m as { filePath: string }).filePath;
+        const filePath = normalizeRelPath((m as { filePath: string }).filePath);
         const folder = vscode.workspace.workspaceFolders?.[0];
         if (!folder) {
           return;
         }
-        const absUri = vscode.Uri.joinPath(folder.uri, filePath);
+        const absUri = vscode.Uri.joinPath(folder.uri, ...filePath.split("/"));
         void (async () => {
           try {
+            // Primary path: show exactly what summary reports (HEAD -> working tree).
+            const relFromWorkspace = normalizeRelPath(vscode.workspace.asRelativePath(absUri, false));
+            const [headContent, workingTreeExists] = await Promise.all([
+              getHeadFileContent(folder.uri.fsPath, relFromWorkspace),
+              exists(absUri),
+            ]);
+            if (headContent !== undefined || workingTreeExists) {
+              const leftDoc = await vscode.workspace.openTextDocument({ content: headContent ?? "" });
+              const rightDoc = workingTreeExists
+                ? undefined
+                : await vscode.workspace.openTextDocument({ content: "" });
+              await vscode.commands.executeCommand(
+                "vscode.diff",
+                leftDoc.uri,
+                rightDoc?.uri ?? absUri,
+                `${fileNameFromPath(filePath)} (HEAD ↔ Working Tree)`,
+              );
+              return;
+            }
+            logLine(`openFileDiff: could not resolve HEAD or working-tree content for ${filePath}`);
+          } catch {
+            // fall through to simple open
+          }
+
+          // Fallback: use SCM change resource if available.
+          try {
             const gitExt = vscode.extensions.getExtension("vscode.git");
-            if (gitExt?.isActive) {
-              const api = (gitExt.exports as { getAPI(v: 1): { getRepository(uri: vscode.Uri): { state: { workingTreeChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }>; indexChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }> } } | null } | null }).getAPI(1);
+            if (gitExt) {
+              if (!gitExt.isActive) {
+                await gitExt.activate();
+              }
+              const api = (gitExt.exports as {
+                getAPI(v: 1):
+                  | {
+                      getRepository(uri: vscode.Uri):
+                        | {
+                            state: {
+                              workingTreeChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }>;
+                              indexChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }>;
+                            };
+                          }
+                        | null;
+                    }
+                  | null;
+              }).getAPI(1);
               const repo = api?.getRepository(folder.uri);
               if (repo) {
                 const changes = [...repo.state.workingTreeChanges, ...repo.state.indexChanges];
-                const change = changes.find((c) => c.uri.fsPath === absUri.fsPath);
+                const change = changes.find(
+                  (c) => normalizeRelPath(vscode.workspace.asRelativePath(c.uri, false)) === filePath,
+                );
                 if (change?.originalUri) {
                   await vscode.commands.executeCommand(
                     "vscode.diff",
                     change.originalUri,
                     change.uri,
-                    `${filePath.split("/").pop() ?? filePath} (HEAD ↔ Working Tree)`,
+                    `${fileNameFromPath(filePath)} (HEAD ↔ Working Tree)`,
                   );
                   return;
                 }
@@ -184,6 +264,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           } catch {
             // fall through to simple open
           }
+
           await vscode.window.showTextDocument(absUri, { preview: true });
           await vscode.commands.executeCommand("workbench.view.scm");
         })();
