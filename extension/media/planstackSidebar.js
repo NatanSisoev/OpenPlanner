@@ -223,14 +223,18 @@
       return `
         <div class="graph-plan-node tone-${node.tone}"
              style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
-          <div class="graph-plan-row">
-            <span class="graph-plan-kicker">plan</span>
-            <button class="run-btn graph-run-btn graph-plan-run-btn"
-                    data-action="runPlanFromGraph"
-                    data-plan="${pid}"
-                    title="Run all phases in order">▶</button>
+          <span class="graph-node-stripe tone-${node.tone}" aria-hidden="true"></span>
+          <div class="graph-plan-body">
+            <div class="graph-plan-row">
+              <span class="graph-plan-kicker">PLAN</span>
+              <button class="run-btn graph-run-btn graph-plan-run-btn"
+                      data-action="runPlanFromGraph"
+                      data-plan="${pid}"
+                      title="Run all phases in order">▶ Run</button>
+            </div>
+            <span class="graph-plan-title">${esc(node.title)}</span>
+            <code class="graph-node-id">${pid}</code>
           </div>
-          <span class="graph-plan-title">${esc(node.title)}</span>
         </div>
       `;
     }
@@ -239,27 +243,33 @@
     const key = node.plan.id + "::" + node.phase.id;
     const isSelected = selectedPhaseKey === key;
     const depSummary = phaseDependencySummary(node.plan, node.phase);
+    const state = node.phase.state;
     return `
-      <div class="graph-phase-node tone-${node.phase.state} ${isSelected ? "selected" : ""}"
+      <div class="graph-phase-node tone-${state} ${isSelected ? "selected" : ""}"
            style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
+        <span class="graph-node-stripe tone-${state}" aria-hidden="true"></span>
         <button class="graph-phase-main"
                 data-action="selectGraphPhase"
                 data-plan="${pid}"
                 data-phase="${phid}"
-                title="Click to view tasks. Double-click also works.">
-          <span class="phase-status-dot dot-${node.phase.state}"></span>
-          <span class="graph-phase-title">${esc(node.phase.title)}</span>
-          ${badgeHtml(node.phase.state)}
-          ${depSummary.short ? `<span class="graph-phase-deps" title="${esc(depSummary.title)}">${esc(depSummary.short)}</span>` : ""}
+                title="Click to highlight its dependencies. Click again to deselect.">
+          <header class="graph-phase-head">
+            <code class="graph-node-id">${phid}</code>
+            ${badgeHtml(state)}
+          </header>
+          <div class="graph-phase-title">${esc(node.phase.title)}</div>
+          ${depSummary.short
+            ? `<div class="graph-phase-deps-chip" title="${esc(depSummary.title)}"><span class="chip-glyph">⇠</span>${esc(depSummary.short)}</div>`
+            : ""}
         </button>
-        <div class="graph-phase-footer">
-          <span class="graph-phase-plan">${esc(node.plan.title)}</span>
+        <footer class="graph-phase-footer">
+          <span class="graph-phase-plan" title="${esc(node.plan.title)}">${esc(node.plan.title)}</span>
           <button class="run-btn graph-run-btn"
                   data-action="runPhaseFromGraph"
                   data-plan="${pid}"
                   data-phase="${phid}"
-                  title="Run this phase">▶</button>
-        </div>
+                  title="Run this phase">▶ Run</button>
+        </footer>
       </div>
     `;
   }
@@ -357,13 +367,13 @@
     // band, the plan node sits at the leftmost column and its phases flow to
     // the right, grouped by dependency depth. Plans never share rows, so a
     // phase from plan B can never sit directly across from plan A's node.
-    const padding = 28;
-    const nodeWidth = 224;
-    const planNodeHeight = 92;
-    const phaseNodeHeight = 112;
-    const colGap = 70;
-    const rowGap = 134;
-    const bandGap = 52;
+    const padding = 30;
+    const nodeWidth = 232;
+    const planNodeHeight = 96;
+    const phaseNodeHeight = 124;
+    const colGap = 76;
+    const rowGap = 144;
+    const bandGap = 58;
 
     const totalPhases = allPlans.reduce(
       (s, p) => s + (Array.isArray(p.phases) ? p.phases.length : 0),

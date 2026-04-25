@@ -781,27 +781,28 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .graph-legend {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      font-size: 0.74em;
-      opacity: 0.86;
-      padding: 0 8px 8px;
+      gap: 8px 14px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.7em;
+      opacity: 0.82;
+      padding: 8px 10px 10px;
     }
     .graph-legend span {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
     }
     .graph-legend-dot {
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       border: 2px solid var(--c-pending);
     }
     .graph-legend-dot.plan {
       border-color: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 65%, transparent);
-      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 25%, transparent);
+      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 30%, transparent);
       border-radius: 3px;
     }
     .graph-legend-dot.tone-failed { border-color: var(--c-failed); }
@@ -823,80 +824,107 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: 7px;
-      padding: 2px 8px 10px;
+      gap: 6px;
+      padding: 0 10px 10px;
     }
     .graph-filter-label {
-      font-size: 0.72em;
-      opacity: 0.72;
-      margin-right: 3px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.68em;
+      opacity: 0.6;
+      margin-right: 4px;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.06em;
     }
     .graph-filter-chip {
       font: inherit;
-      font-size: 0.72em;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.7em;
       line-height: 1;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      border: 1px solid var(--c-border);
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
+      border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
       border-radius: 999px;
-      padding: 4px 8px;
+      padding: 4px 9px;
       background: transparent;
       color: inherit;
       cursor: pointer;
-      opacity: 0.68;
+      opacity: 0.7;
+      transition: background 100ms ease, border-color 100ms ease, opacity 100ms ease;
     }
     .graph-filter-chip.active {
       opacity: 1;
-      border-color: var(--vscode-button-background, #0e70c0);
-      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 18%, transparent);
+      border-color: color-mix(in srgb, var(--graph-edge-highlight) 60%, transparent);
+      background: color-mix(in srgb, var(--graph-edge-highlight) 18%, transparent);
       color: var(--vscode-foreground);
     }
     .graph-filter-chip:hover {
       opacity: 1;
-      background: var(--c-hover);
+      background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
     }
     .plan-graph-card {
       margin: 2px 8px 12px;
       border: 1px solid var(--c-border);
-      border-radius: 8px;
+      border-radius: 10px;
       overflow: hidden;
       background: var(--c-card-bg);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.22);
     }
-    .plan-graph-card.tone-failed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-failed) 26%, transparent) inset; }
-    .plan-graph-card.tone-completed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-done) 26%, transparent) inset; }
-    .plan-graph-card.tone-in_progress { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-running) 26%, transparent) inset; }
+    .plan-graph-card.tone-failed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-failed) 26%, transparent) inset, 0 6px 18px rgba(0,0,0,0.22); }
+    .plan-graph-card.tone-completed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-done) 26%, transparent) inset, 0 6px 18px rgba(0,0,0,0.22); }
+    .plan-graph-card.tone-in_progress { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-running) 26%, transparent) inset, 0 6px 18px rgba(0,0,0,0.22); }
     .plan-graph-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 8px 10px;
+      padding: 9px 12px;
       border-bottom: 1px solid var(--c-border);
-      background: var(--c-header-bg);
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--vscode-sideBarSectionHeader-background) 100%, transparent) 0%,
+          color-mix(in srgb, var(--vscode-sideBarSectionHeader-background) 60%, transparent) 100%);
     }
     .plan-graph-title {
-      font-size: 0.88em;
+      font-size: 0.86em;
       font-weight: 700;
+      letter-spacing: 0.005em;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .plan-graph-title::before {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--graph-edge-highlight);
+      box-shadow: 0 0 8px var(--graph-edge-highlight);
+      flex-shrink: 0;
     }
     .plan-graph-meta {
-      font-size: 0.75em;
-      opacity: 0.72;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.72em;
+      opacity: 0.7;
       white-space: nowrap;
+      letter-spacing: 0.01em;
     }
     .graph-viewport {
       position: relative;
       height: clamp(420px, 64vh, 720px);
       overflow: hidden;
       border-bottom: 1px solid var(--c-border);
+      /* Subtle dot grid (à la Figma/Excalidraw) so the canvas has a
+         technical feel without competing with the nodes. */
       background:
-        radial-gradient(circle at 0 0, rgba(255,255,255,0.02), transparent 50%),
-        color-mix(in srgb, var(--vscode-sideBar-background) 80%, transparent);
+        radial-gradient(circle, color-mix(in srgb, var(--vscode-foreground) 9%, transparent) 1px, transparent 1.4px) 0 0 / 22px 22px,
+        radial-gradient(ellipse at top left, color-mix(in srgb, var(--vscode-foreground) 4%, transparent), transparent 60%),
+        color-mix(in srgb, var(--vscode-sideBar-background) 78%, transparent);
       cursor: grab;
     }
     .plan-graph-card.expanded .graph-viewport {
@@ -973,21 +1001,41 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       pointer-events: none;
     }
 
+    /* ── Plan node ────────────────────────────────────────────────────── */
     .graph-plan-node {
       position: absolute;
       border: 1px solid var(--graph-node-border);
-      border-radius: 8px;
-      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 14%, var(--graph-node-bg));
-      box-shadow: 0 5px 12px rgba(0,0,0,0.15);
+      border-radius: 10px;
+      background:
+        linear-gradient(135deg,
+          color-mix(in srgb, var(--vscode-button-background, #0e70c0) 18%, var(--graph-node-bg)) 0%,
+          var(--graph-node-bg) 100%);
+      box-shadow:
+        0 4px 14px rgba(0,0,0,0.22),
+        inset 0 1px 0 rgba(255,255,255,0.05);
+      display: grid;
+      grid-template-columns: 4px 1fr;
+      overflow: hidden;
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+    }
+    .graph-plan-node:hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+      box-shadow:
+        0 12px 22px rgba(0,0,0,0.30),
+        inset 0 1px 0 rgba(255,255,255,0.07);
+    }
+    .graph-plan-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 62%, transparent); }
+    .graph-plan-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 62%, transparent); }
+    .graph-plan-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 62%, transparent); }
+    .graph-plan-body {
+      padding: 8px 10px;
       display: flex;
       flex-direction: column;
+      gap: 4px;
+      min-width: 0;
       justify-content: center;
-      gap: 5px;
-      padding: 8px 10px;
     }
-    .graph-plan-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 65%, transparent); }
-    .graph-plan-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 65%, transparent); }
-    .graph-plan-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 65%, transparent); }
     .graph-plan-row {
       display: flex;
       align-items: center;
@@ -996,40 +1044,102 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     .graph-plan-run-btn { flex-shrink: 0; }
     .graph-plan-kicker {
-      font-size: 0.64em;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.6em;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      opacity: 0.72;
+      letter-spacing: 0.18em;
       font-weight: 700;
+      opacity: 0.85;
+      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 28%, transparent);
+      color: var(--vscode-foreground);
+      padding: 2px 7px 2px 8px;
+      border-radius: 4px;
+      border: 1px solid color-mix(in srgb, var(--vscode-button-background, #0e70c0) 36%, transparent);
     }
     .graph-plan-title {
-      font-size: 0.82em;
+      font-size: 0.86em;
       font-weight: 700;
-      line-height: 1.3;
+      line-height: 1.25;
+      letter-spacing: -0.005em;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
+    /* ── Phase node ───────────────────────────────────────────────────── */
     .graph-phase-node {
       position: absolute;
       border: 1px solid var(--graph-node-border);
-      border-radius: 9px;
+      border-radius: 10px;
       background: var(--graph-node-bg);
-      box-shadow: 0 8px 18px rgba(0,0,0,0.2);
+      box-shadow:
+        0 4px 12px rgba(0,0,0,0.22),
+        inset 0 1px 0 rgba(255,255,255,0.04);
       display: grid;
+      grid-template-columns: 4px 1fr;
       grid-template-rows: 1fr auto;
       overflow: hidden;
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
     }
-    .graph-phase-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 62%, transparent); }
-    .graph-phase-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 62%, transparent); }
-    .graph-phase-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 62%, transparent); }
+    .graph-phase-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 50%, transparent); }
+    .graph-phase-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 50%, transparent); }
+    .graph-phase-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 50%, transparent); }
+    .graph-phase-node:not(.selected):hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 36%, transparent);
+      box-shadow:
+        0 14px 24px rgba(0,0,0,0.34),
+        inset 0 1px 0 rgba(255,255,255,0.06);
+    }
     .graph-phase-node.selected {
-      box-shadow: 0 0 0 2px var(--vscode-focusBorder, #0e70c0), 0 10px 24px rgba(0,0,0,0.28);
-      transform: translateZ(0) scale(1.02);
-      transform-origin: center;
+      border-color: var(--graph-edge-highlight);
+      box-shadow:
+        0 0 0 1px var(--graph-edge-highlight),
+        0 0 0 5px color-mix(in srgb, var(--graph-edge-highlight) 22%, transparent),
+        0 16px 30px rgba(0,0,0,0.38);
+      transform: none;
     }
+    /* Status accent stripe used by both plan and phase nodes. */
+    .graph-node-stripe {
+      grid-row: 1 / 3;
+      grid-column: 1;
+      width: 4px;
+      background: var(--c-pending);
+    }
+    .graph-plan-node .graph-node-stripe { grid-row: 1; }
+    .graph-node-stripe.tone-completed   { background: var(--c-done); }
+    .graph-node-stripe.tone-in_progress {
+      background: linear-gradient(180deg, var(--c-running), color-mix(in srgb, var(--c-running) 50%, transparent));
+      animation: graph-stripe-pulse 1.8s ease-in-out infinite;
+    }
+    .graph-node-stripe.tone-failed      { background: var(--c-failed); }
+    .graph-node-stripe.tone-cancelled   { background: var(--c-cancelled); }
+    .graph-node-stripe.tone-pending     { background: var(--c-pending); }
+
+    @keyframes graph-stripe-pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.55; }
+    }
+
+    .graph-node-id {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.66em;
+      letter-spacing: 0.01em;
+      opacity: 0.7;
+      background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+      padding: 1px 6px;
+      border-radius: 4px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      align-self: flex-start;
+    }
+    .graph-plan-body .graph-node-id { font-size: 0.62em; opacity: 0.55; padding: 0 4px; background: transparent; }
+
     .graph-phase-main {
+      grid-column: 2;
+      grid-row: 1;
       border: none;
       background: transparent;
       color: inherit;
@@ -1037,92 +1147,140 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       text-align: left;
       width: 100%;
       height: 100%;
-      padding: 8px;
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      grid-template-rows: auto auto;
-      align-items: center;
-      gap: 6px;
+      padding: 8px 10px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
       cursor: pointer;
-    }
-    .graph-phase-main:hover { background: var(--c-hover); }
-    .graph-phase-title {
-      font-size: 0.79em;
-      font-weight: 600;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      line-height: 1.3;
     }
-    .graph-phase-deps {
-      grid-column: 2 / 4;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 0.68em;
-      line-height: 1.2;
-      opacity: 0.78;
-      color: var(--vscode-charts-purple, #b180d7);
-      font-weight: 700;
-    }
-    .graph-phase-footer {
+    .graph-phase-main:hover { background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent); }
+    .graph-phase-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 6px 8px;
-      border-top: 1px solid var(--c-border);
-      background: color-mix(in srgb, var(--vscode-editor-background) 40%, transparent);
+      min-width: 0;
     }
-    .graph-phase-plan {
-      font-size: 0.68em;
-      opacity: 0.74;
-      text-transform: uppercase;
+    .graph-phase-head .graph-node-id {
+      max-width: 60%;
+    }
+    .graph-phase-title {
+      font-size: 0.86em;
+      font-weight: 600;
+      line-height: 1.25;
+      letter-spacing: -0.005em;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .graph-phase-deps-chip {
+      margin-top: auto;
+      align-self: flex-start;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.64em;
       letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent);
+      background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+      border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+      padding: 2px 8px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .graph-phase-deps-chip .chip-glyph {
+      font-size: 1.05em;
+      opacity: 0.7;
+      line-height: 1;
+    }
+    .graph-phase-node.selected .graph-phase-deps-chip {
+      color: var(--graph-edge-highlight);
+      background: color-mix(in srgb, var(--graph-edge-highlight) 15%, transparent);
+      border-color: color-mix(in srgb, var(--graph-edge-highlight) 40%, transparent);
+    }
+
+    .graph-phase-footer {
+      grid-column: 2;
+      grid-row: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+      background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+    }
+    .graph-phase-plan {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.62em;
+      opacity: 0.6;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+
     /* Higher-specificity selectors so these always beat the generic
        .run-btn { opacity: 0 } rule defined later in the stylesheet. */
     .graph-phase-node .graph-run-btn,
     .graph-plan-node .graph-run-btn {
       opacity: 1;
-      height: 24px;
-      font-size: 0.78em;
-      padding: 2px 12px;
+      height: 22px;
+      font-size: 0.74em;
+      padding: 2px 10px;
       font-weight: 700;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      letter-spacing: 0.01em;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--vscode-button-background, #0e70c0) 70%, transparent);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.30);
+      flex-shrink: 0;
     }
     .graph-phase-node .graph-run-btn:hover,
     .graph-plan-node .graph-run-btn:hover {
       background: var(--vscode-button-hoverBackground, var(--vscode-button-background, #0e70c0));
+      box-shadow: 0 3px 10px rgba(0,0,0,0.40), 0 0 0 3px color-mix(in srgb, var(--vscode-button-background, #0e70c0) 22%, transparent);
     }
 
     .graph-controls {
       display: flex;
       justify-content: flex-end;
-      gap: 6px;
-      padding: 8px 8px;
+      gap: 4px;
+      padding: 6px 8px;
       border-bottom: 1px solid var(--c-border);
-      background: color-mix(in srgb, var(--vscode-editor-background) 36%, transparent);
+      background: color-mix(in srgb, var(--vscode-editor-background) 42%, transparent);
+      backdrop-filter: blur(4px);
     }
     .graph-control-btn {
       font: inherit;
-      font-size: 0.75em;
-      border-radius: 5px;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
-      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.18));
-      color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.72em;
+      letter-spacing: 0.02em;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.30));
+      background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+      color: var(--vscode-foreground);
       min-width: 24px;
       height: 22px;
-      padding: 0 8px;
+      padding: 0 9px;
       cursor: pointer;
+      opacity: 0.85;
+      transition: background 100ms ease, opacity 100ms ease, border-color 100ms ease;
     }
     .graph-control-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.3));
+      opacity: 1;
+      background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
     }
 
     .graph-expanded-details {
