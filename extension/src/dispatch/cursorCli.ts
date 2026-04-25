@@ -1,8 +1,13 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
-import { formatGitSummaryChatLine, getWorktreeChangeSummary } from "../git/worktreeChangeSummary";
-import { getOutput } from "../log";
+import { formatGitSnapshotDeltaForChat, gitSnapshotFingerprint } from "../git/gitSnapshotDelta";
+import {
+  formatGitSummaryChatLine,
+  getWorktreeChangeSummary,
+  type WorktreeChangeSummary,
+} from "../git/worktreeChangeSummary";
+import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, runAgentPrint } from "../plan/agentCliRunner";
 import { buildAgentEnv, resolveCursorApiKey } from "../plan/createPlanFromCli";
 import { resolveDefaultAgentExecutable } from "../plan/agentPath";
@@ -13,6 +18,9 @@ import {
   type AgentStreamEndReason,
 } from "../ui/agentChatStreamBridge";
 import { postChatSystemMessage } from "../ui/chatStatusBridge";
+
+/** Reported after the CLI agent process finishes (or fails after spawn). */
+export type CliPhaseRunFinishedKind = "success" | "error" | "stopped";
 
 function appendRunLog(stdout: string, stderr: string): void {
   const out = getOutput();
@@ -96,8 +104,19 @@ export async function handoffViaAgentCli(
   extensionContext: vscode.ExtensionContext,
   statusLabel?: string,
   traceId?: string,
+  onCliRunFinished?: (kind: CliPhaseRunFinishedKind) => void | Promise<void>,
 ): Promise<void> {
   const tid = traceId ?? newTraceId("cursorCli");
+  const notifyFinished = async (kind: CliPhaseRunFinishedKind): Promise<void> => {
+    if (!onCliRunFinished) {
+      return;
+    }
+    try {
+      await onCliRunFinished(kind);
+    } catch (e) {
+      logLine(`handoffViaAgentCli: onCliRunFinished(${kind}) failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
   const label = (statusLabel?.trim() || "Run phase").slice(0, 200);
   traceEvent(tid, "handoffViaAgentCli.enter", { label, statusLabel, promptLength: prompt.length });
   traceMultiline(tid, "handoffViaAgentCli.prompt", prompt);
@@ -107,6 +126,7 @@ export async function handoffViaAgentCli(
     traceEvent(tid, "handoffViaAgentCli.skip", { reason: "no_workspace_folder" });
     postChatSystemMessage(`${label}: skipped — no workspace folder open.`);
     await vscode.window.showErrorMessage("Planstack: open a workspace folder before running phase with the CLI.");
+    await notifyFinished("error");
     return;
   }
 
@@ -117,6 +137,7 @@ export async function handoffViaAgentCli(
     await vscode.window.showErrorMessage(
       "Planstack: CURSOR_API_KEY is not set. Use “Planstack: Set Cursor API key” or export it for the Extension Host.",
     );
+    await notifyFinished("error");
     return;
   }
 
@@ -131,6 +152,8 @@ export async function handoffViaAgentCli(
   const chatThrottleMs = cfg.get<number>("cliStreamChatThrottleMs") ?? 25_000;
   const showGitSummary = cfg.get<boolean>("showGitSummaryAfterCliRun") ?? true;
   const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
+  const gitSnapshotEveryMs = cfg.get<number>("cliRunGitSnapshotIntervalMs") ?? 30_000;
+  const agentDigestEveryMs = cfg.get<number>("cliRunAgentDigestIntervalMs") ?? 15_000;
 
   const cwd = folder.uri.fsPath;
   const env = await buildAgentEnv(extensionContext);
@@ -145,6 +168,8 @@ export async function handoffViaAgentCli(
     chatThrottleMs,
     showGitSummary,
     useLiveChat,
+    gitSnapshotEveryMs,
+    agentDigestEveryMs,
     cwd,
   });
 
@@ -172,6 +197,74 @@ export async function handoffViaAgentCli(
         cancellable: false,
       },
       async (progress) => {
+        const progressTimers: ReturnType<typeof setInterval>[] = [];
+        let outBuf = "";
+        let errBuf = "";
+        let lastGitSnapshot: WorktreeChangeSummary | undefined;
+        let lastDigestKey = "";
+        let gitSnapshotBusy = false;
+
+        const clearProgressTimers = (): void => {
+          for (const t of progressTimers) {
+            clearInterval(t);
+          }
+          progressTimers.length = 0;
+        };
+
+        if (gitSnapshotEveryMs > 0) {
+          progressTimers.push(
+            setInterval(() => {
+              if (gitSnapshotBusy) {
+                return;
+              }
+              gitSnapshotBusy = true;
+              void getWorktreeChangeSummary(cwd)
+                .then((s) => {
+                  if (!s) {
+                    return;
+                  }
+                  const sig = gitSnapshotFingerprint(s);
+                  if (lastGitSnapshot && sig === gitSnapshotFingerprint(lastGitSnapshot)) {
+                    return;
+                  }
+                  const msg = formatGitSnapshotDeltaForChat(lastGitSnapshot, s);
+                  lastGitSnapshot = { statusLine: s.statusLine, diffStat: s.diffStat };
+                  if (!msg) {
+                    return;
+                  }
+                  postChatSystemMessage(`${label} [git]\n${msg}`);
+                })
+                .catch(() => {
+                  /* ignore */
+                })
+                .finally(() => {
+                  gitSnapshotBusy = false;
+                });
+            }, gitSnapshotEveryMs),
+          );
+        }
+
+        if (agentDigestEveryMs > 0) {
+          progressTimers.push(
+            setInterval(() => {
+              const o = outBuf.trimEnd();
+              const e = errBuf.trimEnd();
+              if (!o && !e) {
+                return;
+              }
+              const key = `${o.slice(-500)}|${e.slice(-400)}`;
+              if (key === lastDigestKey) {
+                return;
+              }
+              lastDigestKey = key;
+              const block =
+                (o ? `stdout (tail):\n${o.slice(-520)}` : "(no stdout yet)") +
+                (e ? `\n\nstderr (tail):\n${e.slice(-420)}` : "");
+              postChatSystemMessage(`${label} [agent]\n${block.slice(-950)}`);
+            }, agentDigestEveryMs),
+          );
+        }
+
         if (useLiveChat) {
           streamActive = true;
           postAgentStreamStart(runId, {
@@ -181,7 +274,7 @@ export async function handoffViaAgentCli(
               "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
           });
         }
-        const { onStdoutChunk, onStderrChunk } = buildStreamHandlers({
+        const baseHandlers = buildStreamHandlers({
           streamToOutput,
           output,
           progressThrottleMs,
@@ -190,6 +283,18 @@ export async function handoffViaAgentCli(
           label,
           liveRunId: useLiveChat ? runId : undefined,
         });
+        const onStdoutChunk = (text: string): void => {
+          if (text) {
+            outBuf = (outBuf + text).slice(-150_000);
+          }
+          baseHandlers.onStdoutChunk(text);
+        };
+        const onStderrChunk = (text: string): void => {
+          if (text) {
+            errBuf = (errBuf + text).slice(-150_000);
+          }
+          baseHandlers.onStderrChunk(text);
+        };
         try {
           const r = await runAgentPrint({
             agentPath: resolvedAgent,
@@ -213,6 +318,7 @@ export async function handoffViaAgentCli(
             e instanceof AgentCliError && msg.includes("stopped") ? "stopped" : "error";
           throw e;
         } finally {
+          clearProgressTimers();
           if (streamActive) {
             postAgentStreamEnd(runId, endReason);
             streamActive = false;
@@ -220,6 +326,8 @@ export async function handoffViaAgentCli(
         }
       },
     );
+
+    clearInterval(heartbeat);
 
     appendRunLog(stdout, stderr);
     traceEvent(tid, "handoffViaAgentCli.agent_finished", {
@@ -229,6 +337,7 @@ export async function handoffViaAgentCli(
     });
 
     if (exitCode !== 0) {
+      await notifyFinished("error");
       const tail = stderr.trim() || stdout.slice(-500);
       output.show(true);
       const detail = tail ? tail.slice(0, 280) : "see Output → Planstack";
@@ -239,6 +348,7 @@ export async function handoffViaAgentCli(
       return;
     }
 
+    await notifyFinished("success");
     postChatSystemMessage(`${label}: finished — check the workspace for changes (Output → Planstack for a log tail).`);
 
     if (showGitSummary) {
@@ -295,6 +405,7 @@ export async function handoffViaAgentCli(
     }
     const msg = e instanceof AgentCliError ? e.message : e instanceof Error ? e.message : String(e);
     const stopped = e instanceof AgentCliError && msg.includes("stopped");
+    await notifyFinished(stopped ? "stopped" : "error");
     if (e instanceof AgentCliError && e.stderr?.trim() && !stopped) {
       appendRunLog("", e.stderr);
     }

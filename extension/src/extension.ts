@@ -1,15 +1,17 @@
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "./debug/trace";
 import { handoffToNativeComposer } from "./dispatch/cursorNativeHandoff";
+import type { CliPhaseRunFinishedKind } from "./dispatch/cursorCli";
 import { dispatchPhaseHandoff } from "./dispatch/router";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
-import { deriveAggregateState } from "./plan/aggregate";
+import { deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET } from "./plan/createPlanFromCli";
 import { debugCliConnection } from "./plan/debugCliConnection";
 import { killAllAgentCliProcesses } from "./plan/agentCliRunner";
+import { logLine } from "./log";
 import { savePlanPreservingFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
@@ -67,6 +69,10 @@ function orderPlans(plans: import("./plan/types").Plan[], orderedIds: string[] |
 export function activate(context: vscode.ExtensionContext): void {
   const extUri = context.extensionUri;
 
+  const phaseRunHooks: {
+    applyOutcome?: (planId: string, phaseId: string, outcome: CliPhaseRunFinishedKind) => Promise<void>;
+  } = {};
+
   async function refreshPlansOrdered(provider: PlanTreeProvider, sidebar: PlanstackSidebarWebview): Promise<void> {
     const loaded = await loadPlansFromWorkspace();
     const savedOrder = context.workspaceState.get<string[]>(PLAN_ORDER_KEY);
@@ -114,6 +120,8 @@ export function activate(context: vscode.ExtensionContext): void {
         await dispatchPhaseHandoff(prompt, context, {
           statusLabel: `${plan.title} › ${phase.title}`,
           traceId: tid,
+          onCliRunFinished: (kind) =>
+            phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(planId, phaseId, kind) : Promise.resolve(),
         });
         traceEvent(tid, "runphase.sidebar.exit", { ok: true });
       } catch (e) {
@@ -203,6 +211,55 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
   context.subscriptions.push(view);
+
+  phaseRunHooks.applyOutcome = async (
+    planId: string,
+    phaseId: string,
+    outcome: CliPhaseRunFinishedKind,
+  ): Promise<void> => {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      return;
+    }
+    try {
+      const loaded = await loadPlansFromWorkspace();
+      const ordered = orderPlans(loaded, context.workspaceState.get<string[]>(PLAN_ORDER_KEY));
+      const plan = ordered.find((p) => p.id === planId);
+      const phase = plan?.phases.find((ph) => ph.id === phaseId);
+      if (!plan || !phase) {
+        logLine(`applyPhaseRunOutcome: missing plan/phase ${planId}/${phaseId}`);
+        return;
+      }
+
+      if (outcome === "success") {
+        phase.state = "completed";
+        for (const t of phase.tasks) {
+          if (t.state !== "cancelled" && t.state !== "failed") {
+            t.state = "completed";
+          }
+        }
+      } else if (outcome === "stopped") {
+        phase.state = "cancelled";
+        for (const t of phase.tasks) {
+          if (t.state === "in_progress") {
+            t.state = "cancelled";
+          }
+        }
+      } else {
+        phase.state = "failed";
+        for (const t of phase.tasks) {
+          if (t.state === "in_progress") {
+            t.state = "failed";
+          }
+        }
+      }
+      recomputeAggregates(plan);
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+    } catch (e) {
+      logLine(`applyPhaseRunOutcome: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   const chatUi = new PlanstackChatWebview(extUri, context, async () => {
     await refreshPlansOrdered(tree, sidebarUi);
@@ -306,6 +363,12 @@ export function activate(context: vscode.ExtensionContext): void {
           baseBranch: phaseItem.plan.git?.baseBranch,
         });
         traceMultiline(tid, "runphase.generated_prompt", prompt);
+        if (root) {
+          phaseItem.phase.state = "in_progress";
+          phaseItem.plan.state = deriveAggregateState(phaseItem.plan.phases.map((p) => p.state));
+          await savePlanPreservingFile(phaseItem.plan, root);
+          await refreshPlansOrdered(tree, sidebarUi);
+        }
         traceEvent(tid, "runphase.dispatch", {
           statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
           traceId: tid,
@@ -313,6 +376,10 @@ export function activate(context: vscode.ExtensionContext): void {
         await dispatchPhaseHandoff(prompt, context, {
           statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
           traceId: tid,
+          onCliRunFinished: (kind) =>
+            phaseRunHooks.applyOutcome
+              ? phaseRunHooks.applyOutcome(phaseItem.plan.id, phaseItem.phase.id, kind)
+              : Promise.resolve(),
         });
         traceEvent(tid, "command.exit", { command: "hackupc.planstack.runPhase", ok: true });
       } catch (e) {

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { getExecutionMode, type ExecutionMode } from "../plan/modes";
 import { handoffClaudeTerminal } from "./claudeCode";
-import { handoffViaAgentCli } from "./cursorCli";
+import { handoffViaAgentCli, type CliPhaseRunFinishedKind } from "./cursorCli";
 import { handoffToNativeComposer } from "./cursorNativeHandoff";
 import { handoffViaCursorSdk } from "./cursorSdk";
 
@@ -19,7 +19,14 @@ export type DispatchPhaseOptions = {
   statusLabel?: string;
   /** Correlates dispatch + CLI logs; generated if omitted. */
   traceId?: string;
+  /**
+   * Called when CLI execution ends (`cli` mode only). Not used for native-first / SDK.
+   * `success` = exit 0; `error` = non-zero exit or spawn/runtime failure or preflight skip (no workspace / no API key); `stopped` = user-killed agent. `AgentRunBusyError` does not invoke this callback.
+   */
+  onCliRunFinished?: (kind: CliPhaseRunFinishedKind) => void | Promise<void>;
 };
+
+export type { CliPhaseRunFinishedKind } from "./cursorCli";
 
 /**
  * Routes phase execution per `planstack.cursor.executionMode` (legacy: `planstack.cursor.handoff`).
@@ -49,7 +56,13 @@ export async function dispatchPhaseHandoff(
       return handoffViaCursorSdk(prompt, "cloud");
     case "cli":
       traceEvent(traceId, "dispatch.target", { handoff: "handoffViaAgentCli" });
-      return handoffViaAgentCli(prompt, extensionContext, options?.statusLabel, traceId);
+      return handoffViaAgentCli(
+        prompt,
+        extensionContext,
+        options?.statusLabel,
+        traceId,
+        options?.onCliRunFinished,
+      );
     default: {
       const _exhaustive: never = mode;
       return _exhaustive;

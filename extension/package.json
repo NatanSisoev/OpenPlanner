@@ -233,6 +233,20 @@
           "type": "boolean",
           "default": true,
           "description": "After a successful Run phase (CLI), append git diff --stat vs HEAD to Output and post a short summary to Chat."
+        },
+        "planstack.cursor.cliRunGitSnapshotIntervalMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 0,
+          "maximum": 300000,
+          "markdownDescription": "While **Run phase (CLI)** is in progress, post distilled **`[git]`** lines to Planstack Chat on this interval (ms): first tick is a short **baseline** (status + head of diff --stat); later ticks post only **line deltas** vs the previous snapshot when it **changes**. **0** disables mid-run snapshots (post-run summary is unchanged)."
+        },
+        "planstack.cursor.cliRunAgentDigestIntervalMs": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 0,
+          "maximum": 300000,
+          "markdownDescription": "While **Run phase (CLI)** is in progress, post a **short tail** of accumulated agent stdout/stderr to Chat as system lines on this interval (ms). Only posts when the tail **changes**. **0** disables. Works alongside **agentChatLiveStream**."
         }
       }
     }
