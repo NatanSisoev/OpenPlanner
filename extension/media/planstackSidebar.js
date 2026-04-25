@@ -174,10 +174,17 @@
 
   function renderGraphNode(node, graph) {
     if (node.kind === "plan") {
+      const pid = esc(node.plan.id);
       return `
         <div class="graph-plan-node tone-${node.tone}"
              style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
-          <span class="graph-plan-kicker">plan</span>
+          <div class="graph-plan-row">
+            <span class="graph-plan-kicker">plan</span>
+            <button class="run-btn graph-run-btn graph-plan-run-btn"
+                    data-action="runPlanFromGraph"
+                    data-plan="${pid}"
+                    title="Run all phases in order">▶ Run plan</button>
+          </div>
           <span class="graph-plan-title">${esc(node.title)}</span>
         </div>
       `;
@@ -193,7 +200,7 @@
                 data-action="selectGraphPhase"
                 data-plan="${pid}"
                 data-phase="${phid}"
-                title="${esc(node.phase.title)}">
+                title="Click to view tasks. Double-click also works.">
           <span class="phase-status-dot dot-${node.phase.state}"></span>
           <span class="graph-phase-title">${esc(node.phase.title)}</span>
           ${badgeHtml(node.phase.state)}
@@ -201,10 +208,10 @@
         <div class="graph-phase-footer">
           <span class="graph-phase-plan">${esc(node.plan.title)}</span>
           <button class="run-btn graph-run-btn"
-                  data-action="runPhase"
+                  data-action="runPhaseFromGraph"
                   data-plan="${pid}"
                   data-phase="${phid}"
-                  title="Run this phase">▶</button>
+                  title="Run this phase">▶ Run</button>
         </div>
       </div>
     `;
@@ -244,7 +251,7 @@
     // phase from plan B can never sit directly across from plan A's node.
     const padding = 28;
     const nodeWidth = 200;
-    const planNodeHeight = 78;
+    const planNodeHeight = 92;
     const phaseNodeHeight = 92;
     const colGap = 56;
     const rowGap = 110;
@@ -429,7 +436,11 @@
     const margin = 12;
     const availW = Math.max(80, viewport.clientWidth - margin * 2);
     const availH = Math.max(80, viewport.clientHeight - margin * 2);
-    const scale = Math.min(availW / sceneW, availH / sceneH, 1.5);
+    // Minimum readable scale — below this the run buttons get unusably small.
+    // Users can still pan/zoom past it, but the initial fit stays legible.
+    const minReadableScale = 0.65;
+    const fitScale = Math.min(availW / sceneW, availH / sceneH, 1.5);
+    const scale = Math.max(fitScale, minReadableScale);
     const state = ensureGraphState(graphId);
     state.scale = scale;
     state.x = margin + Math.max(0, (availW - sceneW * scale) / 2);
@@ -718,6 +729,25 @@
       return;
     }
 
+    if (action === "runPhaseFromGraph") {
+      e.stopPropagation();
+      if (planId && phaseId) {
+        // Auto-select the phase so its tasks pop up below the graph as it runs.
+        selectedPhaseKey = planId + "::" + phaseId;
+        render();
+        vscode.postMessage({ type: "runPhase", planId, phaseId });
+      }
+      return;
+    }
+
+    if (action === "runPlanFromGraph") {
+      e.stopPropagation();
+      if (planId) {
+        vscode.postMessage({ type: "runPlanFully", planId });
+      }
+      return;
+    }
+
     if (action === "graphToggleExpand") {
       graphExpanded = !graphExpanded;
       render();
@@ -737,20 +767,29 @@
 
     if (action === "runPhase") {
       e.stopPropagation();
+      // Auto-expand the phase in the list view so the user can watch tasks
+      // sequentially turn green below it as the agent works through them.
+      if (planId && phaseId) {
+        expandedPhases.add(planId + "::" + phaseId);
+        // Make sure the parent plan is expanded too — otherwise the phase
+        // (and its newly-revealed tasks) wouldn't actually be visible.
+        expandedPlans.add(planId);
+        render();
+      }
       vscode.postMessage({ type: "runPhase", planId, phaseId });
       return;
     }
 
     if (action === "runPlan") {
       e.stopPropagation();
-      const plan = plans.find((p) => p.id === planId);
-      const phases = plan?.phases || [];
-      const next =
-        phases.find((ph) => ph.state !== "completed" && ph.state !== "cancelled") || phases[0];
-      if (!next) {
-        return;
+      // Sequential plan run: the backend chains every phase one after the
+      // other, prompting for the branch decision once. Phases turn green
+      // in the list (and graph) as each finishes.
+      if (planId) {
+        expandedPlans.add(planId);
+        render();
+        vscode.postMessage({ type: "runPlanFully", planId });
       }
-      vscode.postMessage({ type: "runPhase", planId, phaseId: next.id });
       return;
     }
 
@@ -765,11 +804,15 @@
       const plan = plans.find((p) => p.id === planId);
       const phase = plan?.phases?.find((ph) => ph.id === phaseId);
       const task = phase?.tasks?.find((t) => t.id === taskId);
-      if (task && task.state !== "in_progress") {
-        task.state = "in_progress";
-        vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: "in_progress" });
-        render();
+      if (!task || task.state === "in_progress") {
+        return;
       }
+      // Optimistic local state for instant feedback while the backend dispatches.
+      task.state = "in_progress";
+      render();
+      // Real per-task dispatch — backend builds a task-only prompt and runs it
+      // via the agent CLI, then marks the task completed/failed on its own.
+      vscode.postMessage({ type: "runTask", planId, phaseId, taskId });
       return;
     }
 

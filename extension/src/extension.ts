@@ -8,7 +8,7 @@ import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
 import { deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
-import { buildPhaseHandoffPrompt } from "./plan/prompt";
+import { buildPhaseHandoffPrompt, buildTaskHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace } from "./plan/createPlanFromCli";
 import { debugCliConnection } from "./plan/debugCliConnection";
 import { killAllAgentCliProcesses } from "./plan/agentCliRunner";
@@ -271,18 +271,18 @@ export function activate(context: vscode.ExtensionContext): void {
     return pick?.decision ?? "cancel";
   }
 
-  async function runPhaseWithBranchDecision(
+  // Plans currently running every phase sequentially via `onRunPlanFully`. The
+  // value is the branch decision picked once at the start of the run, reused
+  // for each subsequent phase so the user is not re-prompted.
+  const autoRunningPlans = new Map<string, Exclude<BranchDecision, "cancel">>();
+
+  async function executePhaseRun(
     plan: Plan,
     phase: Plan["phases"][number],
+    decision: Exclude<BranchDecision, "cancel">,
     traceId: string,
     source: RunEntrySource,
   ): Promise<boolean> {
-    const decision = await askRunBranchDecision(plan, phase, source);
-    traceEvent(traceId, "runphase.branch_decision", { source, decision, planId: plan.id, phaseId: phase.id });
-    if (decision === "cancel") {
-      return false;
-    }
-
     if (decision === "prepare_branch") {
       const branchOk = await ensurePlanWorkBranch(plan, context.workspaceState);
       traceEvent(traceId, "runphase.branch_prep", { path: source, ok: branchOk, mode: "prepare_branch" });
@@ -325,6 +325,78 @@ export function activate(context: vscode.ExtensionContext): void {
         phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(plan.id, phase.id, kind) : Promise.resolve(),
     });
     return true;
+  }
+
+  async function runPhaseWithBranchDecision(
+    plan: Plan,
+    phase: Plan["phases"][number],
+    traceId: string,
+    source: RunEntrySource,
+  ): Promise<boolean> {
+    const decision = await askRunBranchDecision(plan, phase, source);
+    traceEvent(traceId, "runphase.branch_decision", { source, decision, planId: plan.id, phaseId: phase.id });
+    if (decision === "cancel") {
+      return false;
+    }
+    return executePhaseRun(plan, phase, decision, traceId, source);
+  }
+
+  function nextRunnablePhase(plan: Plan): Plan["phases"][number] | undefined {
+    return plan.phases.find((ph) => ph.state !== "completed" && ph.state !== "cancelled");
+  }
+
+  async function continueAutoRunPlan(planId: string): Promise<void> {
+    const decision = autoRunningPlans.get(planId);
+    if (!decision) return;
+    const plan = currentPlans.find((p) => p.id === planId);
+    if (!plan) {
+      autoRunningPlans.delete(planId);
+      return;
+    }
+    const next = nextRunnablePhase(plan);
+    if (!next) {
+      autoRunningPlans.delete(planId);
+      postChatSystemMessage(`${planChatLabel(plan)}: plan run complete.`);
+      return;
+    }
+    const tid = newTraceId("runplan-auto");
+    traceEvent(tid, "runplan.auto.next", { planId, phaseId: next.id });
+    try {
+      await executePhaseRun(plan, next, decision, tid, "sidebar_webview");
+    } catch (e) {
+      traceEvent(tid, "runplan.auto.error", { error: e instanceof Error ? e.message : String(e) });
+      autoRunningPlans.delete(planId);
+    }
+  }
+
+  async function startPlanAutoRun(planId: string): Promise<void> {
+    if (autoRunningPlans.has(planId)) {
+      void vscode.window.showInformationMessage("Planstack: this plan is already running.");
+      return;
+    }
+    const plan = currentPlans.find((p) => p.id === planId);
+    if (!plan) {
+      void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+      return;
+    }
+    const next = nextRunnablePhase(plan);
+    if (!next) {
+      void vscode.window.showInformationMessage("Planstack: plan has no runnable phases.");
+      return;
+    }
+    const decision = await askRunBranchDecision(plan, next, "sidebar_webview");
+    if (decision === "cancel") {
+      return;
+    }
+    autoRunningPlans.set(planId, decision);
+    postChatSystemMessage(`${planChatLabel(plan)}: starting sequential run of ${plan.phases.length} phase${plan.phases.length === 1 ? "" : "s"}.`);
+    const tid = newTraceId("runplan-auto-start");
+    try {
+      await executePhaseRun(plan, next, decision, tid, "sidebar_webview");
+    } catch (e) {
+      traceEvent(tid, "runplan.auto.error", { error: e instanceof Error ? e.message : String(e) });
+      autoRunningPlans.delete(planId);
+    }
   }
 
   const sidebarUi = new PlanstackSidebarWebview(extUri, {
@@ -536,6 +608,76 @@ export function activate(context: vscode.ExtensionContext): void {
       await savePlanPreservingFile(plan, root);
       await refreshPlansOrdered(tree, sidebarUi);
     },
+    onRunPlanFully: async (planId) => {
+      await startPlanAutoRun(planId);
+    },
+    onRunTask: async (planId, phaseId, taskId) => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) {
+        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+        return;
+      }
+      const plan = currentPlans.find((p) => p.id === planId);
+      const phase = plan?.phases.find((ph) => ph.id === phaseId);
+      const task = phase?.tasks.find((t) => t.id === taskId);
+      if (!plan || !phase || !task) {
+        void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+        return;
+      }
+      const tid = newTraceId("runtask-sidebar");
+      traceEvent(tid, "runtask.enter", { planId, phaseId, taskId, taskDesc: task.desc });
+
+      // Optimistically mark the task as running so the user sees feedback
+      // immediately. Phase rolls up to in_progress to match.
+      task.state = "in_progress";
+      if (phase.state !== "in_progress") {
+        phase.state = "in_progress";
+      }
+      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+
+      const git = await summarizeGitForPlan(root, phase, plan);
+      const eff = effectiveWorkBranch(phase, plan);
+      const prompt = buildTaskHandoffPrompt(plan, phase, task, {
+        currentHead: git.currentBranchLabel,
+        effectiveWorkBranch: eff,
+        baseBranch: plan.git?.baseBranch,
+      });
+      traceMultiline(tid, "runtask.generated_prompt", prompt);
+      postChatSystemMessage(`${planChatLabel(plan)}: running task "${task.desc}"`);
+      try {
+        await dispatchPhaseHandoff(prompt, context, {
+          statusLabel: `${plan.title} › ${phase.title} › ${task.desc.slice(0, 40)}`,
+          traceId: tid,
+          onCliRunFinished: async (kind) => {
+            // Reload from disk because the agent may have edited the plan JSON.
+            const loaded = await loadPlansFromWorkspace();
+            const ordered = orderPlans(loaded, context.workspaceState.get<string[]>(PLAN_ORDER_KEY));
+            const fresh = ordered.find((p) => p.id === planId);
+            const freshPhase = fresh?.phases.find((ph) => ph.id === phaseId);
+            const freshTask = freshPhase?.tasks.find((t) => t.id === taskId);
+            if (!fresh || !freshPhase || !freshTask) {
+              return;
+            }
+            if (kind === "success") {
+              if (freshTask.state === "in_progress") freshTask.state = "completed";
+            } else if (kind === "stopped") {
+              if (freshTask.state === "in_progress") freshTask.state = "cancelled";
+            } else {
+              if (freshTask.state === "in_progress") freshTask.state = "failed";
+            }
+            freshPhase.state = deriveAggregateState(freshPhase.tasks.map((t) => t.state));
+            fresh.state = deriveAggregateState(fresh.phases.map((p) => p.state));
+            await savePlanPreservingFile(fresh, root);
+            await refreshPlansOrdered(tree, sidebarUi);
+          },
+        });
+      } catch (e) {
+        traceEvent(tid, "runtask.error", { error: e instanceof Error ? e.message : String(e) });
+        throw e;
+      }
+    },
     onDeleteTask: async (planId, phaseId, taskId) => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
       if (!root) {
@@ -612,6 +754,17 @@ export function activate(context: vscode.ExtensionContext): void {
       recomputeAggregates(plan);
       await savePlanPreservingFile(plan, root);
       await refreshPlansOrdered(tree, sidebarUi);
+
+      if (autoRunningPlans.has(planId)) {
+        if (outcome === "success") {
+          // Defer so the sidebar refresh paints the green phase before the
+          // next dispatch logs/spinners arrive.
+          setTimeout(() => void continueAutoRunPlan(planId), 250);
+        } else {
+          autoRunningPlans.delete(planId);
+          postChatSystemMessage(`${planChatLabel(plan)}: plan run halted (phase "${phase.title}" ${outcome === "stopped" ? "was cancelled" : "failed"}).`);
+        }
+      }
     } catch (e) {
       logLine(`applyPhaseRunOutcome: ${e instanceof Error ? e.message : String(e)}`);
     }
