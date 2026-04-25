@@ -36,6 +36,14 @@ export interface GitInfo {
   planBranch?: string;
 }
 
+/** Client-side metadata for MongoDB sync (newest-wins reconcile). */
+export interface PlanSyncMeta {
+  /** ISO-8601 instant last written for this plan (local or after pull). */
+  updatedAt: string;
+  /** Increments on each local save; tie-break with updatedAt. */
+  revision: number;
+}
+
 export interface Task {
   id: string;
   state: WorkState;
@@ -66,4 +74,6 @@ export interface Plan {
   createdAt?: string;
   phases: Phase[];
   git?: GitInfo;
+  /** Optional; used for Atlas plan sync / last-write-wins. */
+  sync?: PlanSyncMeta;
 }

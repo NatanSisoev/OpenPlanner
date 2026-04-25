@@ -149,8 +149,16 @@
             <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes">View as nodes</button>
           </div>
           <div class="toolbar-group toolbar-group-right">
-            <button class="view-btn" data-action="syncPull" title="Pull all plans from remote server">Pull</button>
-            <button class="view-btn" data-action="syncPush" title="Push all plans to remote server">Push</button>
+            <div class="sync-split">
+              <button type="button" class="view-btn sync-main" data-action="syncPullPush" title="Mongo: pull then push">Sync</button>
+              <details class="sync-more">
+                <summary class="sync-chevron" title="Pull or push only">▾</summary>
+                <div class="sync-dropdown">
+                  <button type="button" class="sync-dropdown-item" data-action="syncPull">Pull only</button>
+                  <button type="button" class="sync-dropdown-item" data-action="syncPush">Push only</button>
+                </div>
+              </details>
+            </div>
           </div>
         </div>
       </div>
@@ -220,14 +228,14 @@
       return `
         <div class="graph-plan-node tone-${node.tone}"
              style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
-          <div class="graph-plan-row">
-            <span class="graph-plan-kicker">plan</span>
+          <span class="graph-plan-kicker">plan</span>
+          <div class="graph-plan-footer">
+            <span class="graph-plan-title">${esc(node.title)}</span>
             <button class="run-btn graph-run-btn graph-plan-run-btn"
                     data-action="runPlanFromGraph"
                     data-plan="${pid}"
                     title="Run all phases in order">▶</button>
           </div>
-          <span class="graph-plan-title">${esc(node.title)}</span>
         </div>
       `;
     }
@@ -732,13 +740,28 @@
       return;
     }
 
+    function closeSyncMenu() {
+      const d = document.querySelector(".sync-more");
+      if (d) {
+        d.open = false;
+      }
+    }
+
+    if (action === "syncPullPush") {
+      vscode.postMessage({ type: "syncPullPushAll" });
+      closeSyncMenu();
+      return;
+    }
+
     if (action === "syncPull") {
       vscode.postMessage({ type: "syncPullAll" });
+      closeSyncMenu();
       return;
     }
 
     if (action === "syncPush") {
       vscode.postMessage({ type: "syncPushAll" });
+      closeSyncMenu();
       return;
     }
 
@@ -1039,7 +1062,10 @@
       return;
     }
     ids.splice(from, 1);
-    ids.splice(to, 0, draggedPlanId);
+    // After removing `from`, right-side indices shift left by one.
+    // Adjust insertion index so drop always inserts at the intended target slot.
+    const insertAt = from < to ? to - 1 : to;
+    ids.splice(insertAt, 0, draggedPlanId);
 
     const byId = new Map(plans.map((p) => [p.id, p]));
     plans = ids.map((id) => byId.get(id)).filter(Boolean);

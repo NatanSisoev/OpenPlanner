@@ -1,6 +1,12 @@
 import * as vscode from "vscode";
 import type { Plan } from "./types";
+import { stampLocalPlanSync } from "./planSyncStamp";
 import { validatePlanJson } from "./validate";
+
+export type SavePlanOptions = {
+  /** When true, do not bump `plan.sync` (e.g. after Mongo reconcile wrote remote winner). */
+  skipSyncStamp?: boolean;
+};
 
 /** Safe filename segment from plan id (keeps alnum, dash, underscore). */
 export function sanitizePlanFileBasename(planId: string): string {
@@ -13,7 +19,14 @@ export function sanitizePlanFileBasename(planId: string): string {
   return s.length > 0 ? s : "plan";
 }
 
-export async function saveValidatedPlan(plan: Plan, workspaceRoot: vscode.Uri): Promise<vscode.Uri> {
+export async function saveValidatedPlan(
+  plan: Plan,
+  workspaceRoot: vscode.Uri,
+  options?: SavePlanOptions,
+): Promise<vscode.Uri> {
+  if (!options?.skipSyncStamp) {
+    stampLocalPlanSync(plan);
+  }
   const dir = vscode.Uri.joinPath(workspaceRoot, ".planstack", "plans");
   await vscode.workspace.fs.createDirectory(dir);
   const base = sanitizePlanFileBasename(plan.id);
@@ -23,14 +36,21 @@ export async function saveValidatedPlan(plan: Plan, workspaceRoot: vscode.Uri): 
   return file;
 }
 
-export async function savePlanPreservingFile(plan: Plan, workspaceRoot: vscode.Uri): Promise<vscode.Uri> {
+export async function savePlanPreservingFile(
+  plan: Plan,
+  workspaceRoot: vscode.Uri,
+  options?: SavePlanOptions,
+): Promise<vscode.Uri> {
   const existing = await findPlanFileById(plan.id, workspaceRoot);
   if (existing) {
+    if (!options?.skipSyncStamp) {
+      stampLocalPlanSync(plan);
+    }
     const json = `${JSON.stringify(plan, null, 2)}\n`;
     await vscode.workspace.fs.writeFile(existing, new TextEncoder().encode(json));
     return existing;
   }
-  return saveValidatedPlan(plan, workspaceRoot);
+  return saveValidatedPlan(plan, workspaceRoot, options);
 }
 
 export async function deletePlanFile(planId: string, workspaceRoot: vscode.Uri): Promise<boolean> {

@@ -29,13 +29,34 @@
   };
   let mentionSuggestDebounceTimer = undefined;
 
-  function appendBubble(role, text) {
+  function formatTimestamp(timestampIso) {
+    if (!timestampIso || typeof timestampIso !== "string") {
+      return "";
+    }
+    const d = new Date(timestampIso);
+    if (Number.isNaN(d.getTime())) {
+      return "";
+    }
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function appendBubble(role, text, timestampIso) {
     const shouldStick = isNearBottom(messagesEl);
     const wrap = document.createElement("div");
     wrap.className = role === "system" ? "row system" : "row user";
     const bubble = document.createElement("div");
     bubble.className = role === "system" ? "bubble system" : "bubble user";
-    bubble.textContent = text;
+    const body = document.createElement("div");
+    body.className = "bubble-text";
+    body.textContent = text;
+    bubble.appendChild(body);
+    const ts = formatTimestamp(timestampIso);
+    if (ts) {
+      const meta = document.createElement("div");
+      meta.className = "bubble-meta";
+      meta.textContent = ts;
+      bubble.appendChild(meta);
+    }
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
     if (shouldStick) {
@@ -394,11 +415,29 @@
     header.textContent = `${icon} ${summary.phaseLabel} · ${dur}`;
     card.appendChild(header);
 
-    // Stats line
+    // Stats line (same + / − colors as per-file rows below)
     const stats = document.createElement("div");
     stats.className = "run-summary-stats";
     const fc = summary.files.length;
-    stats.textContent = `${fc} file${fc !== 1 ? "s" : ""} · +${summary.totalAdditions} / -${summary.totalDeletions}`;
+    const prefix = document.createElement("span");
+    prefix.className = "run-summary-stats-prefix";
+    prefix.textContent = `${fc} file${fc !== 1 ? "s" : ""} · `;
+    const diffWrap = document.createElement("span");
+    diffWrap.className = "run-summary-file-diff";
+    const addTot = document.createElement("span");
+    addTot.className = "run-summary-file-diff-add";
+    addTot.textContent = `+${summary.totalAdditions}`;
+    const sepTot = document.createElement("span");
+    sepTot.className = "run-summary-file-diff-sep";
+    sepTot.textContent = " / ";
+    const delTot = document.createElement("span");
+    delTot.className = "run-summary-file-diff-del";
+    delTot.textContent = `-${summary.totalDeletions}`;
+    diffWrap.appendChild(addTot);
+    diffWrap.appendChild(sepTot);
+    diffWrap.appendChild(delTot);
+    stats.appendChild(prefix);
+    stats.appendChild(diffWrap);
     card.appendChild(stats);
 
     // Per-file rows
@@ -648,7 +687,7 @@
       animatedStatuses.clear();
       (msg.messages || []).forEach((m) => {
         if (m && (m.role === "user" || m.role === "system") && typeof m.text === "string") {
-          appendBubble(m.role, m.text);
+          appendBubble(m.role, m.text, typeof m.timestampIso === "string" ? m.timestampIso : "");
         }
       });
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -657,7 +696,7 @@
 
     if (msg.type === "append" && typeof msg.text === "string") {
       const role = msg.role === "system" ? "system" : "user";
-      appendBubble(role, msg.text);
+      appendBubble(role, msg.text, typeof msg.timestampIso === "string" ? msg.timestampIso : "");
       return;
     }
 

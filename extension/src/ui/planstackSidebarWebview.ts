@@ -37,6 +37,7 @@ interface PlanstackSidebarCallbacks {
   onRunPlanFully: (planId: string) => Promise<void>;
   onSyncPushAll: () => Promise<void>;
   onSyncPullAll: () => Promise<void>;
+  onSyncPullPushAll: () => Promise<void>;
 }
 
 export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
@@ -62,6 +63,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private readonly onRunPlanFully: PlanstackSidebarCallbacks["onRunPlanFully"];
   private readonly onSyncPushAll: PlanstackSidebarCallbacks["onSyncPushAll"];
   private readonly onSyncPullAll: PlanstackSidebarCallbacks["onSyncPullAll"];
+  private readonly onSyncPullPushAll: PlanstackSidebarCallbacks["onSyncPullPushAll"];
   private readonly promptEditors = new Map<
     string,
     { kind: "plan" | "phase"; planId: string; phaseId?: string }
@@ -84,6 +86,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     this.onRunPlanFully = callbacks.onRunPlanFully;
     this.onSyncPushAll = callbacks.onSyncPushAll;
     this.onSyncPullAll = callbacks.onSyncPullAll;
+    this.onSyncPullPushAll = callbacks.onSyncPullPushAll;
   }
 
   resolveWebviewView(
@@ -267,6 +270,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "syncPullAll") {
         void this.onSyncPullAll();
+      }
+      if (m.type === "syncPullPushAll") {
+        void this.onSyncPullPushAll();
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -682,6 +688,74 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       background: var(--vscode-button-background, #0e70c0);
       border-color: transparent;
     }
+    .sync-split {
+      display: inline-flex;
+      align-items: stretch;
+      border-radius: 999px;
+      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      overflow: visible;
+    }
+    .sync-split .sync-main {
+      border-radius: 0;
+      border: none;
+      border-right: 1px solid var(--c-border);
+    }
+    .sync-more {
+      position: relative;
+      display: flex;
+      align-items: stretch;
+    }
+    .sync-more > summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      padding: 3px 6px;
+      margin: 0;
+      cursor: pointer;
+      border: none;
+      border-radius: 0;
+      font: inherit;
+      font-size: 0.78em;
+      background: transparent;
+      color: var(--vscode-foreground);
+      opacity: 0.85;
+    }
+    .sync-more > summary::-webkit-details-marker { display: none; }
+    .sync-more > summary:hover {
+      opacity: 1;
+      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+    }
+    .sync-dropdown {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 88px;
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--c-border);
+      background: var(--vscode-editor-background);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.28);
+    }
+    .sync-dropdown-item {
+      font: inherit;
+      font-size: 0.82em;
+      text-align: left;
+      padding: 5px 8px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+    }
+    .sync-dropdown-item:hover {
+      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+    }
     .quick-btn {
       font: inherit;
       font-size: 0.78em;
@@ -923,14 +997,14 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       box-shadow: 0 5px 12px rgba(0,0,0,0.15);
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      gap: 5px;
-      padding: 8px 10px;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px 7px;
     }
     .graph-plan-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 65%, transparent); }
     .graph-plan-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 65%, transparent); }
     .graph-plan-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 65%, transparent); }
-    .graph-plan-row {
+    .graph-plan-footer {
       display: flex;
       align-items: center;
       justify-content: space-between;

@@ -25,6 +25,7 @@
     "onCommand:hackupc.planstack.taskSetState.completed",
     "onCommand:hackupc.planstack.taskSetState.failed",
     "onCommand:hackupc.planstack.taskSetState.cancelled",
+    "onCommand:hackupc.planstack.setMongoConnectionString",
     "onCommand:hackupc.planstack.setCursorApiKey",
     "onCommand:hackupc.planstack.debugCliConnection",
     "onCommand:hackupc.planstack.killAgentRuns",
@@ -109,6 +110,10 @@
       {
         "command": "hackupc.planstack.taskSetState.cancelled",
         "title": "Cancelled"
+      },
+      {
+        "command": "hackupc.planstack.setMongoConnectionString",
+        "title": "Planstack: Set MongoDB connection string"
       },
       {
         "command": "hackupc.planstack.setCursorApiKey",
@@ -224,10 +229,15 @@
           "default": "",
           "description": "Legacy: same as planstack.cursor.openComposerCommand. Used when planstack.cursor.openComposerCommand is empty."
         },
-        "planstack.cursor.syncApiBaseUrl": {
+        "planstack.cursor.mongoDatabase": {
           "type": "string",
-          "default": "",
-          "description": "Base URL for Planstack remote sync API (used by Push/Pull in Overview). Example: http://localhost:8787. If empty, PLANSTACK_SYNC_API_BASE_URL is used."
+          "default": "planstack",
+          "description": "MongoDB database name for plan sync (Overview Push/Pull)."
+        },
+        "planstack.cursor.mongoCollection": {
+          "type": "string",
+          "default": "plan",
+          "description": "MongoDB collection name for plan documents (each document: _id = plan id, payload, updatedAt, revision)."
         },
         "planstack.cursor.agentPath": {
           "type": "string",
@@ -326,6 +336,9 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -watch -p ."
+  },
+  "dependencies": {
+    "mongodb": "^6.12.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

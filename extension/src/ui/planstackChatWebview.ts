@@ -66,7 +66,11 @@ async function getHeadFileContent(cwd: string, relPath: string): Promise<string 
 
 type ChatRole = "user" | "system";
 
-type ChatTurn = { role: ChatRole; text: string };
+type ChatTurn = { role: ChatRole; text: string; timestampIso: string };
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
 
 export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -102,17 +106,19 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     w.html = getChatHtml(csp, scriptUri);
 
     const pushSystem = (text: string): void => {
-      this.transcript.push({ role: "system", text });
+      const timestampIso = nowIso();
+      this.transcript.push({ role: "system", text, timestampIso });
       try {
-        w.postMessage({ type: "append", role: "system", text });
+        w.postMessage({ type: "append", role: "system", text, timestampIso });
       } catch {
         // Webview disposed.
       }
     };
     const pushUser = (text: string): void => {
-      this.transcript.push({ role: "user", text });
+      const timestampIso = nowIso();
+      this.transcript.push({ role: "user", text, timestampIso });
       try {
-        w.postMessage({ type: "append", role: "user", text });
+        w.postMessage({ type: "append", role: "user", text, timestampIso });
       } catch {
         // Webview disposed.
       }
@@ -180,8 +186,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         if (text.length > MAX_MESSAGE_CHARS) {
           text = text.slice(0, MAX_MESSAGE_CHARS);
         }
-        this.transcript.push({ role: "user", text });
-        w.postMessage({ type: "append", role: "user", text });
+        pushUser(text);
         void (async () => {
           const mentionCtx = await this.resolveMentionContext(w, text, "send");
           await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
@@ -197,8 +202,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           void vscode.window.showWarningMessage("Planstack: enter a request in the box before Create plan.");
           return;
         }
-        this.transcript.push({ role: "user", text });
-        w.postMessage({ type: "append", role: "user", text });
+        pushUser(text);
         void (async () => {
           const mentionCtx = await this.resolveMentionContext(w, text, "createPlan");
           await this.runCreatePlanFlow(w, text, mentionCtx.promptForAgent);
@@ -243,8 +247,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (m.type === "retryPrompt" && typeof (m as { prompt?: unknown }).prompt === "string") {
         const text = (m as { prompt: string }).prompt.trim();
         if (text) {
-          this.transcript.push({ role: "user", text });
-          w.postMessage({ type: "append", role: "user", text });
+          pushUser(text);
           void (async () => {
             const mentionCtx = await this.resolveMentionContext(w, text, "send");
             await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
@@ -343,12 +346,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           n > 0
             ? `Stop agents: sent SIGTERM to ${n} process(es). In-flight runs will abort.`
             : "Stop agents: no Planstack agent process was running.";
-        this.transcript.push({ role: "system", text: line });
-        try {
-          w.postMessage({ type: "append", role: "system", text: line });
-        } catch {
-          // Webview disposed.
-        }
+        pushSystem(line);
         void vscode.window.showInformationMessage(`Planstack: ${line}`);
         return;
       }
@@ -439,8 +437,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         return;
       }
       const startLine = "Create plan: starting Cursor CLI run (agent -p --trust)…";
-      this.transcript.push({ role: "system", text: startLine });
-      w.postMessage({ type: "append", role: "system", text: startLine });
+      this.pushSystem(w, startLine);
 
       const cfg = vscode.workspace.getConfiguration("planstack.cursor");
       const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
@@ -474,12 +471,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         lastChatAt = now;
         const line = `${prefix}${t.slice(-200)}`;
-        this.transcript.push({ role: "system", text: line });
-        try {
-          w.postMessage({ type: "append", role: "system", text: line });
-        } catch {
-          // Webview disposed.
-        }
+        this.pushSystem(w, line);
       };
 
       try {
@@ -538,8 +530,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         const rel = vscode.workspace.asRelativePath(savedUri);
         traceEvent(flowId, "createPlanFlow.success", { savedUri: savedUri.fsPath, rel });
         const line = `Saved plan file: ${rel}`;
-        this.transcript.push({ role: "system", text: line });
-        w.postMessage({ type: "append", role: "system", text: line });
+        this.pushSystem(w, line);
         await this.onPlanSaved();
         void vscode.window.showInformationMessage(`Planstack: wrote ${rel}`);
         await vscode.window.showTextDocument(savedUri, { preview: true });
@@ -556,8 +547,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (e instanceof AgentRunBusyError) {
         traceEvent(flowId, "createPlanFlow.error", { kind: "AgentRunBusyError", message: e.message });
         const line = `Create plan skipped: ${e.message}`;
-        this.transcript.push({ role: "system", text: line });
-        w.postMessage({ type: "append", role: "system", text: line });
+        this.pushSystem(w, line);
         void vscode.window.showWarningMessage(e.message);
         return;
       }
@@ -580,8 +570,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         details: detail.slice(0, 2000),
         retryPrompt: userRequest,
       });
-      this.transcript.push({ role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
-      w.postMessage({ type: "append", role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
+      this.pushSystem(w, `Create plan failed: ${detail.slice(0, 500)}`);
       if (stopped) {
         void vscode.window.showWarningMessage(`Planstack: ${detail.slice(0, 2000)}`);
       } else {
@@ -598,9 +587,10 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   }
 
   private pushSystem(w: vscode.Webview, text: string): void {
-    this.transcript.push({ role: "system", text });
+    const timestampIso = nowIso();
+    this.transcript.push({ role: "system", text, timestampIso });
     try {
-      w.postMessage({ type: "append", role: "system", text });
+      w.postMessage({ type: "append", role: "system", text, timestampIso });
     } catch {
       // Webview disposed.
     }
@@ -797,6 +787,19 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       border-radius: 8px;
       white-space: pre-wrap; word-break: break-word;
       line-height: 1.4; font-size: 0.9em;
+    }
+    .bubble-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble-meta {
+      margin-top: 4px;
+      font-size: 0.75em;
+      opacity: 0.62;
+      text-align: right;
+    }
+    .row.system .bubble-meta {
+      text-align: left;
     }
     .bubble.user {
       background: color-mix(
@@ -1079,7 +1082,11 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       width: 100%;
     }
     .run-summary-header { font-weight: 600; margin-bottom: 3px; }
-    .run-summary-stats { opacity: 0.7; font-size: 0.9em; margin-bottom: 8px; }
+    .run-summary-stats {
+      display: flex; align-items: baseline; flex-wrap: wrap; gap: 0;
+      font-size: 0.9em; margin-bottom: 8px;
+    }
+    .run-summary-stats-prefix { opacity: 0.7; }
     .run-summary-files {
       display: flex; flex-direction: column; gap: 3px;
       border-top: 1px solid rgba(127,127,127,0.15);

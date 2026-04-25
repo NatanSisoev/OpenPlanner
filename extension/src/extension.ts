@@ -10,14 +10,13 @@ import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
 import { blockingDependencies, deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt, buildTaskHandoffPrompt } from "./plan/prompt";
-import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace, runAgentPromptEdits } from "./plan/createPlanFromCli";
 import {
-  fetchRemotePlanById,
-  fetchRemotePlanIndex,
-  pushRemotePlan,
-  RemoteSyncError,
-  requiredSyncApiBaseUrlOrThrow,
-} from "./plan/remoteSync";
+  CURSOR_API_KEY_SECRET,
+  resyncPlanFromCurrentWorkspace,
+  runAgentPromptEdits,
+} from "./plan/createPlanFromCli";
+import { PLANSTACK_MONGODB_URI_SECRET, requireMongoUriOrThrow } from "./plan/mongoUri";
+import { reconcileAllPlansWithMongo, type ReconcileMongoPlansResult } from "./plan/mongoPlanSync";
 import { validatePlanJson } from "./plan/validate";
 import { debugCliConnection } from "./plan/debugCliConnection";
 import { AgentCliError, AgentRunBusyError, isAgentRunBusy, killAllAgentCliProcesses } from "./plan/agentCliRunner";
@@ -686,112 +685,152 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   }
 
-  async function syncPushAllPlans(): Promise<void> {
-    const baseUrl = requiredSyncApiBaseUrlOrThrow();
-    const plans = await loadPlansFromWorkspace();
-    if (plans.length === 0) {
-      void vscode.window.showInformationMessage("Planstack: no local plans to push.");
+  function showMongoSyncOutcome(
+    reconciled: number,
+    failed: string[],
+    summary: ReconcileMongoPlansResult | undefined,
+    dbName: string,
+    collName: string,
+  ): void {
+    if (failed.length > 0) {
+      const first = failed.slice(0, 2).join(" · ");
+      void vscode.window.showWarningMessage(
+        `Planstack: ${reconciled} updated, ${failed.length} failed — ${first}`.slice(0, 2000),
+      );
+      for (const line of failed) {
+        logLine(`mongo sync: ${line}`);
+      }
       return;
     }
-
-    const failed: string[] = [];
-    let pushed = 0;
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "Planstack: Pushing plans to remote",
-        cancellable: false,
-      },
-      async (progress) => {
-        for (let i = 0; i < plans.length; i += 1) {
-          const plan = plans[i]!;
-          progress.report({
-            message: `${i + 1}/${plans.length} · ${plan.id}`,
-            increment: 100 / plans.length,
-          });
-          try {
-            await pushRemotePlan(baseUrl, plan);
-            pushed += 1;
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            failed.push(`${plan.id}: ${msg}`);
-            logLine(`sync push failed for ${plan.id}: ${msg}`);
-          }
-        }
-      },
-    );
-
-    if (failed.length > 0) {
-      const first = failed.slice(0, 2).join(" | ");
-      void vscode.window.showWarningMessage(
-        `Planstack: pushed ${pushed}/${plans.length} plan(s). ${failed.length} failed. ${first}`.slice(0, 2000),
+    if (reconciled > 0) {
+      void vscode.window.showInformationMessage(
+        `Planstack: ${reconciled} plan${reconciled === 1 ? "" : "s"} updated.`,
       );
       return;
     }
-    void vscode.window.showInformationMessage(`Planstack: pushed ${pushed} plan(s) to remote.`);
+    const s = summary;
+    if (s && s.idsTotal > 0) {
+      void vscode.window.showInformationMessage(`Planstack: Up to date (${s.idsTotal} plans).`);
+      logLine(`mongo sync ok ids=${s.idsTotal} local=${s.localPlanCount} remote=${s.remoteDocCount}`);
+      return;
+    }
+    void vscode.window.showInformationMessage(
+      `Planstack: Nothing to sync — add .planstack/plans or data in ${dbName}.${collName}.`,
+    );
+    logLine(`mongo sync empty local=${s?.localPlanCount ?? 0} remote=${s?.remoteDocCount ?? 0}`);
+  }
+
+  async function syncReconcileAllPlans(title: string): Promise<void> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: Open a workspace folder first.");
+      return;
+    }
+    let uri: string;
+    try {
+      uri = await requireMongoUriOrThrow(context);
+    } catch (e) {
+      void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+    const dbName = cfg.get<string>("mongoDatabase")?.trim() || "planstack";
+    const collName = cfg.get<string>("mongoCollection")?.trim() || "plan";
+
+    const failed: string[] = [];
+    let reconciled = 0;
+    let syncSummary: ReconcileMongoPlansResult | undefined;
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title,
+          cancellable: false,
+        },
+        async (progress) => {
+          const r = await reconcileAllPlansWithMongo(root, uri, dbName, collName, (message, increment) => {
+            progress.report({ message, increment });
+          });
+          syncSummary = r;
+          reconciled = r.reconciled;
+          failed.push(...r.failed);
+        },
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showErrorMessage(`Planstack: ${msg}`);
+      logLine(`mongo sync fatal: ${msg}`);
+      return;
+    }
+
+    await refreshPlansOrdered(tree, sidebarUi);
+    showMongoSyncOutcome(reconciled, failed, syncSummary, dbName, collName);
+  }
+
+  async function syncPullThenPushAllPlans(): Promise<void> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: Open a workspace folder first.");
+      return;
+    }
+    let uri: string;
+    try {
+      uri = await requireMongoUriOrThrow(context);
+    } catch (e) {
+      void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+    const dbName = cfg.get<string>("mongoDatabase")?.trim() || "planstack";
+    const collName = cfg.get<string>("mongoCollection")?.trim() || "plan";
+
+    const failed: string[] = [];
+    let reconciled = 0;
+    let lastSummary: ReconcileMongoPlansResult | undefined;
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Planstack: Sync",
+          cancellable: false,
+        },
+        async (progress) => {
+          progress.report({ message: "1/2 Pull", increment: 0 });
+          const r1 = await reconcileAllPlansWithMongo(root, uri, dbName, collName, (message, increment) => {
+            progress.report({
+              message: `Pull · ${message}`,
+              increment: increment !== undefined ? increment / 2 : undefined,
+            });
+          });
+          progress.report({ message: "2/2 Push", increment: 50 });
+          const r2 = await reconcileAllPlansWithMongo(root, uri, dbName, collName, (message, increment) => {
+            progress.report({
+              message: `Push · ${message}`,
+              increment: increment !== undefined ? increment / 2 : undefined,
+            });
+          });
+          reconciled = r1.reconciled + r2.reconciled;
+          failed.push(...r1.failed, ...r2.failed);
+          lastSummary = r2;
+        },
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showErrorMessage(`Planstack: ${msg}`);
+      logLine(`mongo sync fatal: ${msg}`);
+      return;
+    }
+
+    await refreshPlansOrdered(tree, sidebarUi);
+    showMongoSyncOutcome(reconciled, failed, lastSummary, dbName, collName);
+  }
+
+  async function syncPushAllPlans(): Promise<void> {
+    await syncReconcileAllPlans("Planstack: Push");
   }
 
   async function syncPullAllPlans(): Promise<void> {
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-    if (!root) {
-      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
-      return;
-    }
-    const baseUrl = requiredSyncApiBaseUrlOrThrow();
-    const index = await fetchRemotePlanIndex(baseUrl);
-    if (index.length === 0) {
-      void vscode.window.showInformationMessage("Planstack: remote has no plans to pull.");
-      return;
-    }
-
-    const failed: string[] = [];
-    let pulled = 0;
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "Planstack: Pulling plans from remote",
-        cancellable: false,
-      },
-      async (progress) => {
-        for (let i = 0; i < index.length; i += 1) {
-          const entry = index[i]!;
-          progress.report({
-            message: `${i + 1}/${index.length} · ${entry.id}`,
-            increment: 100 / index.length,
-          });
-          try {
-            const remote = await fetchRemotePlanById(baseUrl, entry.id);
-            if (remote.id !== entry.id) {
-              throw new RemoteSyncError(
-                `Remote id mismatch for ${entry.id}: response returned id "${remote.id}".`,
-              );
-            }
-            const validated = validatePlanJson(remote.payload);
-            if (validated.id !== entry.id) {
-              throw new RemoteSyncError(
-                `Remote payload id mismatch for ${entry.id}: payload id is "${validated.id}".`,
-              );
-            }
-            await savePlanPreservingFile(validated, root);
-            pulled += 1;
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            failed.push(`${entry.id}: ${msg}`);
-            logLine(`sync pull failed for ${entry.id}: ${msg}`);
-          }
-        }
-      },
-    );
-
-    await refreshPlansOrdered(tree, sidebarUi);
-    if (failed.length > 0) {
-      const first = failed.slice(0, 2).join(" | ");
-      void vscode.window.showWarningMessage(
-        `Planstack: pulled ${pulled}/${index.length} plan(s). ${failed.length} failed. ${first}`.slice(0, 2000),
-      );
-      return;
-    }
-    void vscode.window.showInformationMessage(`Planstack: pulled ${pulled} plan(s) from remote.`);
+    await syncReconcileAllPlans("Planstack: Pull");
   }
 
   const sidebarUi = new PlanstackSidebarWebview(extUri, {
@@ -1024,6 +1063,14 @@ export function activate(context: vscode.ExtensionContext): void {
     onSyncPullAll: async () => {
       try {
         await syncPullAllPlans();
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
+      }
+    },
+    onSyncPullPushAll: async () => {
+      try {
+        await syncPullThenPushAllPlans();
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         void vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
@@ -1617,6 +1664,45 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         throw e;
       }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.setMongoConnectionString", async () => {
+      const tid = newTraceId("cmd-setmongo");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.setMongoConnectionString" });
+      const value = await vscode.window.showInputBox({
+        title: "MongoDB connection string (Planstack plan sync)",
+        prompt:
+          "Stored in VS Code Secret Storage. Use Atlas SRV URI (mongodb+srv://…). Leave empty to clear and fall back to MONGODB_URI env when set.",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (value === undefined) {
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.planstack.setMongoConnectionString",
+          ok: true,
+          cancelled: true,
+        });
+        return;
+      }
+      if (!value.trim()) {
+        await context.secrets.delete(PLANSTACK_MONGODB_URI_SECRET);
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.planstack.setMongoConnectionString",
+          ok: true,
+          cleared: true,
+        });
+        void vscode.window.showInformationMessage("Planstack: cleared stored MongoDB connection string.");
+        return;
+      }
+      await context.secrets.store(PLANSTACK_MONGODB_URI_SECRET, value.trim());
+      traceEvent(tid, "command.exit", {
+        command: "hackupc.planstack.setMongoConnectionString",
+        ok: true,
+        storedChars: value.trim().length,
+      });
+      void vscode.window.showInformationMessage("Planstack: MongoDB connection string saved for this profile.");
     }),
   );
 
