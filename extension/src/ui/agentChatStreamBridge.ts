@@ -1,6 +1,6 @@
 /** Live agent stdout/stderr into the Planstack Chat webview (separate from one-line system status). */
 
-export type AgentStreamSource = "runPhase" | "createPlan" | "sendPrompt";
+export type AgentStreamSource = "runPhase" | "runTask" | "createPlan" | "sendPrompt";
 
 export type AgentStreamEndReason = "complete" | "error" | "stopped";
 

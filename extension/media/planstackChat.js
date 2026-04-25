@@ -424,6 +424,8 @@
           ? "Create plan"
           : msg.source === "sendPrompt"
             ? "Send"
+            : msg.source === "runTask"
+              ? "Run task"
             : "Run phase";
       const title = document.createElement("span");
       title.className = "agent-stream-title";

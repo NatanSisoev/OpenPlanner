@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "./debug/trace";
 import { handoffToNativeComposer } from "./dispatch/cursorNativeHandoff";
@@ -9,13 +10,15 @@ import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
 import { blockingDependencies, deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
-import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace } from "./plan/createPlanFromCli";
+import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace, runAgentPromptEdits } from "./plan/createPlanFromCli";
 import { debugCliConnection } from "./plan/debugCliConnection";
-import { isAgentRunBusy, killAllAgentCliProcesses } from "./plan/agentCliRunner";
-import { logLine } from "./log";
+import { AgentCliError, AgentRunBusyError, isAgentRunBusy, killAllAgentCliProcesses } from "./plan/agentCliRunner";
+import { getOutput, logLine } from "./log";
 import { savePlanPreservingFile, deletePlanFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
 import { postChatSystemMessage, postChatUserMessage } from "./ui/chatStatusBridge";
+import { postAgentStreamChunk, postAgentStreamEnd, postAgentStreamStart, type AgentStreamEndReason } from "./ui/agentChatStreamBridge";
+import { postAnimatedStatus, postRunFailure } from "./ui/richChatBridge";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
 import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem, TaskTreeItem } from "./ui/planTreeProvider";
 import { WORK_STATES, type ExecutionState } from "./plan/types";
@@ -251,6 +254,206 @@ export function activate(context: vscode.ExtensionContext): void {
     postChatUserMessage(`Run phase request: ${plan.title} › ${phase.title} (${sourceLabel})`);
   }
 
+  function emitTaskRunRequestMessage(
+    plan: Plan,
+    phase: Plan["phases"][number],
+    task: Plan["phases"][number]["tasks"][number],
+    source: RunEntrySource,
+  ): void {
+    const sourceLabel = source === "tree_command" ? "tree" : "sidebar";
+    postChatUserMessage(`Run task request: ${plan.title} › ${phase.title} › ${task.desc} (${sourceLabel})`);
+  }
+
+  async function runTaskWithPrompt(
+    planId: string,
+    phaseId: string,
+    taskId: string,
+    source: RunEntrySource,
+  ): Promise<boolean> {
+    const traceId = newTraceId("runtask");
+    const plan = currentPlans.find((p) => p.id === planId);
+    const phase = plan?.phases.find((ph) => ph.id === phaseId);
+    const task = phase?.tasks.find((t) => t.id === taskId);
+    if (!plan || !phase || !task) {
+      void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+      return false;
+    }
+    const prompt = (task.prompt ?? "").trim();
+    if (!prompt) {
+      void vscode.window.showWarningMessage(
+        `Planstack: task "${task.desc}" has no prompt. Open task details and add a prompt before running.`,
+      );
+      return false;
+    }
+    if (isAgentRunBusy()) {
+      void vscode.window.showWarningMessage(
+        "Planstack: an agent run is already in progress. Stop it or wait for completion, then retry.",
+      );
+      return false;
+    }
+
+    const statusLabel = `${plan.title} › ${phase.title} › ${task.desc}`;
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      return false;
+    }
+
+    emitTaskRunRequestMessage(plan, phase, task, source);
+    postChatSystemMessage(`${planChatLabel(plan)}: running task "${task.desc}".`);
+
+    const marked = await mutatePlan(plan.id, (latest) => {
+      const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
+      const latestTask = latestPhase?.tasks.find((t) => t.id === task.id);
+      if (!latestPhase || !latestTask) {
+        return false;
+      }
+      latestTask.state = "in_progress";
+    });
+    if (!marked) {
+      void vscode.window.showWarningMessage("Planstack: task could not be marked in progress.");
+      return false;
+    }
+
+    const output = getOutput();
+    output.show(true);
+    output.appendLine(`\n=== ${statusLabel}: task run started ${new Date().toISOString()} ===\n`);
+
+    const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+    const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
+    const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
+    const chatThrottleMs = cfg.get<number>("cliStreamChatThrottleMs") ?? 25_000;
+    let lastChatAt = 0;
+    const runId = randomUUID();
+    let endReason: AgentStreamEndReason = "complete";
+    const startedAt = Date.now();
+
+    const maybeChat = (prefix: string, chunk: string): void => {
+      const t = chunk.trim();
+      if (!t) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastChatAt < chatThrottleMs) {
+        return;
+      }
+      lastChatAt = now;
+      postChatSystemMessage(`${prefix}${t.slice(-220)}`);
+    };
+
+    postAnimatedStatus(runId);
+    if (useLiveChat) {
+      postAgentStreamStart(runId, {
+        label: statusLabel,
+        source: "runTask",
+      });
+    }
+    try {
+      const result = await runAgentPromptEdits({
+        extensionContext: context,
+        workspaceRoot: root,
+        prompt,
+        debugTraceId: traceId,
+        onAgentStdoutChunk:
+          streamToOutput || useLiveChat
+            ? (text) => {
+                if (streamToOutput && text) {
+                  output.append(text);
+                }
+                if (!text) {
+                  return;
+                }
+                if (useLiveChat) {
+                  postAgentStreamChunk(runId, "stdout", text);
+                } else {
+                  maybeChat("Task run: ", text);
+                }
+              }
+            : undefined,
+        onAgentStderrChunk:
+          streamToOutput || useLiveChat
+            ? (text) => {
+                if (streamToOutput && text) {
+                  output.append(text);
+                }
+                if (!text) {
+                  return;
+                }
+                if (useLiveChat) {
+                  postAgentStreamChunk(runId, "stderr", text);
+                } else {
+                  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+                  const last = lines.length > 0 ? lines[lines.length - 1]! : text;
+                  maybeChat("Task run (stderr): ", last);
+                }
+              }
+            : undefined,
+      });
+
+      if (result.exitCode !== 0) {
+        endReason = "error";
+        const tail = result.stderr.trim() || result.stdout.slice(-400);
+        throw new AgentCliError(
+          `agent exited with code ${result.exitCode}. ${tail ? `Details: ${tail}` : ""}`.trim(),
+          result.exitCode,
+          result.stderr,
+        );
+      }
+
+      await mutatePlan(plan.id, (latest) => {
+        const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
+        const latestTask = latestPhase?.tasks.find((t) => t.id === task.id);
+        if (!latestPhase || !latestTask) {
+          return false;
+        }
+        latestTask.state = "completed";
+      });
+      postChatSystemMessage(`${statusLabel}: task run completed.`);
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const stopped = e instanceof AgentCliError && msg.includes("stopped");
+      endReason = stopped ? "stopped" : "error";
+      if (e instanceof AgentRunBusyError) {
+        await mutatePlan(plan.id, (latest) => {
+          const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
+          const latestTask = latestPhase?.tasks.find((t) => t.id === task.id);
+          if (!latestPhase || !latestTask) {
+            return false;
+          }
+          latestTask.state = "pending";
+        });
+        void vscode.window.showWarningMessage(e.message);
+        postChatSystemMessage(`${statusLabel}: skipped — ${e.message}`);
+      } else {
+        await mutatePlan(plan.id, (latest) => {
+          const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
+          const latestTask = latestPhase?.tasks.find((t) => t.id === task.id);
+          if (!latestPhase || !latestTask) {
+            return false;
+          }
+          latestTask.state = stopped ? "cancelled" : "failed";
+        });
+        postRunFailure(runId, {
+          phaseLabel: statusLabel,
+          durationSec: Math.floor((Date.now() - startedAt) / 1000),
+          summary: stopped ? "Task run stopped by user" : "Task run failed",
+          details: msg.slice(0, 2000),
+          retryPrompt: prompt,
+        });
+        postChatSystemMessage(`${statusLabel}: ${stopped ? "task run stopped." : `task run failed — ${msg.slice(0, 400)}`}`);
+        if (stopped) {
+          void vscode.window.showWarningMessage(`Planstack: ${msg.slice(0, 2000)}`);
+        } else {
+          void vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
+        }
+      }
+      return false;
+    } finally {
+      postAgentStreamEnd(runId, endReason);
+    }
+  }
+
   async function askRunBranchDecision(
     plan: Plan,
     phase: Plan["phases"][number],
@@ -436,6 +639,23 @@ export function activate(context: vscode.ExtensionContext): void {
         throw e;
       }
     },
+    onRunTask: async (planId, phaseId, taskId) => {
+      const tid = newTraceId("runtask-sidebar");
+      traceEvent(tid, "runtask.sidebar.enter", { planId, phaseId, taskId });
+      try {
+        const started = await runTaskWithPrompt(planId, phaseId, taskId, "sidebar_webview");
+        traceEvent(tid, "runtask.sidebar.exit", { ok: started });
+      } catch (e) {
+        traceEvent(tid, "runtask.sidebar.exit", {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        if (e instanceof Error && e.stack) {
+          traceMultiline(tid, "runtask.sidebar.error.stack", e.stack);
+        }
+        throw e;
+      }
+    },
     onUpdatePhase: async (planId, phaseId, patch) => {
       const ok = await mutatePlan(planId, (plan) => {
         const phase = plan.phases.find((ph) => ph.id === phaseId);
@@ -461,14 +681,6 @@ export function activate(context: vscode.ExtensionContext): void {
       return ok;
     },
     onUpdateTask: async (planId, phaseId, taskId, patch) => {
-      if (patch.state === "in_progress") {
-        const plan = currentPlans.find((p) => p.id === planId);
-        const phase = plan?.phases.find((ph) => ph.id === phaseId);
-        const task = phase?.tasks.find((t) => t.id === taskId);
-        if (plan && phase && task) {
-          postChatUserMessage(`Run task request: ${plan.title} › ${phase.title} › ${task.desc}`);
-        }
-      }
       return mutatePlan(planId, (plan) => {
         const phase = plan.phases.find((ph) => ph.id === phaseId);
         const task = phase?.tasks.find((t) => t.id === taskId);

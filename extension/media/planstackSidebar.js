@@ -753,12 +753,7 @@
 
     if (action === "taskRun") {
       e.stopPropagation();
-      const plan = plans.find((p) => p.id === planId);
-      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
-      const task = phase?.tasks?.find((t) => t.id === taskId);
-      if (task && task.state !== "in_progress") {
-        sendTaskStateMutation(planId, phaseId, taskId, "in_progress");
-      }
+      vscode.postMessage({ type: "runTask", planId, phaseId, taskId });
       return;
     }
 

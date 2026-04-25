@@ -7,6 +7,7 @@ export const SIDEBAR_WEBVIEW_ID = "hackupc.planstack.ui";
 
 interface PlanstackSidebarCallbacks {
   onRunPhase: (planId: string, phaseId: string) => void;
+  onRunTask: (planId: string, phaseId: string, taskId: string) => void;
   onUpdatePhase: (
     planId: string,
     phaseId: string,
@@ -43,6 +44,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private phaseDetailsPanel?: vscode.WebviewPanel;
   private planDetailsPanel?: vscode.WebviewPanel;
   private readonly onRunPhase: PlanstackSidebarCallbacks["onRunPhase"];
+  private readonly onRunTask: PlanstackSidebarCallbacks["onRunTask"];
   private readonly onUpdatePhase: PlanstackSidebarCallbacks["onUpdatePhase"];
   private readonly onUpdateTask: PlanstackSidebarCallbacks["onUpdateTask"];
   private readonly onUpdatePlan: PlanstackSidebarCallbacks["onUpdatePlan"];
@@ -61,6 +63,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
 
   constructor(private readonly extUri: vscode.Uri, callbacks: PlanstackSidebarCallbacks) {
     this.onRunPhase = callbacks.onRunPhase;
+    this.onRunTask = callbacks.onRunTask;
     this.onUpdatePhase = callbacks.onUpdatePhase;
     this.onUpdateTask = callbacks.onUpdateTask;
     this.onUpdatePlan = callbacks.onUpdatePlan;
@@ -127,6 +130,10 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       if (m.type === "runPhase" && m.planId && m.phaseId) {
         traceEvent(recvId, "sidebar.runPhase", { planId: m.planId, phaseId: m.phaseId });
         this.onRunPhase(m.planId, m.phaseId);
+      }
+      if (m.type === "runTask" && m.planId && m.phaseId && m.taskId) {
+        traceEvent(recvId, "sidebar.runTask", { planId: m.planId, phaseId: m.phaseId, taskId: m.taskId });
+        this.onRunTask(m.planId, m.phaseId, m.taskId);
       }
       if (m.type === "updatePhase" && m.planId && m.phaseId) {
         traceEvent(recvId, "sidebar.updatePhase", {
