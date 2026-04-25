@@ -25,7 +25,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-.vscode
+.vscode/*
+!.vscode/launch.json
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -207,8 +208,3 @@ node_modules/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
