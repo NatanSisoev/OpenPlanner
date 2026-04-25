@@ -10,8 +10,16 @@
   let activeSubMenuAnchor = null;
   let closeSubMenuTimer = null;
   let draggedPlanId = null;
+  let wizardState = null;
 
   const root = document.getElementById("root");
+  const wizardOverlay = document.getElementById("wizardOverlay");
+  const wizardTitle = document.getElementById("wizardTitle");
+  const wizardStep = document.getElementById("wizardStep");
+  const wizardBody = document.getElementById("wizardBody");
+  const wizardError = document.getElementById("wizardError");
+  const wizardPrimary = document.getElementById("wizardPrimary");
+  const wizardSecondary = document.getElementById("wizardSecondary");
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -59,25 +67,42 @@
   function render() {
     if (!plans.length) {
       root.innerHTML = `
+        ${renderToolbar(true)}
         <div class="empty-state">
           <div class="empty-icon">📋</div>
           <div class="empty-title">No plans loaded</div>
-          <div class="empty-hint">Add <code>.planstack/plans/*.json</code> to your workspace, then refresh.</div>
+          <div class="empty-hint">Create your first plan or add <code>.planstack/plans/*.json</code> to your workspace.</div>
         </div>`;
       return;
     }
-    const controls = `
-      <div class="view-switcher" style="display:flex;gap:6px;padding:4px 8px 8px;position:sticky;top:0;background:var(--vscode-sideBar-background);z-index:2;">
-        <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list"
-                style="font:inherit;font-size:12px;border-radius:999px;border:1px solid rgba(127,127,127,0.35);padding:3px 10px;cursor:pointer;${viewMode === "list" ? "background:var(--vscode-button-background,#0e70c0);color:var(--vscode-button-foreground,#fff);" : "background:transparent;color:inherit;"}">List view</button>
-        <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes"
-                style="font:inherit;font-size:12px;border-radius:999px;border:1px solid rgba(127,127,127,0.35);padding:3px 10px;cursor:pointer;${viewMode === "nodes" ? "background:var(--vscode-button-background,#0e70c0);color:var(--vscode-button-foreground,#fff);" : "background:transparent;color:inherit;"}">View as nodes</button>
-      </div>
-    `;
+    const controls = renderToolbar(false);
     const body = viewMode === "nodes"
       ? renderNodesView()
       : plans.map(renderPlan).join("");
     root.innerHTML = controls + body;
+  }
+
+  function renderToolbar(onlyCreate) {
+    const createButtons = `
+      <div class="toolbar-group">
+        <button class="quick-btn" data-action="quickCreatePlan">+ Plan</button>
+        <button class="quick-btn" data-action="quickCreatePhase">+ Phase</button>
+        <button class="quick-btn" data-action="quickCreateTask">+ Task</button>
+      </div>
+    `;
+    if (onlyCreate) {
+      return `<div class="top-toolbar">${createButtons}</div>`;
+    }
+    return `
+      <div class="top-toolbar">
+        ${createButtons}
+        <div class="toolbar-divider"></div>
+        <div class="toolbar-group">
+          <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list">List view</button>
+          <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes">View as nodes</button>
+        </div>
+      </div>
+    `;
   }
 
   function renderNodesView() {
@@ -312,6 +337,21 @@
         viewMode = nextView;
         render();
       }
+      return;
+    }
+
+    if (action === "quickCreatePlan") {
+      openWizard("plan");
+      return;
+    }
+
+    if (action === "quickCreatePhase") {
+      openWizard("phase");
+      return;
+    }
+
+    if (action === "quickCreateTask") {
+      openWizard("task");
       return;
     }
 
@@ -703,6 +743,263 @@
     return phase?.tasks?.find((t) => t.id === taskId);
   }
 
+  function openWizard(kind) {
+    if (kind !== "plan" && !plans.length) {
+      return;
+    }
+    wizardState = {
+      kind,
+      step: 1,
+      planId: plans[0]?.id || "",
+      phaseId: "",
+    };
+    if (kind === "phase" && plans.length === 1) {
+      wizardState.planId = plans[0].id;
+      wizardState.step = 2;
+    }
+    if (kind === "task") {
+      if (plans.length === 1) {
+        wizardState.planId = plans[0].id;
+        const phases = Array.isArray(plans[0].phases) ? plans[0].phases : [];
+        if (phases.length === 0) {
+          showWizardError("This plan has no phases yet. Create a phase first.");
+        } else if (phases.length === 1) {
+          wizardState.phaseId = phases[0].id;
+          wizardState.step = 3;
+        } else {
+          wizardState.step = 2;
+        }
+      }
+    }
+    wizardOverlay.style.display = "flex";
+    renderWizard();
+  }
+
+  function closeWizard() {
+    wizardState = null;
+    wizardOverlay.style.display = "none";
+    wizardBody.innerHTML = "";
+    wizardError.textContent = "";
+  }
+
+  function showWizardError(message) {
+    wizardError.textContent = message || "";
+  }
+
+  function renderWizard() {
+    if (!wizardState) return;
+    showWizardError("");
+    const kind = wizardState.kind;
+    if (kind === "plan") {
+      wizardTitle.textContent = "Create Plan";
+      wizardStep.textContent = "Step 1 of 1";
+      wizardBody.innerHTML = `
+        <div class="wizard-field">
+          <label class="wizard-label">Plan title</label>
+          <input class="wizard-input" id="wizPlanTitle" placeholder="E.g. Launch onboarding MVP" />
+        </div>
+        <div class="wizard-field">
+          <label class="wizard-label">Description (optional)</label>
+          <textarea class="wizard-textarea" id="wizPlanDescription" placeholder="What is this plan about?"></textarea>
+        </div>
+      `;
+      wizardSecondary.textContent = "Cancel";
+      wizardPrimary.textContent = "Create plan";
+      setTimeout(() => document.getElementById("wizPlanTitle")?.focus(), 0);
+      return;
+    }
+    if (kind === "phase") {
+      if (wizardState.step === 1) {
+        wizardTitle.textContent = "Create Phase";
+        wizardStep.textContent = "Step 1 of 2";
+        wizardBody.innerHTML = `
+          <div class="wizard-field">
+            <label class="wizard-label">Select plan</label>
+            <select class="wizard-select" id="wizPlanSelect">
+              ${plans.map((p) => `<option value="${esc(p.id)}"${p.id === wizardState.planId ? " selected" : ""}>${esc(p.title)}</option>`).join("")}
+            </select>
+          </div>
+        `;
+        wizardSecondary.textContent = "Cancel";
+        wizardPrimary.textContent = "Continue";
+        return;
+      }
+      wizardTitle.textContent = "Create Phase";
+      wizardStep.textContent = "Step 2 of 2";
+      wizardBody.innerHTML = `
+        <div class="wizard-field">
+          <label class="wizard-label">Phase title</label>
+          <input class="wizard-input" id="wizPhaseTitle" placeholder="E.g. API implementation" />
+        </div>
+        <div class="wizard-field">
+          <label class="wizard-label">Description (optional)</label>
+          <textarea class="wizard-textarea" id="wizPhaseDescription" placeholder="Describe what this phase includes"></textarea>
+        </div>
+      `;
+      wizardSecondary.textContent = "Back";
+      wizardPrimary.textContent = "Create phase";
+      setTimeout(() => document.getElementById("wizPhaseTitle")?.focus(), 0);
+      return;
+    }
+    if (wizardState.step === 1) {
+      wizardTitle.textContent = "Create Task";
+      wizardStep.textContent = "Step 1 of 3";
+      wizardBody.innerHTML = `
+        <div class="wizard-field">
+          <label class="wizard-label">Select plan</label>
+          <select class="wizard-select" id="wizPlanSelect">
+            ${plans.map((p) => `<option value="${esc(p.id)}"${p.id === wizardState.planId ? " selected" : ""}>${esc(p.title)}</option>`).join("")}
+          </select>
+        </div>
+      `;
+      wizardSecondary.textContent = "Cancel";
+      wizardPrimary.textContent = "Continue";
+      return;
+    }
+    if (wizardState.step === 2) {
+      wizardTitle.textContent = "Create Task";
+      wizardStep.textContent = "Step 2 of 3";
+      const selectedPlan = plans.find((p) => p.id === wizardState.planId);
+      const phases = Array.isArray(selectedPlan?.phases) ? selectedPlan.phases : [];
+      wizardBody.innerHTML = `
+        <div class="wizard-field">
+          <label class="wizard-label">Select phase</label>
+          <select class="wizard-select" id="wizPhaseSelect">
+            ${phases.map((ph) => `<option value="${esc(ph.id)}"${ph.id === wizardState.phaseId ? " selected" : ""}>${esc(ph.title)}</option>`).join("")}
+          </select>
+        </div>
+      `;
+      wizardSecondary.textContent = "Back";
+      wizardPrimary.textContent = "Continue";
+      return;
+    }
+    wizardTitle.textContent = "Create Task";
+    wizardStep.textContent = "Step 3 of 3";
+    wizardBody.innerHTML = `
+      <div class="wizard-field">
+        <label class="wizard-label">Task title</label>
+        <input class="wizard-input" id="wizTaskDesc" placeholder="E.g. Build login endpoint" />
+      </div>
+      <div class="wizard-field">
+        <label class="wizard-label">Prompt for executor (optional)</label>
+        <textarea class="wizard-textarea" id="wizTaskPrompt" placeholder="Extra implementation instructions"></textarea>
+      </div>
+      <label class="wizard-check">
+        <input type="checkbox" id="wizTaskCommit" />
+        <span>Require commit when task completes</span>
+      </label>
+    `;
+    wizardSecondary.textContent = "Back";
+    wizardPrimary.textContent = "Create task";
+    setTimeout(() => document.getElementById("wizTaskDesc")?.focus(), 0);
+  }
+
+  function handleWizardSecondary() {
+    if (!wizardState) return;
+    if (wizardState.kind === "plan") {
+      closeWizard();
+      return;
+    }
+    if (wizardState.step === 1) {
+      closeWizard();
+      return;
+    }
+    wizardState.step -= 1;
+    renderWizard();
+  }
+
+  function handleWizardPrimary() {
+    if (!wizardState) return;
+    showWizardError("");
+    if (wizardState.kind === "plan") {
+      const title = document.getElementById("wizPlanTitle")?.value?.trim() || "";
+      const description = document.getElementById("wizPlanDescription")?.value?.trim() || "";
+      if (!title) {
+        showWizardError("Plan title is required.");
+        return;
+      }
+      vscode.postMessage({ type: "createPlan", title, description });
+      closeWizard();
+      return;
+    }
+    if (wizardState.kind === "phase") {
+      if (wizardState.step === 1) {
+        const planId = document.getElementById("wizPlanSelect")?.value || "";
+        if (!planId) {
+          showWizardError("Select a plan.");
+          return;
+        }
+        wizardState.planId = planId;
+        wizardState.step = 2;
+        renderWizard();
+        return;
+      }
+      const title = document.getElementById("wizPhaseTitle")?.value?.trim() || "";
+      const description = document.getElementById("wizPhaseDescription")?.value?.trim() || "";
+      if (!title) {
+        showWizardError("Phase title is required.");
+        return;
+      }
+      if (!wizardState.planId) {
+        showWizardError("Select a plan.");
+        return;
+      }
+      vscode.postMessage({ type: "createPhase", planId: wizardState.planId, title, description });
+      closeWizard();
+      return;
+    }
+
+    if (wizardState.step === 1) {
+      const planId = document.getElementById("wizPlanSelect")?.value || "";
+      if (!planId) {
+        showWizardError("Select a plan.");
+        return;
+      }
+      const plan = plans.find((p) => p.id === planId);
+      const phases = Array.isArray(plan?.phases) ? plan.phases : [];
+      if (!phases.length) {
+        showWizardError("This plan has no phases. Create one first.");
+        return;
+      }
+      wizardState.planId = planId;
+      wizardState.phaseId = phases[0].id;
+      wizardState.step = 2;
+      renderWizard();
+      return;
+    }
+    if (wizardState.step === 2) {
+      const phaseId = document.getElementById("wizPhaseSelect")?.value || "";
+      if (!phaseId) {
+        showWizardError("Select a phase.");
+        return;
+      }
+      wizardState.phaseId = phaseId;
+      wizardState.step = 3;
+      renderWizard();
+      return;
+    }
+    const desc = document.getElementById("wizTaskDesc")?.value?.trim() || "";
+    const prompt = document.getElementById("wizTaskPrompt")?.value?.trim() || "";
+    const commit = Boolean(document.getElementById("wizTaskCommit")?.checked);
+    if (!desc) {
+      showWizardError("Task title is required.");
+      return;
+    }
+    if (!wizardState.planId || !wizardState.phaseId) {
+      showWizardError("Select plan and phase.");
+      return;
+    }
+    vscode.postMessage({
+      type: "createTask",
+      planId: wizardState.planId,
+      phaseId: wizardState.phaseId,
+      desc,
+      prompt,
+      commit,
+    });
+    closeWizard();
+  }
+
   function hideContextMenu() {
     if (closeSubMenuTimer) {
       clearTimeout(closeSubMenuTimer);
@@ -818,6 +1115,14 @@
       plans = msg.plans || [];
       plans.forEach((p) => expandedPlans.add(p.id));
       render();
+    }
+  });
+
+  wizardSecondary?.addEventListener("click", handleWizardSecondary);
+  wizardPrimary?.addEventListener("click", handleWizardPrimary);
+  wizardOverlay?.addEventListener("click", (e) => {
+    if (e.target === wizardOverlay) {
+      closeWizard();
     }
   });
 })();

@@ -50,6 +50,27 @@ function summarizeCommandArg(arg: unknown): unknown {
   return { kind: typeof arg };
 }
 
+function slugifyId(value: string): string {
+  const s = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return s.length ? s : "item";
+}
+
+function uniqueId(base: string, taken: Set<string>): string {
+  if (!taken.has(base)) {
+    return base;
+  }
+  let i = 2;
+  while (taken.has(`${base}-${i}`)) {
+    i += 1;
+  }
+  return `${base}-${i}`;
+}
+
 function orderPlans(plans: import("./plan/types").Plan[], orderedIds: string[] | undefined): import("./plan/types").Plan[] {
   const ids = Array.isArray(orderedIds) ? orderedIds : [];
   const index = new Map<string, number>();
@@ -79,6 +100,102 @@ export function activate(context: vscode.ExtensionContext): void {
     currentPlans = orderPlans(loaded, savedOrder);
     provider.setPlans(currentPlans);
     sidebar.setPlans(currentPlans);
+  }
+
+  async function createPlan(input: { title: string; description?: string }): Promise<boolean> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      return false;
+    }
+    const trimmedTitle = input.title.trim();
+    if (!trimmedTitle) {
+      void vscode.window.showWarningMessage("Planstack: plan title is required.");
+      return false;
+    }
+    const existingPlanIds = new Set(currentPlans.map((p) => p.id));
+    const planId = uniqueId(`plan-${slugifyId(trimmedTitle)}`, existingPlanIds);
+    const plan: import("./plan/types").Plan = {
+      id: planId,
+      state: "pending",
+      title: trimmedTitle,
+      description: input.description?.trim() || undefined,
+      createdAt: new Date().toISOString(),
+      phases: [],
+    };
+    await savePlanPreservingFile(plan, root);
+    await refreshPlansOrdered(tree, sidebarUi);
+    return true;
+  }
+
+  async function createPhase(input: { planId: string; title: string; description?: string }): Promise<boolean> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      return false;
+    }
+    const plan = currentPlans.find((p) => p.id === input.planId);
+    if (!plan) {
+      void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+      return false;
+    }
+    const trimmedTitle = input.title.trim();
+    if (!trimmedTitle) {
+      void vscode.window.showWarningMessage("Planstack: phase title is required.");
+      return false;
+    }
+    const existingPhaseIds = new Set((plan.phases ?? []).map((p) => p.id));
+    const phaseId = uniqueId(`phase-${slugifyId(trimmedTitle)}`, existingPhaseIds);
+    plan.phases.push({
+      id: phaseId,
+      state: "pending",
+      title: trimmedTitle,
+      description: input.description?.trim() || "",
+      tasks: [],
+    });
+    plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+    await savePlanPreservingFile(plan, root);
+    await refreshPlansOrdered(tree, sidebarUi);
+    return true;
+  }
+
+  async function createTask(input: {
+    planId: string;
+    phaseId: string;
+    desc: string;
+    prompt?: string;
+    commit: boolean;
+  }): Promise<boolean> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      return false;
+    }
+    const plan = currentPlans.find((p) => p.id === input.planId);
+    const phase = plan?.phases.find((ph) => ph.id === input.phaseId);
+    if (!plan || !phase) {
+      void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+      return false;
+    }
+    const trimmedDesc = input.desc.trim();
+    if (!trimmedDesc) {
+      void vscode.window.showWarningMessage("Planstack: task title is required.");
+      return false;
+    }
+    const existingTaskIds = new Set((phase.tasks ?? []).map((t) => t.id));
+    const taskId = uniqueId(`task-${slugifyId(trimmedDesc)}`, existingTaskIds);
+    phase.tasks.push({
+      id: taskId,
+      state: "pending",
+      desc: trimmedDesc,
+      commit: input.commit,
+      prompt: input.prompt?.trim() || undefined,
+    });
+    phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
+    plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+    await savePlanPreservingFile(plan, root);
+    await refreshPlansOrdered(tree, sidebarUi);
+    return true;
   }
 
   const sidebarUi = new PlanstackSidebarWebview(
@@ -220,6 +337,24 @@ export function activate(context: vscode.ExtensionContext): void {
       await refreshPlansOrdered(tree, sidebarUi);
       return true;
     },
+    async ({ title, description }) => {
+      const ok = await createPlan({ title, description });
+      if (ok) {
+        void vscode.window.showInformationMessage(`Planstack: created plan "${title.trim()}".`);
+      }
+    },
+    async ({ planId, title, description }) => {
+      const ok = await createPhase({ planId, title, description });
+      if (ok) {
+        void vscode.window.showInformationMessage(`Planstack: added phase "${title.trim()}".`);
+      }
+    },
+    async ({ planId, phaseId, desc, prompt, commit }) => {
+      const ok = await createTask({ planId, phaseId, desc, prompt, commit });
+      if (ok) {
+        void vscode.window.showInformationMessage(`Planstack: added task "${desc.trim()}".`);
+      }
+    },
     async (orderedPlanIds) => {
       const loadedIds = new Set(currentPlans.map((p) => p.id));
       const cleaned = orderedPlanIds.filter((id) => loadedIds.has(id));
@@ -295,6 +430,171 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(CHAT_WEBVIEW_ID, chatUi, {
       webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.createPlan", async () => {
+      const title = await vscode.window.showInputBox({
+        title: "Planstack: Add Plan",
+        prompt: "Plan title",
+        placeHolder: "E.g. Launch onboarding MVP",
+        ignoreFocusOut: true,
+      });
+      if (title === undefined) return;
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) {
+        void vscode.window.showWarningMessage("Planstack: plan title is required.");
+        return;
+      }
+      const description = await vscode.window.showInputBox({
+        title: "Planstack: Add Plan",
+        prompt: "Description (optional)",
+        placeHolder: "Short summary for your team",
+        ignoreFocusOut: true,
+      });
+      const ok = await createPlan({ title: trimmedTitle, description: description ?? undefined });
+      if (ok) {
+        void vscode.window.showInformationMessage(`Planstack: created plan "${trimmedTitle}".`);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.createPhase", async () => {
+      if (!currentPlans.length) {
+        void vscode.window.showWarningMessage("Planstack: no plans found. Create a plan first.");
+        return;
+      }
+      const planPick = await vscode.window.showQuickPick(
+        currentPlans.map((plan) => ({
+          label: plan.title,
+          description: plan.id,
+          planId: plan.id,
+        })),
+        {
+          title: "Planstack: Add Phase",
+          placeHolder: "Select plan",
+          ignoreFocusOut: true,
+        },
+      );
+      if (!planPick) return;
+
+      const title = await vscode.window.showInputBox({
+        title: "Planstack: Add Phase",
+        prompt: "Phase title",
+        placeHolder: "E.g. API implementation",
+        ignoreFocusOut: true,
+      });
+      if (title === undefined) return;
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) {
+        void vscode.window.showWarningMessage("Planstack: phase title is required.");
+        return;
+      }
+      const description = await vscode.window.showInputBox({
+        title: "Planstack: Add Phase",
+        prompt: "Description (optional)",
+        placeHolder: "What should be completed in this phase?",
+        ignoreFocusOut: true,
+      });
+
+      const ok = await createPhase({
+        planId: planPick.planId,
+        title: trimmedTitle,
+        description: description ?? undefined,
+      });
+      if (ok) {
+        void vscode.window.showInformationMessage(`Planstack: added phase "${trimmedTitle}".`);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.createTask", async () => {
+      if (!currentPlans.length) {
+        void vscode.window.showWarningMessage("Planstack: no plans found. Create a plan first.");
+        return;
+      }
+      const planPick = await vscode.window.showQuickPick(
+        currentPlans.map((plan) => ({
+          label: plan.title,
+          description: `${plan.phases.length} phases`,
+          detail: plan.id,
+          planId: plan.id,
+        })),
+        {
+          title: "Planstack: Add Task",
+          placeHolder: "Select plan",
+          ignoreFocusOut: true,
+        },
+      );
+      if (!planPick) return;
+
+      const selectedPlan = currentPlans.find((p) => p.id === planPick.planId);
+      const phases = selectedPlan?.phases ?? [];
+      if (!phases.length) {
+        void vscode.window.showWarningMessage("Planstack: selected plan has no phases. Add a phase first.");
+        return;
+      }
+
+      const phasePick = await vscode.window.showQuickPick(
+        phases.map((phase) => ({
+          label: phase.title,
+          description: phase.state,
+          detail: phase.id,
+          phaseId: phase.id,
+        })),
+        {
+          title: "Planstack: Add Task",
+          placeHolder: "Select phase",
+          ignoreFocusOut: true,
+        },
+      );
+      if (!phasePick) return;
+
+      const desc = await vscode.window.showInputBox({
+        title: "Planstack: Add Task",
+        prompt: "Task title",
+        placeHolder: "E.g. Build login endpoint",
+        ignoreFocusOut: true,
+      });
+      if (desc === undefined) return;
+      const trimmedDesc = desc.trim();
+      if (!trimmedDesc) {
+        void vscode.window.showWarningMessage("Planstack: task title is required.");
+        return;
+      }
+
+      const prompt = await vscode.window.showInputBox({
+        title: "Planstack: Add Task",
+        prompt: "Task prompt (optional)",
+        placeHolder: "Implementation instructions for the executor",
+        ignoreFocusOut: true,
+      });
+      const commitPick = await vscode.window.showQuickPick(
+        [
+          { label: "No commit required", value: false },
+          { label: "Require commit on completion", value: true },
+        ],
+        {
+          title: "Planstack: Add Task",
+          placeHolder: "Commit behavior",
+          ignoreFocusOut: true,
+        },
+      );
+      if (!commitPick) return;
+
+      const ok = await createTask({
+        planId: planPick.planId,
+        phaseId: phasePick.phaseId,
+        desc: trimmedDesc,
+        prompt: prompt ?? undefined,
+        commit: commitPick.value,
+      });
+      if (ok) {
+        void vscode.window.showInformationMessage(`Planstack: added task "${trimmedDesc}".`);
+      }
     }),
   );
 

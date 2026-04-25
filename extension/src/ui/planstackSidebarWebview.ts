@@ -31,6 +31,15 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
     ) => Promise<boolean>,
     private readonly onUpdatePlan: (planId: string, patch: { title?: string; description?: string }) => Promise<boolean>,
+    private readonly onCreatePlan: (input: { title: string; description?: string }) => Promise<void>,
+    private readonly onCreatePhase: (input: { planId: string; title: string; description?: string }) => Promise<void>,
+    private readonly onCreateTask: (input: {
+      planId: string;
+      phaseId: string;
+      desc: string;
+      prompt?: string;
+      commit: boolean;
+    }) => Promise<void>,
     private readonly onReorderPlans: (orderedPlanIds: string[]) => Promise<void>,
   ) {}
 
@@ -76,6 +85,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         phaseId?: string;
         taskId?: string;
         state?: ExecutionState;
+        title?: string;
+        description?: string;
         desc?: string;
         prompt?: string;
         commit?: boolean;
@@ -149,6 +160,30 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           prompt: m.prompt,
           commit: m.commit,
         });
+      }
+      if (m.type === "createPlan" && typeof m.title === "string") {
+        const title = m.title.trim();
+        if (title) {
+          void this.onCreatePlan({ title, description: m.description });
+        }
+      }
+      if (m.type === "createPhase" && m.planId && typeof m.title === "string") {
+        const title = m.title.trim();
+        if (title) {
+          void this.onCreatePhase({ planId: m.planId, title, description: m.description });
+        }
+      }
+      if (m.type === "createTask" && m.planId && m.phaseId && typeof m.desc === "string") {
+        const desc = m.desc.trim();
+        if (desc) {
+          void this.onCreateTask({
+            planId: m.planId,
+            phaseId: m.phaseId,
+            desc,
+            prompt: m.prompt,
+            commit: Boolean(m.commit),
+          });
+        }
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -507,14 +542,27 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
 
     #root { padding: 6px 0 16px; }
 
-    .view-switcher {
+    .top-toolbar {
       display: flex;
-      gap: 6px;
-      padding: 4px 8px 8px;
+      flex-direction: column;
+      gap: 8px;
+      padding: 4px 8px 10px;
       position: sticky;
       top: 0;
       z-index: 2;
       background: var(--vscode-sideBar-background);
+      border-bottom: 1px solid var(--c-border);
+      margin-bottom: 6px;
+    }
+    .toolbar-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .toolbar-divider {
+      height: 1px;
+      background: var(--c-border);
     }
     .view-btn {
       font: inherit;
@@ -535,6 +583,99 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       opacity: 1;
       color: var(--vscode-button-foreground, #fff);
       background: var(--vscode-button-background, #0e70c0);
+      border-color: transparent;
+    }
+    .quick-btn {
+      font: inherit;
+      font-size: 0.78em;
+      border-radius: 999px;
+      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      background: var(--vscode-button-background, #0e70c0);
+      color: var(--vscode-button-foreground, #fff);
+      padding: 3px 10px;
+      cursor: pointer;
+      opacity: 0.95;
+    }
+    .quick-btn:hover {
+      opacity: 1;
+      background: var(--vscode-button-hoverBackground, #1177cc);
+    }
+    .wizard-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.38);
+      z-index: 20;
+      padding: 10px;
+    }
+    .wizard-card {
+      width: min(520px, 100%);
+      border: 1px solid var(--c-border);
+      border-radius: 10px;
+      background: var(--vscode-editor-background);
+      box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+      padding: 12px;
+    }
+    .wizard-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .wizard-step {
+      opacity: 0.75;
+      font-size: 0.82em;
+      margin-bottom: 10px;
+    }
+    .wizard-field {
+      display: grid;
+      gap: 5px;
+      margin-bottom: 8px;
+    }
+    .wizard-label { font-size: 0.82em; opacity: 0.85; }
+    .wizard-input, .wizard-select, .wizard-textarea {
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid var(--c-border);
+      color: inherit;
+      background: var(--vscode-input-background);
+      padding: 8px 9px;
+      font: inherit;
+    }
+    .wizard-textarea { min-height: 86px; resize: vertical; }
+    .wizard-check {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.84em;
+      margin-top: 2px;
+      margin-bottom: 8px;
+    }
+    .wizard-error {
+      min-height: 1.2em;
+      color: var(--vscode-errorForeground, #f48771);
+      font-size: 0.8em;
+      margin-top: 2px;
+      margin-bottom: 6px;
+    }
+    .wizard-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .wizard-btn {
+      font: inherit;
+      border-radius: 6px;
+      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      padding: 5px 10px;
+      cursor: pointer;
+      background: transparent;
+      color: inherit;
+    }
+    .wizard-btn.primary {
+      background: var(--vscode-button-background, #0e70c0);
+      color: var(--vscode-button-foreground, #fff);
       border-color: transparent;
     }
 
@@ -774,6 +915,18 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     <div class="empty-state">
       <div class="empty-icon">📋</div>
       <div class="empty-title">Loading plans…</div>
+    </div>
+  </div>
+  <div id="wizardOverlay" class="wizard-overlay">
+    <div class="wizard-card">
+      <div id="wizardTitle" class="wizard-title">Create item</div>
+      <div id="wizardStep" class="wizard-step"></div>
+      <div id="wizardBody"></div>
+      <div id="wizardError" class="wizard-error"></div>
+      <div class="wizard-actions">
+        <button id="wizardSecondary" class="wizard-btn" type="button">Cancel</button>
+        <button id="wizardPrimary" class="wizard-btn primary" type="button">Continue</button>
+      </div>
     </div>
   </div>
   <script src="${scriptUri}"></script>
