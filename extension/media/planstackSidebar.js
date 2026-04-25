@@ -142,9 +142,15 @@
       <div class="top-toolbar">
         ${createButtons}
         <div class="toolbar-divider"></div>
-        <div class="toolbar-group">
-          <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list">List view</button>
-          <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes">View as nodes</button>
+        <div class="toolbar-row">
+          <div class="toolbar-group">
+            <button class="view-btn${viewMode === "list" ? " active" : ""}" data-action="switchView" data-view="list">List view</button>
+            <button class="view-btn${viewMode === "nodes" ? " active" : ""}" data-action="switchView" data-view="nodes">View as nodes</button>
+          </div>
+          <div class="toolbar-group toolbar-group-right">
+            <button class="view-btn" data-action="syncPull" title="Pull all plans from remote server">Pull</button>
+            <button class="view-btn" data-action="syncPush" title="Push all plans to remote server">Push</button>
+          </div>
         </div>
       </div>
     `;
@@ -676,6 +682,16 @@
 
     if (action === "quickCreateTask") {
       openWizard("task");
+      return;
+    }
+
+    if (action === "syncPull") {
+      vscode.postMessage({ type: "syncPullAll" });
+      return;
+    }
+
+    if (action === "syncPush") {
+      vscode.postMessage({ type: "syncPushAll" });
       return;
     }
 

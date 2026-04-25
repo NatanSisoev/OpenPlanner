@@ -224,6 +224,11 @@
           "default": "",
           "description": "Legacy: same as planstack.cursor.openComposerCommand. Used when planstack.cursor.openComposerCommand is empty."
         },
+        "planstack.cursor.syncApiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for Planstack remote sync API (used by Push/Pull in Overview). Example: http://localhost:8787. If empty, PLANSTACK_SYNC_API_BASE_URL is used."
+        },
         "planstack.cursor.agentPath": {
           "type": "string",
           "default": "agent",

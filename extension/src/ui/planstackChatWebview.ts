@@ -994,7 +994,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> for new <code>.planstack/plans/&lt;id&gt;.json</code> files. Use <strong>Send</strong> for freeform edits via headless Cursor CLI. Live output appears below and in <strong>Output → Planstack</strong>. One run at a time; <strong>Stop agents</strong> sends SIGTERM.</div>
+  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits, and <strong>Stop agents</strong> cancels the active run.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>

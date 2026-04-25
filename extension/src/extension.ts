@@ -11,6 +11,14 @@ import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
 import { blockingDependencies, deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace, runAgentPromptEdits } from "./plan/createPlanFromCli";
+import {
+  fetchRemotePlanById,
+  fetchRemotePlanIndex,
+  pushRemotePlan,
+  RemoteSyncError,
+  requiredSyncApiBaseUrlOrThrow,
+} from "./plan/remoteSync";
+import { validatePlanJson } from "./plan/validate";
 import { debugCliConnection } from "./plan/debugCliConnection";
 import { AgentCliError, AgentRunBusyError, isAgentRunBusy, killAllAgentCliProcesses } from "./plan/agentCliRunner";
 import { getOutput, logLine } from "./log";
@@ -606,6 +614,114 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   }
 
+  async function syncPushAllPlans(): Promise<void> {
+    const baseUrl = requiredSyncApiBaseUrlOrThrow();
+    const plans = await loadPlansFromWorkspace();
+    if (plans.length === 0) {
+      void vscode.window.showInformationMessage("Planstack: no local plans to push.");
+      return;
+    }
+
+    const failed: string[] = [];
+    let pushed = 0;
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Planstack: Pushing plans to remote",
+        cancellable: false,
+      },
+      async (progress) => {
+        for (let i = 0; i < plans.length; i += 1) {
+          const plan = plans[i]!;
+          progress.report({
+            message: `${i + 1}/${plans.length} · ${plan.id}`,
+            increment: 100 / plans.length,
+          });
+          try {
+            await pushRemotePlan(baseUrl, plan);
+            pushed += 1;
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            failed.push(`${plan.id}: ${msg}`);
+            logLine(`sync push failed for ${plan.id}: ${msg}`);
+          }
+        }
+      },
+    );
+
+    if (failed.length > 0) {
+      const first = failed.slice(0, 2).join(" | ");
+      void vscode.window.showWarningMessage(
+        `Planstack: pushed ${pushed}/${plans.length} plan(s). ${failed.length} failed. ${first}`.slice(0, 2000),
+      );
+      return;
+    }
+    void vscode.window.showInformationMessage(`Planstack: pushed ${pushed} plan(s) to remote.`);
+  }
+
+  async function syncPullAllPlans(): Promise<void> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      return;
+    }
+    const baseUrl = requiredSyncApiBaseUrlOrThrow();
+    const index = await fetchRemotePlanIndex(baseUrl);
+    if (index.length === 0) {
+      void vscode.window.showInformationMessage("Planstack: remote has no plans to pull.");
+      return;
+    }
+
+    const failed: string[] = [];
+    let pulled = 0;
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Planstack: Pulling plans from remote",
+        cancellable: false,
+      },
+      async (progress) => {
+        for (let i = 0; i < index.length; i += 1) {
+          const entry = index[i]!;
+          progress.report({
+            message: `${i + 1}/${index.length} · ${entry.id}`,
+            increment: 100 / index.length,
+          });
+          try {
+            const remote = await fetchRemotePlanById(baseUrl, entry.id);
+            if (remote.id !== entry.id) {
+              throw new RemoteSyncError(
+                `Remote id mismatch for ${entry.id}: response returned id "${remote.id}".`,
+              );
+            }
+            const validated = validatePlanJson(remote.payload);
+            if (validated.id !== entry.id) {
+              throw new RemoteSyncError(
+                `Remote payload id mismatch for ${entry.id}: payload id is "${validated.id}".`,
+              );
+            }
+            await savePlanPreservingFile(validated, root);
+            pulled += 1;
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            failed.push(`${entry.id}: ${msg}`);
+            logLine(`sync pull failed for ${entry.id}: ${msg}`);
+          }
+        }
+      },
+    );
+
+    await refreshPlansOrdered(tree, sidebarUi);
+    if (failed.length > 0) {
+      const first = failed.slice(0, 2).join(" | ");
+      void vscode.window.showWarningMessage(
+        `Planstack: pulled ${pulled}/${index.length} plan(s). ${failed.length} failed. ${first}`.slice(0, 2000),
+      );
+      return;
+    }
+    void vscode.window.showInformationMessage(`Planstack: pulled ${pulled} plan(s) from remote.`);
+  }
+
   const sidebarUi = new PlanstackSidebarWebview(extUri, {
     onRunPhase: async (planId, phaseId) => {
       const tid = newTraceId("runphase-sidebar");
@@ -821,6 +937,22 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         latestPhase.tasks = latestPhase.tasks.filter((t) => t.id !== taskId);
       });
+    },
+    onSyncPushAll: async () => {
+      try {
+        await syncPushAllPlans();
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
+      }
+    },
+    onSyncPullAll: async () => {
+      try {
+        await syncPullAllPlans();
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
+      }
     },
   });
   context.subscriptions.push(

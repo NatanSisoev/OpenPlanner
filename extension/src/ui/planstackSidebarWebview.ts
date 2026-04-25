@@ -34,6 +34,8 @@ interface PlanstackSidebarCallbacks {
   onDeletePlan: (planId: string) => Promise<void>;
   onDeletePhase: (planId: string, phaseId: string) => Promise<void>;
   onDeleteTask: (planId: string, phaseId: string, taskId: string) => Promise<void>;
+  onSyncPushAll: () => Promise<void>;
+  onSyncPullAll: () => Promise<void>;
 }
 
 export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
@@ -56,6 +58,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private readonly onDeletePlan: PlanstackSidebarCallbacks["onDeletePlan"];
   private readonly onDeletePhase: PlanstackSidebarCallbacks["onDeletePhase"];
   private readonly onDeleteTask: PlanstackSidebarCallbacks["onDeleteTask"];
+  private readonly onSyncPushAll: PlanstackSidebarCallbacks["onSyncPushAll"];
+  private readonly onSyncPullAll: PlanstackSidebarCallbacks["onSyncPullAll"];
   private readonly promptEditors = new Map<
     string,
     { kind: "plan" | "phase"; planId: string; phaseId?: string }
@@ -75,6 +79,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     this.onDeletePlan = callbacks.onDeletePlan;
     this.onDeletePhase = callbacks.onDeletePhase;
     this.onDeleteTask = callbacks.onDeleteTask;
+    this.onSyncPushAll = callbacks.onSyncPushAll;
+    this.onSyncPullAll = callbacks.onSyncPullAll;
   }
 
   resolveWebviewView(
@@ -246,6 +252,12 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "deleteTask" && m.planId && m.phaseId && m.taskId) {
         void this.onDeleteTask(m.planId, m.phaseId, m.taskId);
+      }
+      if (m.type === "syncPushAll") {
+        void this.onSyncPushAll();
+      }
+      if (m.type === "syncPullAll") {
+        void this.onSyncPullAll();
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -627,6 +639,14 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
+    }
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toolbar-group-right {
+      margin-left: auto;
     }
     .toolbar-divider {
       height: 1px;
