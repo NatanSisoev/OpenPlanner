@@ -829,7 +829,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     .graph-viewport {
       position: relative;
-      height: clamp(360px, 52vh, 520px);
+      height: clamp(420px, 64vh, 720px);
       overflow: hidden;
       border-bottom: 1px solid var(--c-border);
       background:
@@ -838,7 +838,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       cursor: grab;
     }
     .plan-graph-card.expanded .graph-viewport {
-      height: clamp(560px, 78vh, 920px);
+      height: clamp(620px, 86vh, 1080px);
     }
     .graph-viewport.is-panning { cursor: grabbing; }
     .graph-scene {
@@ -908,7 +908,11 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .graph-phase-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 62%, transparent); }
     .graph-phase-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 62%, transparent); }
     .graph-phase-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 62%, transparent); }
-    .graph-phase-node.expanded { box-shadow: 0 0 0 1px var(--vscode-focusBorder), 0 8px 20px rgba(0,0,0,0.24); }
+    .graph-phase-node.selected {
+      box-shadow: 0 0 0 2px var(--vscode-focusBorder, #0e70c0), 0 10px 24px rgba(0,0,0,0.28);
+      transform: translateZ(0) scale(1.02);
+      transform-origin: center;
+    }
     .graph-phase-main {
       border: none;
       background: transparent;

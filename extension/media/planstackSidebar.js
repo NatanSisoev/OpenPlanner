@@ -15,6 +15,7 @@
   const phaseStatusFilter = new Set(PHASE_STATES);
   const GLOBAL_GRAPH_KEY = "__all_plans__";
   let graphExpanded = false;
+  let selectedPhaseKey = null;
 
   const root = document.getElementById("root");
   const wizardOverlay = document.getElementById("wizardOverlay");
@@ -136,10 +137,14 @@
         }).join("")}
       </div>
     `;
-    const expanded = graph.visiblePhases
-      .filter((entry) => expandedPhases.has(entry.plan.id + "::" + entry.phase.id))
-      .map((entry) => renderNodePhase(entry.plan, entry.phase))
-      .join("");
+    const visibleKeys = new Set(graph.visiblePhases.map((e) => e.plan.id + "::" + e.phase.id));
+    if (selectedPhaseKey && !visibleKeys.has(selectedPhaseKey)) {
+      selectedPhaseKey = null;
+    }
+    const selectedEntry = selectedPhaseKey
+      ? graph.visiblePhases.find((e) => (e.plan.id + "::" + e.phase.id) === selectedPhaseKey)
+      : null;
+    const expanded = selectedEntry ? renderNodePhase(selectedEntry.plan, selectedEntry.phase) : "";
     return `
       ${legend}
       ${filter}
@@ -161,7 +166,7 @@
           <button class="graph-control-btn" data-action="graphToggleExpand" data-graph="${GLOBAL_GRAPH_KEY}" title="Toggle chart size">${graphExpanded ? "Compact" : "Expand"}</button>
         </div>
         <div class="graph-expanded-details ${expanded ? "" : "empty"}">
-          ${expanded || "<div class=\"graph-empty-hint\">Select a phase node to inspect tasks.</div>"}
+          ${expanded || "<div class=\"graph-empty-hint\">Click a phase node to view its tasks here. Select another node to switch.</div>"}
         </div>
       </section>
     `;
@@ -180,12 +185,12 @@
     const pid = esc(node.plan.id);
     const phid = esc(node.phase.id);
     const key = node.plan.id + "::" + node.phase.id;
-    const isOpen = expandedPhases.has(key);
+    const isSelected = selectedPhaseKey === key;
     return `
-      <div class="graph-phase-node tone-${node.phase.state} ${isOpen ? "expanded" : ""}"
+      <div class="graph-phase-node tone-${node.phase.state} ${isSelected ? "selected" : ""}"
            style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
         <button class="graph-phase-main"
-                data-action="togglePhase"
+                data-action="selectGraphPhase"
                 data-plan="${pid}"
                 data-phase="${phid}"
                 title="${esc(node.phase.title)}">
@@ -233,176 +238,167 @@
   }
 
   function buildUnifiedGraph(allPlans, filterSet) {
-    const planOrder = new Map(allPlans.map((plan, idx) => [plan.id, idx]));
-    const phaseEntries = [];
-    const phaseNodeIdByLocal = new Map();
-    const phaseNodeIdsByRawId = new Map();
+    // Layout: each plan gets its own horizontal swimlane (a "band"). Within a
+    // band, the plan node sits at the leftmost column and its phases flow to
+    // the right, grouped by dependency depth. Plans never share rows, so a
+    // phase from plan B can never sit directly across from plan A's node.
+    const padding = 28;
+    const nodeWidth = 200;
+    const planNodeHeight = 78;
+    const phaseNodeHeight = 92;
+    const colGap = 56;
+    const rowGap = 110;
+    const bandGap = 40;
 
-    allPlans.forEach((plan, planIdx) => {
-      const phases = Array.isArray(plan.phases) ? plan.phases : [];
-      phases.forEach((phase, phaseIdx) => {
-        const nodeId = "phase::" + plan.id + "::" + phase.id;
-        phaseEntries.push({ nodeId, plan, phase, planIdx, phaseIdx });
-        phaseNodeIdByLocal.set(plan.id + "::" + phase.id, nodeId);
-        if (!phaseNodeIdsByRawId.has(phase.id)) {
-          phaseNodeIdsByRawId.set(phase.id, []);
-        }
-        phaseNodeIdsByRawId.get(phase.id).push(nodeId);
-      });
-    });
+    const totalPhases = allPlans.reduce(
+      (s, p) => s + (Array.isArray(p.phases) ? p.phases.length : 0),
+      0,
+    );
 
-    const visiblePhases = phaseEntries.filter((entry) => filterSet.has(entry.phase.state));
-    const visiblePhaseIds = new Set(visiblePhases.map((entry) => entry.nodeId));
-    const dependencyEdges = [];
-    const incoming = new Map();
-    const outgoing = new Map();
-
-    visiblePhases.forEach((entry) => {
-      incoming.set(entry.nodeId, 0);
-      outgoing.set(entry.nodeId, []);
-    });
-
-    visiblePhases.forEach((entry) => {
-      const deps = Array.isArray(entry.phase.dependsOn) ? entry.phase.dependsOn : [];
-      deps.forEach((depId) => {
-        let sourceId = phaseNodeIdByLocal.get(entry.plan.id + "::" + depId) || null;
-        if (!sourceId) {
-          const matches = phaseNodeIdsByRawId.get(depId) || [];
-          if (matches.length === 1) {
-            sourceId = matches[0];
-          }
-        }
-        if (!sourceId || !visiblePhaseIds.has(sourceId)) {
-          return;
-        }
-        dependencyEdges.push({ from: sourceId, to: entry.nodeId });
-        incoming.set(entry.nodeId, (incoming.get(entry.nodeId) || 0) + 1);
-        outgoing.get(sourceId).push(entry.nodeId);
-      });
-    });
-
-    const queue = visiblePhases
-      .filter((entry) => (incoming.get(entry.nodeId) || 0) === 0)
-      .sort((a, b) => (a.planIdx - b.planIdx) || (a.phaseIdx - b.phaseIdx))
-      .map((entry) => entry.nodeId);
-    const levels = new Map();
-    queue.forEach((nodeId) => levels.set(nodeId, 0));
-    while (queue.length) {
-      const nodeId = queue.shift();
-      const nextLevel = levels.get(nodeId) || 0;
-      (outgoing.get(nodeId) || []).forEach((toNodeId) => {
-        levels.set(toNodeId, Math.max(levels.get(toNodeId) || 0, nextLevel + 1));
-        const remaining = (incoming.get(toNodeId) || 0) - 1;
-        incoming.set(toNodeId, remaining);
-        if (remaining === 0) {
-          queue.push(toNodeId);
-        }
-      });
-    }
-    visiblePhases.forEach((entry) => {
-      if (!levels.has(entry.nodeId)) {
-        levels.set(entry.nodeId, 0);
+    // Per-plan layouts: filtered phases, dependency depth, depth buckets.
+    const planLayouts = allPlans.map((plan) => {
+      const allPhases = Array.isArray(plan.phases) ? plan.phases : [];
+      const phases = allPhases.filter((ph) => filterSet.has(ph.state));
+      const phaseById = new Map(phases.map((ph) => [ph.id, ph]));
+      const depthMemo = new Map();
+      function depthOf(phase, stack) {
+        if (depthMemo.has(phase.id)) return depthMemo.get(phase.id);
+        if (stack && stack.has(phase.id)) return 0; // cycle guard
+        const guard = stack ? new Set(stack) : new Set();
+        guard.add(phase.id);
+        const deps = (Array.isArray(phase.dependsOn) ? phase.dependsOn : [])
+          .filter((depId) => phaseById.has(depId));
+        const d = deps.length === 0
+          ? 0
+          : 1 + Math.max(...deps.map((depId) => depthOf(phaseById.get(depId), guard)));
+        depthMemo.set(phase.id, d);
+        return d;
       }
+      phases.forEach((ph) => depthOf(ph, null));
+      const byDepth = new Map();
+      phases.forEach((ph) => {
+        const d = depthMemo.get(ph.id) || 0;
+        if (!byDepth.has(d)) byDepth.set(d, []);
+        byDepth.get(d).push(ph);
+      });
+      const sortedDepths = [...byDepth.keys()].sort((a, b) => a - b);
+      const rowsInBand = Math.max(1, ...[0, ...byDepth.values().map((list) => list.length)]);
+      return { plan, phases, byDepth, sortedDepths, rowsInBand };
     });
 
-    const planNodes = allPlans.map((plan) => {
-      const { tone } = derivePlanNodeTone(plan);
-      return {
+    const maxPhaseColumns = planLayouts.reduce(
+      (m, l) => Math.max(m, l.sortedDepths.length),
+      0,
+    );
+
+    const nodes = [];
+    const nodesById = new Map();
+    const edges = [];
+    let yCursor = padding;
+
+    planLayouts.forEach((layout) => {
+      const { plan, byDepth, sortedDepths, rowsInBand } = layout;
+      const bandTop = yCursor;
+      const bandHeight = (rowsInBand - 1) * rowGap + phaseNodeHeight;
+      // Vertically center the plan node within the band.
+      const planY = bandTop + Math.max(0, (bandHeight - planNodeHeight) / 2);
+      const planNode = {
         id: "plan::" + plan.id,
         kind: "plan",
         title: plan.title,
-        tone,
+        tone: derivePlanNodeTone(plan).tone,
         plan,
-        level: 0,
+        x: padding,
+        y: planY,
+        width: nodeWidth,
+        height: planNodeHeight,
       };
-    });
+      nodes.push(planNode);
+      nodesById.set(planNode.id, planNode);
 
-    const incomingVisibleByPlan = new Map();
-    visiblePhases.forEach((entry) => incomingVisibleByPlan.set(entry.nodeId, 0));
-    dependencyEdges.forEach((edge) => {
-      incomingVisibleByPlan.set(edge.to, (incomingVisibleByPlan.get(edge.to) || 0) + 1);
-    });
-    const planEdges = [];
-    allPlans.forEach((plan) => {
-      const roots = visiblePhases.filter(
-        (entry) => entry.plan.id === plan.id && (incomingVisibleByPlan.get(entry.nodeId) || 0) === 0,
-      );
-      roots.forEach((entry) => {
-        planEdges.push({ from: "plan::" + plan.id, to: entry.nodeId });
+      sortedDepths.forEach((depth) => {
+        const list = byDepth.get(depth);
+        const ySpan = (list.length - 1) * rowGap;
+        const yStart = bandTop + Math.max(0, (bandHeight - (ySpan + phaseNodeHeight)) / 2);
+        list.forEach((phase, idx) => {
+          const x = padding + nodeWidth + colGap + depth * (nodeWidth + colGap);
+          const y = yStart + idx * rowGap;
+          const node = {
+            id: "phase::" + plan.id + "::" + phase.id,
+            kind: "phase",
+            plan,
+            phase,
+            x,
+            y,
+            width: nodeWidth,
+            height: phaseNodeHeight,
+          };
+          nodes.push(node);
+          nodesById.set(node.id, node);
+        });
       });
-    });
 
-    const phaseNodes = visiblePhases.map((entry) => ({
-      id: entry.nodeId,
-      kind: "phase",
-      plan: entry.plan,
-      phase: entry.phase,
-      level: 1 + (levels.get(entry.nodeId) || 0),
-      planIdx: entry.planIdx,
-      phaseIdx: entry.phaseIdx,
-    }));
-
-    const allNodes = [...planNodes, ...phaseNodes];
-    const buckets = new Map();
-    allNodes.forEach((node) => {
-      if (!buckets.has(node.level)) {
-        buckets.set(node.level, []);
-      }
-      buckets.get(node.level).push(node);
-    });
-    const sortedLevels = [...buckets.keys()].sort((a, b) => a - b);
-    sortedLevels.forEach((level) => {
-      buckets.get(level).sort((a, b) => {
-        const aPlan = planOrder.get(a.plan?.id || a.id.replace(/^plan::/, "")) || 0;
-        const bPlan = planOrder.get(b.plan?.id || b.id.replace(/^plan::/, "")) || 0;
-        const aPhase = a.phaseIdx || 0;
-        const bPhase = b.phaseIdx || 0;
-        return (aPlan - bPlan) || aPhase - bPhase;
+      // Edge: plan node → its depth-0 phases.
+      (byDepth.get(0) || []).forEach((phase) => {
+        edges.push({
+          from: "plan::" + plan.id,
+          to: "phase::" + plan.id + "::" + phase.id,
+        });
       });
+
+      yCursor = bandTop + bandHeight + bandGap;
     });
 
-    const nodeWidth = 224;
-    const planNodeHeight = 74;
-    const phaseNodeHeight = 94;
-    const columnGap = 312;
-    const rowGap = 132;
-    const padding = 44;
-    const maxRows = Math.max(1, ...sortedLevels.map((level) => buckets.get(level).length));
-    const nodes = [];
-    sortedLevels.forEach((level, levelIndex) => {
-      const list = buckets.get(level);
-      const ySpan = (list.length - 1) * rowGap;
-      const yStart = padding + ((maxRows - 1) * rowGap - ySpan) / 2;
-      list.forEach((node, idx) => {
-        const height = node.kind === "plan" ? planNodeHeight : phaseNodeHeight;
-        nodes.push({
-          ...node,
-          x: padding + levelIndex * columnGap,
-          y: yStart + idx * rowGap,
-          width: nodeWidth,
-          height,
+    // Phase dependency edges (within-plan first; cross-plan if uniquely matched).
+    planLayouts.forEach((layout) => {
+      layout.phases.forEach((phase) => {
+        const deps = Array.isArray(phase.dependsOn) ? phase.dependsOn : [];
+        deps.forEach((depId) => {
+          const sameId = "phase::" + layout.plan.id + "::" + depId;
+          if (nodesById.has(sameId)) {
+            edges.push({ from: sameId, to: "phase::" + layout.plan.id + "::" + phase.id });
+            return;
+          }
+          const candidates = [];
+          planLayouts.forEach((other) => {
+            if (other.plan.id === layout.plan.id) return;
+            const id = "phase::" + other.plan.id + "::" + depId;
+            if (nodesById.has(id)) candidates.push(id);
+          });
+          if (candidates.length === 1) {
+            edges.push({ from: candidates[0], to: "phase::" + layout.plan.id + "::" + phase.id });
+          }
         });
       });
     });
 
-    const levelCount = Math.max(1, sortedLevels.length);
-    const width = padding * 2 + (levelCount - 1) * columnGap + nodeWidth;
-    const height = padding * 2 + (maxRows - 1) * rowGap + phaseNodeHeight;
-    const edges = [...planEdges, ...dependencyEdges];
+    const width = padding + nodeWidth + maxPhaseColumns * (nodeWidth + colGap) + padding;
+    const height = Math.max(padding * 2 + phaseNodeHeight, yCursor - bandGap + padding);
+    const visiblePhases = planLayouts.flatMap((l) =>
+      l.phases.map((ph) => ({ plan: l.plan, phase: ph })),
+    );
+
     return {
       width,
       height,
       nodes,
       edges,
-      totalPhases: phaseEntries.length,
+      totalPhases,
       visiblePhases,
-      nodesById: new Map(nodes.map((node) => [node.id, node])),
+      nodesById,
     };
   }
 
   function ensureGraphState(graphId) {
     if (!graphViewState[graphId]) {
-      graphViewState[graphId] = { x: 22, y: 18, scale: 1 };
+      graphViewState[graphId] = {
+        x: 0,
+        y: 0,
+        scale: 1,
+        userAdjusted: false,
+        lastW: -1,
+        lastH: -1,
+      };
     }
     return graphViewState[graphId];
   }
@@ -416,13 +412,53 @@
     scene.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`;
   }
 
+  function fitGraphToView(graphId) {
+    const scene = [...document.querySelectorAll(".graph-scene[data-graph]")].find((el) => el.dataset.graph === graphId);
+    if (!scene) {
+      return;
+    }
+    const viewport = scene.parentElement;
+    if (!viewport) {
+      return;
+    }
+    const sceneW = parseFloat(scene.style.width) || 0;
+    const sceneH = parseFloat(scene.style.height) || 0;
+    if (!sceneW || !sceneH) {
+      return;
+    }
+    const margin = 12;
+    const availW = Math.max(80, viewport.clientWidth - margin * 2);
+    const availH = Math.max(80, viewport.clientHeight - margin * 2);
+    const scale = Math.min(availW / sceneW, availH / sceneH, 1.5);
+    const state = ensureGraphState(graphId);
+    state.scale = scale;
+    state.x = margin + Math.max(0, (availW - sceneW * scale) / 2);
+    state.y = margin + Math.max(0, (availH - sceneH * scale) / 2);
+    state.lastW = sceneW;
+    state.lastH = sceneH;
+    state.userAdjusted = false;
+    applyGraphSceneTransform(graphId);
+  }
+
   function syncGraphScenes() {
     document.querySelectorAll(".graph-scene[data-graph]").forEach((scene) => {
       const graphId = scene.dataset.graph;
       if (!graphId) {
         return;
       }
-      applyGraphSceneTransform(graphId);
+      const sceneW = parseFloat(scene.style.width) || 0;
+      const sceneH = parseFloat(scene.style.height) || 0;
+      const state = ensureGraphState(graphId);
+      const dimsChanged = state.lastW !== sceneW || state.lastH !== sceneH;
+      if (dimsChanged && !state.userAdjusted) {
+        fitGraphToView(graphId);
+      } else {
+        if (dimsChanged) {
+          state.lastW = sceneW;
+          state.lastH = sceneH;
+        }
+        applyGraphSceneTransform(graphId);
+      }
     });
   }
 
@@ -660,16 +696,25 @@
     }
 
     if (action === "graphZoomIn" || action === "graphZoomOut" || action === "graphZoomReset") {
-      const state = ensureGraphState(graphId || GLOBAL_GRAPH_KEY);
+      const id = graphId || GLOBAL_GRAPH_KEY;
       if (action === "graphZoomReset") {
-        state.scale = 1;
-        state.x = 22;
-        state.y = 18;
+        fitGraphToView(id);
       } else {
+        const state = ensureGraphState(id);
         const factor = action === "graphZoomIn" ? 1.14 : 0.88;
-        state.scale = Math.min(1.95, Math.max(0.55, state.scale * factor));
+        state.scale = Math.min(1.95, Math.max(0.4, state.scale * factor));
+        state.userAdjusted = true;
+        applyGraphSceneTransform(id);
       }
-      applyGraphSceneTransform(graphId || GLOBAL_GRAPH_KEY);
+      return;
+    }
+
+    if (action === "selectGraphPhase") {
+      e.stopPropagation();
+      if (planId && phaseId) {
+        selectedPhaseKey = planId + "::" + phaseId;
+        render();
+      }
       return;
     }
 
@@ -791,10 +836,11 @@
     const worldX = (cursorX - state.x) / state.scale;
     const worldY = (cursorY - state.y) / state.scale;
     const zoomFactor = e.deltaY < 0 ? 1.09 : 0.91;
-    const nextScale = Math.min(1.95, Math.max(0.55, state.scale * zoomFactor));
+    const nextScale = Math.min(1.95, Math.max(0.4, state.scale * zoomFactor));
     state.x = cursorX - worldX * nextScale;
     state.y = cursorY - worldY * nextScale;
     state.scale = nextScale;
+    state.userAdjusted = true;
     applyGraphSceneTransform(graphId);
   }, { passive: false });
 
@@ -821,6 +867,7 @@
     const state = ensureGraphState(activeGraphPan.graphId);
     state.x += e.clientX - activeGraphPan.startX;
     state.y += e.clientY - activeGraphPan.startY;
+    state.userAdjusted = true;
     activeGraphPan.startX = e.clientX;
     activeGraphPan.startY = e.clientY;
     applyGraphSceneTransform(activeGraphPan.graphId);
