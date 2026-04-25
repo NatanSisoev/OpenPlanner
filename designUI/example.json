@@ -1,0 +1,24 @@
+{
+    "id": "plan-001",
+    "checkbox": false,
+    "state": "in_progress",
+    "title": "Nombre del plan",
+    "createdAt": "2026-04-25T09:00:00Z",
+    "fases": [
+      {
+        "id": "fase-001",
+        "checkbox": false,
+        "state": "completed",
+        "title": "Nombre de la fase",
+        "tasks": [
+          {
+            "id": "task-001",
+            "checkbox": true,
+            "state": "completed",
+            "desc": "Descripción de la tarea",
+            "timestamp": "2026-04-25T10:00:00Z"
+          }
+        ]
+      }
+    ]
+  }
