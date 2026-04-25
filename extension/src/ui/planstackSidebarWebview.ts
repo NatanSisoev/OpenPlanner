@@ -17,7 +17,7 @@ interface PlanstackSidebarCallbacks {
     planId: string,
     phaseId: string,
     taskId: string,
-    patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
+    patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean; dependsOn?: string[] },
   ) => Promise<boolean>;
   onUpdatePlan: (planId: string, patch: { title?: string; description?: string }) => Promise<boolean>;
   onCreatePlan: (input: { title: string; description?: string }) => Promise<void>;
@@ -134,6 +134,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         desc?: string;
         prompt?: string;
         commit?: boolean;
+        dependsOn?: string[];
         orderedPlanIds?: string[];
       };
       if (m.type === "runPhase" && m.planId && m.phaseId) {
@@ -216,6 +217,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           desc: m.desc,
           prompt: m.prompt,
           commit: m.commit,
+          dependsOn: Array.isArray(m.dependsOn) ? m.dependsOn : undefined,
         }).then((ok) => {
           if (!m.requestId) {
             return;
@@ -807,6 +809,11 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .graph-legend-dot.tone-in_progress { border-color: var(--c-running); }
     .graph-legend-dot.tone-pending { border-color: var(--c-pending); }
     .graph-legend-dot.tone-cancelled { border-color: var(--c-cancelled); }
+    .graph-legend-line {
+      width: 22px;
+      height: 0;
+      border-top: 2px dashed var(--vscode-charts-purple, #b180d7);
+    }
 
     .graph-filter-row {
       display: flex;
@@ -914,6 +921,31 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       opacity: 0.82;
     }
     .graph-edges marker path { fill: var(--graph-edge); }
+    .graph-edges marker#graph-arrow-cross-global path { fill: var(--vscode-charts-purple, #b180d7); }
+    .graph-edges path.cross-plan {
+      stroke: var(--vscode-charts-purple, #b180d7);
+      stroke-width: 2.4;
+      stroke-dasharray: 7 5;
+      opacity: 0.95;
+    }
+    .graph-edges path.phase-dep {
+      stroke-width: 2.1;
+      opacity: 0.9;
+    }
+    .graph-edges path.plan-dep {
+      opacity: 0.45;
+    }
+    .graph-edge-label {
+      fill: var(--vscode-foreground);
+      font-family: var(--vscode-font-family);
+      font-size: 10px;
+      font-weight: 700;
+      paint-order: stroke;
+      stroke: var(--vscode-editor-background);
+      stroke-width: 4px;
+      text-anchor: middle;
+      pointer-events: none;
+    }
 
     .graph-plan-node {
       position: absolute;
@@ -982,6 +1014,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       padding: 8px;
       display: grid;
       grid-template-columns: auto 1fr auto;
+      grid-template-rows: auto auto;
       align-items: center;
       gap: 6px;
       cursor: pointer;
@@ -995,6 +1028,18 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       text-overflow: ellipsis;
       white-space: nowrap;
       line-height: 1.3;
+    }
+    .graph-phase-deps {
+      grid-column: 2 / 4;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.68em;
+      line-height: 1.2;
+      opacity: 0.78;
+      color: var(--vscode-charts-purple, #b180d7);
+      font-weight: 700;
     }
     .graph-phase-footer {
       display: flex;
@@ -1080,6 +1125,15 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .node-phase-tasks {
       margin: 4px 0 0 8px;
       padding: 0 0 0 10px;
+    }
+    .node-phase-deps {
+      margin: 7px 0 8px;
+      padding: 7px 8px;
+      border-left: 3px solid var(--vscode-charts-purple, #b180d7);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 12%, transparent);
+      font-size: 0.78em;
+      line-height: 1.4;
     }
 
     /* ── Empty state ── */
@@ -1240,6 +1294,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       display: flex; align-items: center; gap: 6px;
       padding: 3px 5px; border-radius: 3px; cursor: default;
     }
+    .task-row.blocked { opacity: 0.82; }
     .task-row:hover { background: var(--c-hover); }
     .task-row:hover .task-actions { opacity: 1; }
 
@@ -1263,6 +1318,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       cursor: pointer; user-select: none;
     }
     .task-title.strike { text-decoration: line-through; opacity: 0.45; }
+    .task-deps-hint { opacity: 0.68; }
 
     .task-actions {
       display: flex; gap: 2px; opacity: 0; transition: opacity 0.1s; flex-shrink: 0;
@@ -1317,6 +1373,10 @@ function htmlEscape(s: unknown): string {
 
 function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Plan["phases"][number]["tasks"][number]): string {
   const prompt = task.prompt?.trim() ?? "";
+  const deps = task.dependsOn ?? [];
+  const depsMarkup = deps.length
+    ? deps.map((dep) => `<code>${htmlEscape(dep)}</code>`).join(", ")
+    : `<span class="subtle">none</span>`;
   const promptBlock = prompt
     ? `<div class="section">
          <div class="label">Prompt</div>
@@ -1416,6 +1476,7 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     <div class="k">Task</div><div class="v"><code>${htmlEscape(task.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(task.state)}</code></div>
     <div class="k">Commit</div><div class="v"><button class="toggle-btn" type="button" data-action="toggleCommit" data-value="${task.commit ? "true" : "false"}" title="Click to toggle">${task.commit ? "true" : "false"}</button></div>
+    <div class="k">Depends on</div><div class="v">${depsMarkup}</div>
   </div>
   ${promptBlock}
   <script>
@@ -1438,14 +1499,20 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
 
 function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string {
   const tasks = phase.tasks ?? [];
+  const phaseDeps = phase.dependsOn ?? [];
+  const phaseDepsMarkup = phaseDeps.length
+    ? phaseDeps.map((dep) => `<code>${htmlEscape(dep)}</code>`).join(", ")
+    : `<span class="subtle">none</span>`;
   const tasksMarkup = tasks.length
     ? `<ul>${tasks
         .map(
-          (task) =>
-            `<li>
+          (task) => {
+            const deps = task.dependsOn?.length ? ` · deps=<code>${htmlEscape(task.dependsOn.join(", "))}</code>` : "";
+            return `<li>
               <div><strong>${htmlEscape(task.desc)}</strong></div>
-              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code></div>
-            </li>`,
+              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code>${deps}</div>
+            </li>`;
+          },
         )
         .join("")}</ul>`
     : `<div class="subtle">This phase has no tasks.</div>`;
@@ -1557,6 +1624,7 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
     <div class="k">Plan</div><div class="v">${htmlEscape(plan.title)} <span class="subtle">(<code>${htmlEscape(plan.id)}</code>)</span></div>
     <div class="k">Phase</div><div class="v"><code>${htmlEscape(phase.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(phase.state)}</code></div>
+    <div class="k">Depends on</div><div class="v">${phaseDepsMarkup}</div>
     <div class="k">Description</div><div class="v"><span class="row"><span>${htmlEscape(phase.description)}</span><button class="edit-btn" type="button" data-action="editPhaseDescription" title="Edit">✎</button></span></div>
     <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code></div>
   </div>

@@ -168,6 +168,7 @@
         <span><span class="graph-legend-dot tone-in_progress"></span>running</span>
         <span><span class="graph-legend-dot tone-pending"></span>pending</span>
         <span><span class="graph-legend-dot tone-cancelled"></span>cancelled</span>
+        <span><span class="graph-legend-line cross-plan"></span>cross-plan dependency</span>
       </div>
     `;
     const filter = `
@@ -235,6 +236,7 @@
     const phid = esc(node.phase.id);
     const key = node.plan.id + "::" + node.phase.id;
     const isSelected = selectedPhaseKey === key;
+    const depSummary = phaseDependencySummary(node.plan, node.phase);
     return `
       <div class="graph-phase-node tone-${node.phase.state} ${isSelected ? "selected" : ""}"
            style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
@@ -246,6 +248,7 @@
           <span class="phase-status-dot dot-${node.phase.state}"></span>
           <span class="graph-phase-title">${esc(node.phase.title)}</span>
           ${badgeHtml(node.phase.state)}
+          ${depSummary.short ? `<span class="graph-phase-deps" title="${esc(depSummary.title)}">${esc(depSummary.short)}</span>` : ""}
         </button>
         <div class="graph-phase-footer">
           <span class="graph-phase-plan">${esc(node.plan.title)}</span>
@@ -261,6 +264,7 @@
 
   function renderGraphEdges(graph) {
     const markerId = "graph-arrow-global";
+    const markerCrossId = "graph-arrow-cross-global";
     const lines = graph.edges.map((edge) => {
       const from = graph.nodesById.get(edge.from);
       const to = graph.nodesById.get(edge.to);
@@ -272,12 +276,21 @@
       const endX = to.x;
       const endY = to.y + to.height / 2;
       const bend = Math.max(34, (endX - startX) * 0.45);
-      return `<path d="M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}" marker-end="url(#${markerId})" />`;
+      const d = `M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}`;
+      const cls = edge.kind === "cross-plan" ? "cross-plan" : edge.kind === "phase" ? "phase-dep" : "plan-dep";
+      const marker = edge.kind === "cross-plan" ? markerCrossId : markerId;
+      const label = edge.kind === "cross-plan"
+        ? `<text class="graph-edge-label" x="${(startX + endX) / 2}" y="${(startY + endY) / 2 - 6}">${esc(edge.label || "cross-plan")}</text>`
+        : "";
+      return `<path class="${cls}" d="${d}" marker-end="url(#${marker})" />${label}`;
     }).join("");
     return `
-      <svg class="graph-edges" viewBox="0 0 ${graph.width} ${graph.height}" aria-hidden="true">
+      <svg class="graph-edges" viewBox="0 0 ${graph.width} ${graph.height}">
         <defs>
           <marker id="${markerId}" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L10,4 L0,8 z"></path>
+          </marker>
+          <marker id="${markerCrossId}" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
             <path d="M0,0 L10,4 L0,8 z"></path>
           </marker>
         </defs>
@@ -286,18 +299,53 @@
     `;
   }
 
+  function parsePhaseDependencyRef(ref) {
+    const parts = String(ref).split("/").map((part) => part.trim());
+    if (parts.some((part) => !part)) return null;
+    if (parts.length === 1) return { phaseId: parts[0] };
+    if (parts.length === 2) return { planId: parts[0], phaseId: parts[1] };
+    return null;
+  }
+
+  function resolvePhaseDependency(plan, ref, allPlans) {
+    const parsed = parsePhaseDependencyRef(ref);
+    if (!parsed) return null;
+    const targetPlan = parsed.planId ? allPlans.find((p) => p.id === parsed.planId) : plan;
+    const targetPhase = targetPlan?.phases?.find((phase) => phase.id === parsed.phaseId);
+    return targetPlan && targetPhase ? { plan: targetPlan, phase: targetPhase } : null;
+  }
+
+  function shortPlanTitle(plan) {
+    const words = String(plan.title || plan.id).split(/\s+/).filter(Boolean);
+    return words.slice(0, 2).join(" ") || plan.id;
+  }
+
+  function phaseDependencySummary(plan, phase) {
+    const refs = Array.isArray(phase.dependsOn) ? phase.dependsOn : [];
+    if (!refs.length) return { short: "", title: "" };
+    const labels = refs.map((ref) => {
+      const resolved = resolvePhaseDependency(plan, ref, plans);
+      if (!resolved) return ref;
+      return `${resolved.plan.title} / ${resolved.phase.title}`;
+    });
+    return {
+      short: `needs ${refs.length}`,
+      title: labels.join("\n"),
+    };
+  }
+
   function buildUnifiedGraph(allPlans, filterSet) {
     // Layout: each plan gets its own horizontal swimlane (a "band"). Within a
     // band, the plan node sits at the leftmost column and its phases flow to
     // the right, grouped by dependency depth. Plans never share rows, so a
     // phase from plan B can never sit directly across from plan A's node.
     const padding = 28;
-    const nodeWidth = 200;
+    const nodeWidth = 224;
     const planNodeHeight = 92;
-    const phaseNodeHeight = 92;
-    const colGap = 56;
-    const rowGap = 110;
-    const bandGap = 40;
+    const phaseNodeHeight = 112;
+    const colGap = 70;
+    const rowGap = 134;
+    const bandGap = 52;
 
     const totalPhases = allPlans.reduce(
       (s, p) => s + (Array.isArray(p.phases) ? p.phases.length : 0),
@@ -316,7 +364,9 @@
         const guard = stack ? new Set(stack) : new Set();
         guard.add(phase.id);
         const deps = (Array.isArray(phase.dependsOn) ? phase.dependsOn : [])
-          .filter((depId) => phaseById.has(depId));
+          .map((depRef) => parsePhaseDependencyRef(depRef))
+          .filter((dep) => dep && (!dep.planId || dep.planId === plan.id) && phaseById.has(dep.phaseId))
+          .map((dep) => dep.phaseId);
         const d = deps.length === 0
           ? 0
           : 1 + Math.max(...deps.map((depId) => depthOf(phaseById.get(depId), guard)));
@@ -392,31 +442,31 @@
         edges.push({
           from: "plan::" + plan.id,
           to: "phase::" + plan.id + "::" + phase.id,
+          kind: "plan",
         });
       });
 
       yCursor = bandTop + bandHeight + bandGap;
     });
 
-    // Phase dependency edges (within-plan first; cross-plan if uniquely matched).
+    // Phase dependency edges. Cross-plan refs use plan-id/phase-id so they stay
+    // readable in JSON and visually explicit in the graph.
     planLayouts.forEach((layout) => {
       layout.phases.forEach((phase) => {
         const deps = Array.isArray(phase.dependsOn) ? phase.dependsOn : [];
-        deps.forEach((depId) => {
-          const sameId = "phase::" + layout.plan.id + "::" + depId;
-          if (nodesById.has(sameId)) {
-            edges.push({ from: sameId, to: "phase::" + layout.plan.id + "::" + phase.id });
-            return;
-          }
-          const candidates = [];
-          planLayouts.forEach((other) => {
-            if (other.plan.id === layout.plan.id) return;
-            const id = "phase::" + other.plan.id + "::" + depId;
-            if (nodesById.has(id)) candidates.push(id);
+        deps.forEach((depRef) => {
+          const resolved = resolvePhaseDependency(layout.plan, depRef, allPlans);
+          if (!resolved) return;
+          const fromId = "phase::" + resolved.plan.id + "::" + resolved.phase.id;
+          const toId = "phase::" + layout.plan.id + "::" + phase.id;
+          if (!nodesById.has(fromId) || !nodesById.has(toId)) return;
+          const crossPlan = resolved.plan.id !== layout.plan.id;
+          edges.push({
+            from: fromId,
+            to: toId,
+            kind: crossPlan ? "cross-plan" : "phase",
+            label: crossPlan ? `${shortPlanTitle(resolved.plan)} -> ${shortPlanTitle(layout.plan)}` : "depends",
           });
-          if (candidates.length === 1) {
-            edges.push({ from: candidates[0], to: "phase::" + layout.plan.id + "::" + phase.id });
-          }
         });
       });
     });
@@ -519,6 +569,7 @@
     const pid = esc(plan.id);
     const phid = esc(phase.id);
     const tasks = Array.isArray(phase.tasks) ? phase.tasks : [];
+    const depSummary = phaseDependencySummary(plan, phase);
     return `
       <div class="node-phase-block">
         <div class="phase-header node-phase-header" data-plan="${pid}" data-phase="${phid}">
@@ -531,6 +582,7 @@
             <button class="run-btn" data-action="runPhase" data-plan="${pid}" data-phase="${phid}" title="Run this phase">▶ Run</button>
           </div>
         </div>
+        ${depSummary.short ? `<div class="node-phase-deps"><strong>Depends on</strong>: ${esc(depSummary.title).replace(/\n/g, "<br>")}</div>` : ""}
         <div class="phase-tasks node-phase-tasks">
           ${tasks.map((task) => renderTask(plan, phase, task)).join("")}
         </div>
@@ -593,10 +645,87 @@
     if (!phase.dependsOn || phase.dependsOn.length === 0) {
       return [];
     }
-    const byId = new Map((plan.phases || []).map((p) => [p.id, p]));
-    return phase.dependsOn.filter((id) => {
-      const dep = byId.get(id);
-      return !dep || dep.state !== "completed";
+    return phase.dependsOn.flatMap((ref) => {
+      const resolved = resolvePhaseDependency(plan, ref, plans);
+      if (!resolved) return [`unknown ${ref}`];
+      return resolved.phase.state === "completed"
+        ? []
+        : [`${resolved.plan.id}/${resolved.phase.id} (${resolved.phase.state})`];
+    });
+  }
+
+  function parseTaskDependencyRef(ref) {
+    const parts = String(ref).split("/").map((part) => part.trim());
+    if (parts.some((part) => !part)) return null;
+    if (parts.length === 1) return { taskId: parts[0] };
+    if (parts.length === 2) return { phaseId: parts[0], taskId: parts[1] };
+    if (parts.length === 3) return { planId: parts[0], phaseId: parts[1], taskId: parts[2] };
+    return null;
+  }
+
+  function formatTaskTarget(target) {
+    return target.plan.id + "/" + target.phase.id + "/" + target.task.id;
+  }
+
+  function resolveTaskDependency(plan, ref) {
+    const parsed = parseTaskDependencyRef(ref);
+    if (!parsed) {
+      return { ok: false, label: `malformed dependency "${ref}"` };
+    }
+    if (parsed.planId) {
+      const targetPlan = plans.find((p) => p.id === parsed.planId);
+      const targetPhase = targetPlan?.phases?.find((ph) => ph.id === parsed.phaseId);
+      const targetTask = targetPhase?.tasks?.find((task) => task.id === parsed.taskId);
+      return targetPlan && targetPhase && targetTask
+        ? { ok: true, plan: targetPlan, phase: targetPhase, task: targetTask }
+        : { ok: false, label: `unknown task dependency "${ref}"` };
+    }
+    if (parsed.phaseId) {
+      const targetPhase = plan.phases?.find((ph) => ph.id === parsed.phaseId);
+      const targetTask = targetPhase?.tasks?.find((task) => task.id === parsed.taskId);
+      return targetPhase && targetTask
+        ? { ok: true, plan, phase: targetPhase, task: targetTask }
+        : { ok: false, label: `unknown task dependency "${ref}"` };
+    }
+    const matches = [];
+    (plan.phases || []).forEach((phase) => {
+      (phase.tasks || []).forEach((task) => {
+        if (task.id === parsed.taskId) matches.push({ plan, phase, task });
+      });
+    });
+    if (matches.length === 1) return { ok: true, ...matches[0] };
+    if (matches.length > 1) return { ok: false, label: `ambiguous task dependency "${ref}"` };
+    return { ok: false, label: `unknown task dependency "${ref}"` };
+  }
+
+  function taskBlockingDeps(plan, phase, task) {
+    const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
+    return deps.flatMap((ref) => {
+      const resolved = resolveTaskDependency(plan, ref);
+      if (!resolved.ok) return [resolved.label];
+      if (resolved.plan.id === plan.id && resolved.phase.id === phase.id && resolved.task.id === task.id) {
+        return [`${formatTaskTarget(resolved)} (self)`];
+      }
+      return resolved.task.state === "completed"
+        ? []
+        : [`${formatTaskTarget(resolved)} (${resolved.task.state})`];
+    });
+  }
+
+  function phaseTaskBlockingDeps(plan, phase) {
+    return (phase.tasks || []).flatMap((task) => {
+      const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
+      return deps.flatMap((ref) => {
+        const resolved = resolveTaskDependency(plan, ref);
+        if (!resolved.ok) return [`${task.id} depends on ${resolved.label}`];
+        if (resolved.plan.id === plan.id && resolved.phase.id === phase.id && resolved.task.id === task.id) {
+          return [`${task.id} depends on itself`];
+        }
+        if (resolved.plan.id === plan.id && resolved.phase.id === phase.id) return [];
+        return resolved.task.state === "completed"
+          ? []
+          : [`${task.id} depends on ${formatTaskTarget(resolved)} (${resolved.task.state})`];
+      });
     });
   }
 
@@ -608,7 +737,7 @@
     const pid = esc(plan.id);
     const phid = esc(phase.id);
 
-    const blockers = blockingDeps(plan, phase);
+    const blockers = [...blockingDeps(plan, phase), ...phaseTaskBlockingDeps(plan, phase)];
     const isBlocked = blockers.length > 0;
     const blockedTitle = isBlocked ? `Blocked by: ${blockers.join(", ")}` : "Run this phase";
 
@@ -645,16 +774,29 @@
     const pid = esc(plan.id);
     const phid = esc(phase.id);
     const tid = esc(task.id);
+    const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
+    const blockers = taskBlockingDeps(plan, phase, task);
+    const isBlocked = blockers.length > 0;
+    const depHint = isBlocked
+      ? ` · blocked by ${esc(blockers.join(", "))}`
+      : deps.length > 0
+        ? ` · deps ${deps.length}`
+        : "";
+    const runTitle = isRunning
+      ? "Already running"
+      : isBlocked
+        ? `Blocked by: ${blockers.join(", ")}`
+        : "Run task";
 
     const runBtn = `<button class="task-btn run-task" data-action="taskRun"
                  data-plan="${pid}" data-phase="${phid}" data-task="${tid}"
                  ${isRunning ? "disabled" : ""}
-                 title="${isRunning ? "Already running" : "Run task"}">▶</button>`;
+                 title="${esc(runTitle)}">▶</button>`;
 
     return `
-      <div class="task-row" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
+      <div class="task-row${isBlocked ? " blocked" : ""}" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
         ${taskIconHtml(task.state, pid, phid, tid)}
-        <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
+        <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}${depHint ? `<span class="task-deps-hint">${depHint}</span>` : ""}</span>
         <div class="task-actions">${runBtn}</div>
       </div>`;
   }

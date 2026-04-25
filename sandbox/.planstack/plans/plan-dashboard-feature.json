@@ -10,6 +10,9 @@
       "state": "in_progress",
       "title": "Data pipeline setup",
       "description": "Define and wire up the aggregation queries that feed the dashboard widgets.",
+      "dependsOn": [
+        "plan-auth-001/phase-auth-002"
+      ],
       "tasks": [
         {
           "id": "task-dash-001",
@@ -36,6 +39,9 @@
       "state": "completed",
       "title": "Chart components",
       "description": "Build reusable React chart components backed by the metrics API.",
+      "dependsOn": [
+        "phase-dash-001"
+      ],
       "tasks": [
         {
           "id": "task-dash-004",
@@ -68,6 +74,9 @@
       "state": "completed",
       "title": "Dashboard layout and filters",
       "description": "Compose the final dashboard page with date-range picker and per-user filter controls.",
+      "dependsOn": [
+        "phase-dash-002"
+      ],
       "tasks": [
         {
           "id": "task-dash-008",
@@ -94,6 +103,10 @@
       "state": "failed",
       "title": "Accessibility and performance audit",
       "description": "Ensure WCAG AA compliance and Lighthouse performance score above 90.",
+      "dependsOn": [
+        "phase-dash-003",
+        "plan-ci-001/phase-ci-002"
+      ],
       "tasks": [
         {
           "id": "task-dash-011",

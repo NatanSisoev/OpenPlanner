@@ -18,19 +18,26 @@
           "id": "open-workspace",
           "state": "pending",
           "desc": "Open the HackUPC repo in Cursor.",
-          "commit": false
+          "commit": false,
+          "dependsOn": []
         },
         {
           "id": "install-ext",
           "state": "pending",
           "desc": "Run `npm install && npm run compile` inside extension/.",
-          "commit": false
+          "commit": false,
+          "dependsOn": [
+            "open-workspace"
+          ]
         },
         {
           "id": "f5-host",
           "state": "pending",
           "desc": "Press F5 to launch the Extension Development Host.",
-          "commit": false
+          "commit": false,
+          "dependsOn": [
+            "install-ext"
+          ]
         }
       ]
     },
@@ -47,13 +54,17 @@
           "id": "set-mode",
           "state": "pending",
           "desc": "Set planstack.cursor.executionMode in settings (native-first, cli, sdk-local, sdk-cloud).",
-          "commit": false
+          "commit": false,
+          "dependsOn": []
         },
         {
           "id": "run-phase",
           "state": "pending",
           "desc": "Click Run on this phase from the sidebar.",
-          "commit": false
+          "commit": false,
+          "dependsOn": [
+            "set-mode"
+          ]
         }
       ]
     }

@@ -10,6 +10,9 @@
       "state": "in_progress",
       "title": "Remove legacy session middleware",
       "description": "Strip out the old cookie-based session store and all references to it across the codebase.",
+      "dependsOn": [
+        "plan-ci-001/phase-ci-001"
+      ],
       "tasks": [
         {
           "id": "task-auth-001",
@@ -36,6 +39,10 @@
       "state": "in_progress",
       "title": "Implement JWT authentication",
       "description": "Add stateless JWT-based auth with refresh token rotation and secure HttpOnly cookie delivery.",
+      "dependsOn": [
+        "phase-auth-001",
+        "plan-ci-001/phase-ci-002"
+      ],
       "tasks": [
         {
           "id": "task-auth-004",
@@ -68,6 +75,10 @@
       "state": "cancelled",
       "title": "Migrate existing users",
       "description": "Run a one-time migration script to invalidate all legacy sessions and force re-authentication.",
+      "dependsOn": [
+        "phase-auth-002",
+        "plan-ci-001/phase-ci-004"
+      ],
       "tasks": [
         {
           "id": "task-auth-008",

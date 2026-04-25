@@ -1,4 +1,4 @@
 {
     "planstack.cursor.useWsl": true,
-    "planstack.cursor.agentPath": "/home/USER/.local/bin/agent"
+    "planstack.cursor.agentPath": "/home/sprat/.local/bin/agent"
 }

@@ -4,7 +4,7 @@ This document describes how **plan / phase / task** lifecycle states stay consis
 
 ## Storage model
 
-- All states are persisted in **`.planstack/plans/*.json`** on the `Plan`, each `Phase`, and each `Task` (`WorkState`: `pending` | `in_progress` | `completed` | `failed` | `cancelled`).
+- All states are persisted in **`.planstack/plans/*.json`** on the `Plan`, each `Phase`, and each `Task` (`WorkState`: `pending` | `in_progress` | `completed` | `failed` | `cancelled`). Phases persist `dependsOn` phase refs (`phase-id` or `plan-id/phase-id`). Tasks also persist `dependsOn` task refs (`task-id`, `phase-id/task-id`, or `plan-id/phase-id/task-id`).
 - The extension writes the file via **`savePlanPreservingFile`** and reloads via **`loadPlansFromWorkspace`** + file watcher **`watchPlans`**.
 
 ## When status updates (CLI execution mode only)
@@ -24,6 +24,8 @@ This document describes how **plan / phase / task** lifecycle states stay consis
 1. **Overview sidebar** – **Run** on a phase: the webview already sets **`in_progress`** via `updatePhase` before `runPhase`. The callback still applies **success / error / stopped** so a failed run does not leave the phase stuck in **`in_progress`**.
 2. **Plans tree** – **Run phase** command: the extension sets **`in_progress`** on disk **before** dispatch (parity with sidebar), then applies the same callback rules.
 
+Before dispatch, `Run phase` also checks task-level dependencies for every task in the phase. Incomplete dependencies outside the current phase block the run; dependencies inside the phase are treated as ordering hints for the phase prompt.
+
 ## Native-first and SDK
 
 - **`native-first`** and **`sdk-*`** paths **do not** receive `onCliRunFinished` (no deterministic process exit in the extension). Plan JSON is **not** auto-updated by this mechanism; the user (or agent editing the repo) must update states manually.
@@ -31,7 +33,7 @@ This document describes how **plan / phase / task** lifecycle states stay consis
 
 ## Run task button (Overview)
 
-The per-task **Run** control currently sets the task to **`in_progress`** in the plan file only; it does **not** start a separate CLI run scoped to that task. A future iteration could post a `runTask` message, build a task-scoped prompt, and reuse the same **`onCliRunFinished`** pattern with task-level transitions.
+The per-task **Run** control checks the task's `dependsOn` refs first. If every dependency resolves to a completed task, it marks the task **`in_progress`**, runs the task prompt through the agent, then marks it **`completed`**, **`failed`**, or **`cancelled`** from the process outcome.
 
 ## Implementation map
 

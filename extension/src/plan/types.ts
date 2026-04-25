@@ -36,12 +36,33 @@ export interface GitInfo {
   planBranch?: string;
 }
 
+/**
+ * A task dependency reference.
+ *
+ * Supported JSON forms:
+ * - `task-id` for a unique task id in the same plan.
+ * - `phase-id/task-id` for a task in another phase of the same plan.
+ * - `plan-id/phase-id/task-id` for a task in another plan.
+ */
+export type TaskDependencyRef = string;
+
+/**
+ * A phase dependency reference.
+ *
+ * Supported JSON forms:
+ * - `phase-id` for a phase in the same plan.
+ * - `plan-id/phase-id` for a phase in another plan.
+ */
+export type PhaseDependencyRef = string;
+
 export interface Task {
   id: string;
   state: WorkState;
   desc: string;
   /** Whether this task should end with a git commit when run. */
   commit: boolean;
+  /** Other tasks that must complete before this task should run. */
+  dependsOn: TaskDependencyRef[];
   /** Optional override prompt used when handing the task off. */
   prompt?: string;
 }
@@ -52,8 +73,8 @@ export interface Phase {
   title: string;
   description: string;
   tasks: Task[];
-  /** Other phase ids in the same plan that must complete first. */
-  dependsOn?: string[];
+  /** Other phases that must complete first. */
+  dependsOn?: PhaseDependencyRef[];
 }
 
 export interface Plan {

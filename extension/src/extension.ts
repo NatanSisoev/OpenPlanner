@@ -8,7 +8,14 @@ import { mergePlanBranchNoFf } from "./git/mergePlanBranch";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
 import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
-import { blockingDependencies, deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
+import { deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
+import {
+  blockingPhaseDependencies,
+  blockingTaskDependencies,
+  blockingTaskDependenciesForPhase,
+  formatPhaseDependencyBlockers,
+  formatTaskDependencyBlockers,
+} from "./plan/dependencies";
 import { buildPhaseHandoffPrompt, buildTaskHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET, resyncPlanFromCurrentWorkspace, runAgentPromptEdits } from "./plan/createPlanFromCli";
 import {
@@ -113,6 +120,35 @@ function normalizeStaleInProgressToPending(plan: Plan): void {
     }
   }
   recomputeAggregates(plan);
+}
+
+function removeTaskDependencyRefs(plan: Plan, phaseId: string, taskId: string): void {
+  const refs = new Set([taskId, `${phaseId}/${taskId}`, `${plan.id}/${phaseId}/${taskId}`]);
+  for (const phase of plan.phases) {
+    for (const task of phase.tasks) {
+      task.dependsOn = (task.dependsOn ?? []).filter((dep) => !refs.has(dep));
+    }
+  }
+}
+
+function removePhaseTaskDependencyRefs(plan: Plan, phaseId: string, removedTaskIds: ReadonlySet<string>): void {
+  for (const phase of plan.phases) {
+    for (const task of phase.tasks) {
+      task.dependsOn = (task.dependsOn ?? []).filter((dep) => {
+        const parts = dep.split("/");
+        if (parts.length === 1) {
+          return !removedTaskIds.has(parts[0]!);
+        }
+        if (parts.length === 2) {
+          return parts[0] !== phaseId;
+        }
+        if (parts.length === 3) {
+          return !(parts[0] === plan.id && parts[1] === phaseId);
+        }
+        return true;
+      });
+    }
+  }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -243,6 +279,7 @@ export function activate(context: vscode.ExtensionContext): void {
       state: "pending",
       desc: trimmedDesc,
       commit: input.commit,
+      dependsOn: [],
       prompt: input.prompt?.trim() || undefined,
     });
     phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
@@ -286,11 +323,25 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
       return false;
     }
-    const prompt = (task.prompt ?? "").trim();
-    if (!prompt) {
+    const taskPrompt = (task.prompt ?? "").trim();
+    if (!taskPrompt) {
       void vscode.window.showWarningMessage(
         `Planstack: task "${task.desc}" has no prompt. Open task details and add a prompt before running.`,
       );
+      return false;
+    }
+    const blockers = blockingTaskDependencies(currentPlans, plan, phase, task);
+    if (blockers.length > 0) {
+      const summary = formatTaskDependencyBlockers(blockers);
+      void vscode.window.showWarningMessage(
+        `Planstack: task "${task.desc}" is blocked by incomplete dependencies: ${summary}`,
+      );
+      traceEvent(traceId, "runtask.blocked_dependencies", {
+        planId: plan.id,
+        phaseId: phase.id,
+        taskId: task.id,
+        blockers,
+      });
       return false;
     }
     if (isAgentRunBusy()) {
@@ -306,6 +357,12 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
       return false;
     }
+    const git = await summarizeGitForPlan(root, phase, plan);
+    const prompt = buildTaskHandoffPrompt(plan, phase, task, {
+      currentHead: git.currentBranchLabel,
+      effectiveWorkBranch: effectiveWorkBranch(phase, plan),
+      baseBranch: plan.git?.baseBranch,
+    });
 
     emitTaskRunRequestMessage(plan, phase, task, source);
     postChatSystemMessage(`${planChatLabel(plan)}: running task "${task.desc}".`);
@@ -519,12 +576,26 @@ export function activate(context: vscode.ExtensionContext): void {
     traceId: string,
     source: RunEntrySource,
   ): Promise<boolean> {
-    const blockers = blockingDependencies(plan, phase);
+    const blockers = blockingPhaseDependencies(currentPlans, plan, phase);
     if (blockers.length > 0) {
+      const summary = formatPhaseDependencyBlockers(blockers);
       void vscode.window.showWarningMessage(
-        `Planstack: phase "${phase.title}" is blocked by incomplete dependencies: ${blockers.join(", ")}`,
+        `Planstack: phase "${phase.title}" is blocked by incomplete dependencies: ${summary}`,
       );
       traceEvent(traceId, "runphase.blocked_dependencies", { planId: plan.id, phaseId: phase.id, blockers });
+      return false;
+    }
+    const taskBlockers = blockingTaskDependenciesForPhase(currentPlans, plan, phase);
+    if (taskBlockers.length > 0) {
+      const summary = formatTaskDependencyBlockers(taskBlockers);
+      void vscode.window.showWarningMessage(
+        `Planstack: phase "${phase.title}" is blocked by incomplete task dependencies: ${summary}`,
+      );
+      traceEvent(traceId, "runphase.blocked_task_dependencies", {
+        planId: plan.id,
+        phaseId: phase.id,
+        blockers: taskBlockers,
+      });
       return false;
     }
     if (isAgentRunBusy()) {
@@ -887,6 +958,9 @@ export function activate(context: vscode.ExtensionContext): void {
         if (patch.commit !== undefined) {
           task.commit = patch.commit;
         }
+        if (patch.dependsOn !== undefined) {
+          task.dependsOn = [...patch.dependsOn];
+        }
       });
     },
     onUpdatePlan: async (planId, patch) => {
@@ -987,12 +1061,15 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       await mutatePlan(planId, (latest) => {
+        const removedPhase = latest.phases.find((ph) => ph.id === phaseId);
+        const removedTaskIds = new Set((removedPhase?.tasks ?? []).map((task) => task.id));
         latest.phases = latest.phases.filter((ph) => ph.id !== phaseId);
         for (const remaining of latest.phases) {
-          if (Array.isArray(remaining.dependsOn) && remaining.dependsOn.includes(phaseId)) {
-            remaining.dependsOn = remaining.dependsOn.filter((id) => id !== phaseId);
+          if (Array.isArray(remaining.dependsOn)) {
+            remaining.dependsOn = remaining.dependsOn.filter((id) => id !== phaseId && id !== `${latest.id}/${phaseId}`);
           }
         }
+        removePhaseTaskDependencyRefs(latest, phaseId, removedTaskIds);
       });
     },
     onRunPlanFully: async (planId) => {
@@ -1011,6 +1088,7 @@ export function activate(context: vscode.ExtensionContext): void {
           return false;
         }
         latestPhase.tasks = latestPhase.tasks.filter((t) => t.id !== taskId);
+        removeTaskDependencyRefs(latest, phaseId, taskId);
       });
     },
     onSyncPushAll: async () => {

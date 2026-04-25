@@ -36,6 +36,10 @@
       "state": "in_progress",
       "title": "Parallelise test suites",
       "description": "Split unit, integration, and e2e tests into parallel matrix jobs to halve overall CI time.",
+      "dependsOn": [
+        "phase-ci-001",
+        "plan-auth-001/phase-auth-001"
+      ],
       "tasks": [
         {
           "id": "task-ci-004",
@@ -62,6 +66,9 @@
       "state": "in_progress",
       "title": "Migrate to self-hosted runners",
       "description": "Provision and register self-hosted ARM64 runners on the company's Hetzner fleet.",
+      "dependsOn": [
+        "phase-ci-002"
+      ],
       "tasks": [
         {
           "id": "task-ci-007",
@@ -94,6 +101,10 @@
       "state": "pending",
       "title": "Deployment gating and notifications",
       "description": "Add required status checks, Slack notifications, and automatic rollback on health-check failure.",
+      "dependsOn": [
+        "phase-ci-003",
+        "plan-dash-001/phase-dash-004"
+      ],
       "tasks": [
         {
           "id": "task-ci-011",
