@@ -1,12 +1,8 @@
 {
   "id": "plan-ci-001",
-  "state": "failed",
+  "state": "in_progress",
   "title": "CI/CD Pipeline Overhaul",
   "createdAt": "2026-04-23T14:00:00Z",
-  "git": {
-    "baseBranch": "main",
-    "planBranch": "planstack/plan-ci-001"
-  },
   "phases": [
     {
       "id": "phase-ci-001",
@@ -36,7 +32,7 @@
     },
     {
       "id": "phase-ci-002",
-      "state": "completed",
+      "state": "in_progress",
       "title": "Parallelise test suites",
       "description": "Split unit, integration, and e2e tests into parallel matrix jobs to halve overall CI time.",
       "tasks": [
@@ -54,7 +50,7 @@
         },
         {
           "id": "task-ci-006",
-          "state": "completed",
+          "state": "in_progress",
           "desc": "Add dependency caching for node_modules and Playwright browsers",
           "commit": true
         }
@@ -118,5 +114,9 @@
         }
       ]
     }
-  ]
+  ],
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-ci-001"
+  }
 }
