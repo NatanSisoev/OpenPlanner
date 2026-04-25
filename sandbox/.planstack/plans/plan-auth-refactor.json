@@ -65,7 +65,7 @@
     },
     {
       "id": "phase-auth-003",
-      "state": "in_progress",
+      "state": "cancelled",
       "title": "Migrate existing users",
       "description": "Run a one-time migration script to invalidate all legacy sessions and force re-authentication.",
       "tasks": [

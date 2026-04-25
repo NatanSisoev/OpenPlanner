@@ -572,6 +572,31 @@
 
   // ── Event delegation ─────────────────────────────────────────────────────
 
+  // Toggling plan/phase expansion is deferred briefly so a double-click on the
+  // title can cancel it (see the dblclick handler below) and open the details
+  // panel without first flashing the expand/collapse animation.
+  const TOGGLE_DBLCLICK_DELAY_MS = 220;
+  const togglePlanTimers = new Map(); // planId -> timeoutId
+  const togglePhaseTimers = new Map(); // "planId::phaseId" -> timeoutId
+
+  function applyTogglePlan(planId) {
+    if (expandedPlans.has(planId)) {
+      expandedPlans.delete(planId);
+    } else {
+      expandedPlans.add(planId);
+    }
+    render();
+  }
+  function applyTogglePhase(planId, phaseId) {
+    const key = planId + "::" + phaseId;
+    if (expandedPhases.has(key)) {
+      expandedPhases.delete(key);
+    } else {
+      expandedPhases.add(key);
+    }
+    render();
+  }
+
   document.addEventListener("click", (e) => {
     hideContextMenu();
     const el = e.target.closest("[data-action]");
@@ -585,12 +610,12 @@
     const graphId = el.dataset.graph;
 
     if (action === "togglePlan") {
-      if (expandedPlans.has(planId)) {
-        expandedPlans.delete(planId);
-      } else {
-        expandedPlans.add(planId);
-      }
-      render();
+      const existing = togglePlanTimers.get(planId);
+      if (existing) clearTimeout(existing);
+      togglePlanTimers.set(planId, setTimeout(() => {
+        togglePlanTimers.delete(planId);
+        applyTogglePlan(planId);
+      }, TOGGLE_DBLCLICK_DELAY_MS));
       return;
     }
 
@@ -656,12 +681,12 @@
 
     if (action === "togglePhase") {
       const key = planId + "::" + phaseId;
-      if (expandedPhases.has(key)) {
-        expandedPhases.delete(key);
-      } else {
-        expandedPhases.add(key);
-      }
-      render();
+      const existing = togglePhaseTimers.get(key);
+      if (existing) clearTimeout(existing);
+      togglePhaseTimers.set(key, setTimeout(() => {
+        togglePhaseTimers.delete(key);
+        applyTogglePhase(planId, phaseId);
+      }, TOGGLE_DBLCLICK_DELAY_MS));
       return;
     }
 
@@ -892,6 +917,52 @@
     vscode.postMessage({ type: "reorderPlans", orderedPlanIds: ids });
   });
 
+  document.addEventListener("dblclick", (e) => {
+    const taskTitle = e.target.closest(".task-title");
+    if (taskTitle) {
+      const row = taskTitle.closest(".task-row");
+      const planId = row?.dataset.plan;
+      const phaseId = row?.dataset.phase;
+      const taskId = row?.dataset.task;
+      if (planId && phaseId && taskId) {
+        e.preventDefault();
+        vscode.postMessage({ type: "openTaskDetails", planId, phaseId, taskId });
+      }
+      return;
+    }
+    const phaseTitle = e.target.closest(".phase-title");
+    if (phaseTitle) {
+      const header = phaseTitle.closest(".phase-header");
+      const planId = header?.dataset.plan;
+      const phaseId = header?.dataset.phase;
+      if (planId && phaseId) {
+        const key = planId + "::" + phaseId;
+        const t = togglePhaseTimers.get(key);
+        if (t) {
+          clearTimeout(t);
+          togglePhaseTimers.delete(key);
+        }
+        e.preventDefault();
+        vscode.postMessage({ type: "openPhaseDetails", planId, phaseId });
+      }
+      return;
+    }
+    const planTitle = e.target.closest(".plan-title");
+    if (planTitle) {
+      const header = planTitle.closest(".plan-header");
+      const planId = header?.dataset.plan;
+      if (planId) {
+        const t = togglePlanTimers.get(planId);
+        if (t) {
+          clearTimeout(t);
+          togglePlanTimers.delete(planId);
+        }
+        e.preventDefault();
+        vscode.postMessage({ type: "openPlanDetails", planId });
+      }
+    }
+  });
+
   document.addEventListener("contextmenu", (e) => {
     hideContextMenu();
     const btn = e.target.closest("button");
@@ -905,24 +976,24 @@
       openTaskContextMenu(e, taskRow);
       return;
     }
+    const phaseHeader = e.target.closest(".phase-header");
+    if (phaseHeader) {
+      e.preventDefault();
+      openPhaseContextMenu(e, phaseHeader);
+      return;
+    }
     const planHeader = e.target.closest(".plan-header");
     if (planHeader) {
       e.preventDefault();
       openPlanContextMenu(e, planHeader);
       return;
     }
-    const phaseHeader = e.target.closest(".phase-header");
-    if (!phaseHeader) {
-      const planNode = e.target.closest(".plan-node");
-      if (!planNode) {
-        return;
-      }
-      e.preventDefault();
-      openPlanNodeContextMenu(e, planNode);
+    const planNode = e.target.closest(".plan-node");
+    if (!planNode) {
       return;
     }
     e.preventDefault();
-    openPhaseContextMenu(e, phaseHeader);
+    openPlanNodeContextMenu(e, planNode);
   });
 
   document.addEventListener("keydown", (e) => {
@@ -938,42 +1009,10 @@
     if (!planId || !phaseId || !taskId) {
       return;
     }
-    const task = getTask(planId, phaseId, taskId);
-    if (!task) {
-      return;
-    }
-
-    const stateMenuItems = [
-      {
-        label: "pending",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "pending"),
-      },
-      {
-        label: "in progress",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "in_progress"),
-      },
-      {
-        label: "completed",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "completed"),
-      },
-      {
-        label: "failed",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "failed"),
-      },
-      {
-        label: "cancelled",
-        onClick: () => updateTaskState(planId, phaseId, taskId, "cancelled"),
-      },
-    ];
-
     const menu = createContextMenu(event.clientX, event.clientY, [
       {
-        label: "Open task details",
-        onClick: () => vscode.postMessage({ type: "openTaskDetails", planId, phaseId, taskId }),
-      },
-      {
-        label: "Set state",
-        submenu: stateMenuItems,
+        label: "Delete task",
+        onClick: () => vscode.postMessage({ type: "deleteTask", planId, phaseId, taskId }),
       },
     ]);
     document.body.appendChild(menu);
@@ -986,36 +1025,10 @@
     if (!planId || !phaseId) {
       return;
     }
-    const phase = getPhase(planId, phaseId);
-    if (!phase) {
-      return;
-    }
-    const taskCount = Array.isArray(phase.tasks) ? phase.tasks.length : 0;
     const menu = createContextMenu(event.clientX, event.clientY, [
       {
-        label: `Phase info (${phase.state})`,
-        onClick: () => vscode.postMessage({ type: "openPhaseDetails", planId, phaseId }),
-      },
-      {
-        label: `Show tasks (${taskCount})`,
-        onClick: () => {
-          const key = planId + "::" + phaseId;
-          expandedPhases.add(key);
-          render();
-          vscode.postMessage({ type: "openPhaseDetails", planId, phaseId });
-        },
-      },
-      {
-        label: expandedPhases.has(planId + "::" + phaseId) ? "Collapse tasks" : "Expand tasks",
-        onClick: () => {
-          const key = planId + "::" + phaseId;
-          if (expandedPhases.has(key)) {
-            expandedPhases.delete(key);
-          } else {
-            expandedPhases.add(key);
-          }
-          render();
-        },
+        label: "Delete phase",
+        onClick: () => vscode.postMessage({ type: "deletePhase", planId, phaseId }),
       },
     ]);
     document.body.appendChild(menu);
@@ -1027,26 +1040,10 @@
     if (!planId) {
       return;
     }
-    const plan = plans.find((p) => p.id === planId);
-    if (!plan) {
-      return;
-    }
-    const phases = Array.isArray(plan.phases) ? plan.phases : [];
     const menu = createContextMenu(event.clientX, event.clientY, [
       {
-        label: `Plan info (${plan.state})`,
-        onClick: () => vscode.postMessage({ type: "openPlanDetails", planId }),
-      },
-      {
-        label: expandedPlans.has(planId) ? "Collapse phases" : `Expand phases (${phases.length})`,
-        onClick: () => {
-          if (expandedPlans.has(planId)) {
-            expandedPlans.delete(planId);
-          } else {
-            expandedPlans.add(planId);
-          }
-          render();
-        },
+        label: "Delete plan",
+        onClick: () => vscode.postMessage({ type: "deletePlan", planId }),
       },
     ]);
     document.body.appendChild(menu);
@@ -1082,26 +1079,6 @@
     ]);
     document.body.appendChild(menu);
     activeContextMenu = menu;
-  }
-
-  function updateTaskState(planId, phaseId, taskId, newState) {
-    const task = getTask(planId, phaseId, taskId);
-    if (!task) {
-      return;
-    }
-    task.state = newState;
-    vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: newState });
-    render();
-  }
-
-  function getPhase(planId, phaseId) {
-    const plan = plans.find((p) => p.id === planId);
-    return plan?.phases?.find((ph) => ph.id === phaseId);
-  }
-
-  function getTask(planId, phaseId, taskId) {
-    const phase = getPhase(planId, phaseId);
-    return phase?.tasks?.find((t) => t.id === taskId);
   }
 
   function openWizard(kind) {

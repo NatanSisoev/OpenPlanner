@@ -30,6 +30,9 @@ interface PlanstackSidebarCallbacks {
   }) => Promise<void>;
   onMergePlan: (planId: string) => Promise<void>;
   onReorderPlans: (orderedPlanIds: string[]) => Promise<void>;
+  onDeletePlan: (planId: string) => Promise<void>;
+  onDeletePhase: (planId: string, phaseId: string) => Promise<void>;
+  onDeleteTask: (planId: string, phaseId: string, taskId: string) => Promise<void>;
 }
 
 export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
@@ -47,6 +50,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private readonly onCreateTask: PlanstackSidebarCallbacks["onCreateTask"];
   private readonly onMergePlan: PlanstackSidebarCallbacks["onMergePlan"];
   private readonly onReorderPlans: PlanstackSidebarCallbacks["onReorderPlans"];
+  private readonly onDeletePlan: PlanstackSidebarCallbacks["onDeletePlan"];
+  private readonly onDeletePhase: PlanstackSidebarCallbacks["onDeletePhase"];
+  private readonly onDeleteTask: PlanstackSidebarCallbacks["onDeleteTask"];
   private readonly promptEditors = new Map<
     string,
     { kind: "plan" | "phase"; planId: string; phaseId?: string }
@@ -62,6 +68,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     this.onCreateTask = callbacks.onCreateTask;
     this.onMergePlan = callbacks.onMergePlan;
     this.onReorderPlans = callbacks.onReorderPlans;
+    this.onDeletePlan = callbacks.onDeletePlan;
+    this.onDeletePhase = callbacks.onDeletePhase;
+    this.onDeleteTask = callbacks.onDeleteTask;
   }
 
   resolveWebviewView(
@@ -209,6 +218,15 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
             commit: Boolean(m.commit),
           });
         }
+      }
+      if (m.type === "deletePlan" && m.planId) {
+        void this.onDeletePlan(m.planId);
+      }
+      if (m.type === "deletePhase" && m.planId && m.phaseId) {
+        void this.onDeletePhase(m.planId, m.phaseId);
+      }
+      if (m.type === "deleteTask" && m.planId && m.phaseId && m.taskId) {
+        void this.onDeleteTask(m.planId, m.phaseId, m.taskId);
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -1171,6 +1189,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       font-size: 0.83em; flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       line-height: 1.4;
+      cursor: pointer; user-select: none;
     }
     .task-title.strike { text-decoration: line-through; opacity: 0.45; }
 
