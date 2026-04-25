@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
+import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { getOutput } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest } from "../plan/createPlanFromCli";
@@ -16,6 +17,14 @@ import { registerChatSystemSink } from "./chatStatusBridge";
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
 const MAX_MESSAGE_CHARS = 8000;
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
 type ChatRole = "user" | "system";
 
@@ -94,12 +103,21 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     });
 
     const sub = w.onDidReceiveMessage((msg: unknown) => {
+      const recvId = newTraceId("chatRecv");
+      traceEvent(recvId, "chat.onDidReceiveMessage", { raw: safeJson(msg) });
       if (!msg || typeof msg !== "object") {
+        traceEvent(recvId, "chat.onDidReceiveMessage.ignore", { reason: "not_object" });
         return;
       }
       const m = msg as { type?: string; text?: string };
       if (m.type === "send" && typeof m.text === "string") {
         let text = m.text.trim();
+        traceEvent(recvId, "chat.send", {
+          rawTextChars: m.text.length,
+          trimmedEmpty: !text,
+          appliedMaxCap: text.length > MAX_MESSAGE_CHARS,
+        });
+        traceMultiline(recvId, "chat.send.full_text", m.text);
         if (!text) {
           return;
         }
@@ -108,10 +126,13 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         this.transcript.push({ role: "user", text });
         w.postMessage({ type: "append", role: "user", text });
+        traceEvent(recvId, "chat.send.done", { storedChars: text.length });
         return;
       }
       if (m.type === "createPlan" && typeof m.text === "string") {
         const text = m.text.trim();
+        traceEvent(recvId, "chat.createPlan.click", { rawTextChars: m.text.length, trimmedEmpty: !text });
+        traceMultiline(recvId, "chat.createPlan.full_input", m.text);
         if (!text) {
           void vscode.window.showWarningMessage("Planstack: enter a request in the box before Create plan.");
           return;
@@ -120,6 +141,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "stopAgents") {
         const n = killAllAgentCliProcesses();
+        traceEvent(recvId, "chat.stopAgents", { processesSignaled: n });
         const line =
           n > 0
             ? `Stop agents: sent SIGTERM to ${n} process(es). In-flight runs will abort.`
@@ -131,7 +153,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           // Webview disposed.
         }
         void vscode.window.showInformationMessage(`Planstack: ${line}`);
+        return;
       }
+      traceEvent(recvId, "chat.onDidReceiveMessage.unhandled", { type: m.type });
     });
     const disposeChat = webviewView.onDidDispose(() => {
       registerChatSystemSink(undefined);
@@ -151,12 +175,18 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   }
 
   private async runCreatePlanFlow(w: vscode.Webview, userRequest: string): Promise<void> {
+    const flowId = newTraceId("createPlanFlow");
+    traceEvent(flowId, "createPlanFlow.start", { userRequestChars: userRequest.length });
+    traceMultiline(flowId, "createPlanFlow.userRequest", userRequest);
+
     if (this.createPlanInFlight) {
+      traceEvent(flowId, "createPlanFlow.skip", { reason: "already_in_flight" });
       void vscode.window.showWarningMessage("Planstack: a plan is already being generated.");
       return;
     }
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
+      traceEvent(flowId, "createPlanFlow.skip", { reason: "no_workspace" });
       void vscode.window.showErrorMessage("Planstack: open a workspace folder before creating a plan.");
       return;
     }
@@ -166,7 +196,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
 
     try {
       const planningMode = getPlanningMode();
+      traceEvent(flowId, "createPlanFlow.planning_mode", { planningMode });
       if (planningMode !== "cli") {
+        traceEvent(flowId, "createPlanFlow.abort", { reason: "unsupported_planning_mode", planningMode });
         void vscode.window.showErrorMessage(
           `Planstack: planning mode "${planningMode}" is not supported. Set planstack.cursor.planningMode to \"cli\" (default).`,
         );
@@ -180,11 +212,17 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
       const chatThrottleMs = cfg.get<number>("cliStreamChatThrottleMs") ?? 25_000;
       const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
+      traceEvent(flowId, "createPlanFlow.config_snapshot", {
+        streamToOutput,
+        chatThrottleMs,
+        useLiveChat,
+      });
       const out = getOutput();
       out.show(true);
       out.appendLine(`\n=== Create plan: agent run ${new Date().toISOString()} ===\n`);
 
       const runId = randomUUID();
+      traceEvent(flowId, "createPlanFlow.run_context", { runId, streamToOutput, useLiveChat });
       let streamActive = false;
       let endReason: AgentStreamEndReason = "complete";
 
@@ -218,10 +256,15 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
               "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
           });
         }
+        traceEvent(flowId, "createPlanFlow.calling_createPlanFromUserRequest", {
+          debugTraceId: flowId,
+          workspaceRoot: folder.uri.fsPath,
+        });
         const { savedUri } = await createPlanFromUserRequest({
           extensionContext: this.extensionContext,
           workspaceRoot: folder.uri,
           userRequest,
+          debugTraceId: flowId,
           onAgentStdoutChunk:
             streamToOutput || useLiveChat
               ? (text) => {
@@ -258,6 +301,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
               : undefined,
         });
         const rel = vscode.workspace.asRelativePath(savedUri);
+        traceEvent(flowId, "createPlanFlow.success", { savedUri: savedUri.fsPath, rel });
         const line = `Saved plan file: ${rel}`;
         this.transcript.push({ role: "system", text: line });
         w.postMessage({ type: "append", role: "system", text: line });
@@ -277,6 +321,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
     } catch (e) {
       if (e instanceof AgentRunBusyError) {
+        traceEvent(flowId, "createPlanFlow.error", { kind: "AgentRunBusyError", message: e.message });
         const line = `Create plan skipped: ${e.message}`;
         this.transcript.push({ role: "system", text: line });
         w.postMessage({ type: "append", role: "system", text: line });
@@ -287,6 +332,13 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (e instanceof AgentCliError && e.stderr?.trim()) {
         detail = `${detail}\n${e.stderr.trim().slice(0, 800)}`;
       }
+      traceEvent(flowId, "createPlanFlow.error", {
+        kind: e instanceof AgentCliError ? "AgentCliError" : e instanceof Error ? "Error" : typeof e,
+        message: detail.slice(0, 2000),
+      });
+      if (e instanceof Error && e.stack) {
+        traceMultiline(flowId, "createPlanFlow.error.stack", e.stack);
+      }
       const stopped = e instanceof AgentCliError && detail.includes("stopped");
       this.transcript.push({ role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
       w.postMessage({ type: "append", role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
@@ -296,6 +348,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         void vscode.window.showErrorMessage(`Planstack: ${detail.slice(0, 2000)}`);
       }
     } finally {
+      traceEvent(flowId, "createPlanFlow.finally", { createPlanInFlight_cleared: true });
       this.createPlanInFlight = false;
       w.postMessage({ type: "busy", busy: false });
     }

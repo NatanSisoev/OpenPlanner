@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { getExecutionMode, type ExecutionMode } from "../plan/modes";
 import { handoffClaudeTerminal } from "./claudeCode";
 import { handoffViaAgentCli } from "./cursorCli";
@@ -16,6 +17,8 @@ export function getConfiguredHandoffMode(): ExecutionMode {
 export type DispatchPhaseOptions = {
   /** Shown in Chat status lines (e.g. plan title › phase title). */
   statusLabel?: string;
+  /** Correlates dispatch + CLI logs; generated if omitted. */
+  traceId?: string;
 };
 
 /**
@@ -26,16 +29,27 @@ export async function dispatchPhaseHandoff(
   extensionContext: vscode.ExtensionContext,
   options?: DispatchPhaseOptions,
 ): Promise<void> {
+  const traceId = options?.traceId ?? newTraceId("dispatch");
   const mode = getExecutionMode();
+  traceEvent(traceId, "dispatch.enter", {
+    mode,
+    statusLabel: options?.statusLabel,
+    promptLength: prompt.length,
+  });
+  traceMultiline(traceId, "dispatch.prompt", prompt);
   switch (mode) {
     case "native-first":
+      traceEvent(traceId, "dispatch.target", { handoff: "handoffToNativeComposer" });
       return handoffToNativeComposer(prompt);
     case "sdk-local":
+      traceEvent(traceId, "dispatch.target", { handoff: "handoffViaCursorSdk", sdkMode: "local" });
       return handoffViaCursorSdk(prompt, "local");
     case "sdk-cloud":
+      traceEvent(traceId, "dispatch.target", { handoff: "handoffViaCursorSdk", sdkMode: "cloud" });
       return handoffViaCursorSdk(prompt, "cloud");
     case "cli":
-      return handoffViaAgentCli(prompt, extensionContext, options?.statusLabel);
+      traceEvent(traceId, "dispatch.target", { handoff: "handoffViaAgentCli" });
+      return handoffViaAgentCli(prompt, extensionContext, options?.statusLabel, traceId);
     default: {
       const _exhaustive: never = mode;
       return _exhaustive;

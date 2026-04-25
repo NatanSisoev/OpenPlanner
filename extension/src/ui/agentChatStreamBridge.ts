@@ -19,13 +19,41 @@ export interface AgentStreamSink {
 
 let sink: AgentStreamSink | undefined;
 
+/** When Chat has not been opened yet, hold stream data until a sink registers (then replay). */
+type ReplayBuf = {
+  meta: AgentStreamMeta;
+  out: string;
+  err: string;
+  ended?: AgentStreamEndReason;
+};
+const replayRuns = new Map<string, ReplayBuf>();
+
 const COALESCE_MS = 8;
 
 type PendingBuf = { out: string; err: string; timer?: ReturnType<typeof setTimeout> };
 const pending = new Map<string, PendingBuf>();
 
+function replayBufferedTo(s: AgentStreamSink): void {
+  for (const [runId, rb] of replayRuns) {
+    s.onStart(runId, rb.meta);
+    if (rb.out) {
+      s.onChunk(runId, "stdout", rb.out);
+    }
+    if (rb.err) {
+      s.onChunk(runId, "stderr", rb.err);
+    }
+    if (rb.ended !== undefined) {
+      s.onEnd(runId, rb.ended);
+    }
+  }
+  replayRuns.clear();
+}
+
 export function registerAgentStreamSink(s: AgentStreamSink | undefined): void {
   sink = s;
+  if (s) {
+    replayBufferedTo(s);
+  }
 }
 
 function flushPending(runId: string): void {
@@ -39,19 +67,35 @@ function flushPending(runId: string): void {
   }
   pending.delete(runId);
   const s = sink;
-  if (!s) {
-    return;
-  }
-  if (b.out) {
-    s.onChunk(runId, "stdout", b.out);
-  }
-  if (b.err) {
-    s.onChunk(runId, "stderr", b.err);
+  if (s) {
+    if (b.out) {
+      s.onChunk(runId, "stdout", b.out);
+    }
+    if (b.err) {
+      s.onChunk(runId, "stderr", b.err);
+    }
+  } else {
+    const rb = replayRuns.get(runId);
+    if (rb) {
+      rb.out += b.out;
+      rb.err += b.err;
+    }
   }
 }
 
 function scheduleChunk(runId: string, stream: "stdout" | "stderr", text: string): void {
-  if (!text || !sink) {
+  if (!text) {
+    return;
+  }
+  if (!sink) {
+    const rb = replayRuns.get(runId);
+    if (rb) {
+      if (stream === "stdout") {
+        rb.out += text;
+      } else {
+        rb.err += text;
+      }
+    }
     return;
   }
   let b = pending.get(runId);
@@ -79,7 +123,11 @@ function scheduleChunk(runId: string, stream: "stdout" | "stderr", text: string)
 /** Call before first chunk. */
 export function postAgentStreamStart(runId: string, meta: AgentStreamMeta): void {
   flushPending(runId);
-  sink?.onStart(runId, meta);
+  if (sink) {
+    sink.onStart(runId, meta);
+  } else {
+    replayRuns.set(runId, { meta, out: "", err: "" });
+  }
 }
 
 export function postAgentStreamChunk(runId: string, stream: "stdout" | "stderr", text: string): void {
@@ -89,5 +137,12 @@ export function postAgentStreamChunk(runId: string, stream: "stdout" | "stderr",
 /** Flush coalesced bytes then notify end. */
 export function postAgentStreamEnd(runId: string, reason: AgentStreamEndReason): void {
   flushPending(runId);
-  sink?.onEnd(runId, reason);
+  if (sink) {
+    sink.onEnd(runId, reason);
+  } else {
+    const rb = replayRuns.get(runId);
+    if (rb) {
+      rb.ended = reason;
+    }
+  }
 }

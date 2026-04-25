@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { newTraceId, traceEvent, traceMultiline } from "./debug/trace";
 import { handoffToNativeComposer } from "./dispatch/cursorNativeHandoff";
 import { dispatchPhaseHandoff } from "./dispatch/router";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
@@ -18,6 +19,34 @@ import { WORK_STATES, type ExecutionState } from "./plan/types";
 let currentPlans: import("./plan/types").Plan[] = [];
 
 const PLAN_ORDER_KEY = "hackupc.planstack.planOrder";
+
+function summarizeCommandArg(arg: unknown): unknown {
+  if (arg === undefined) {
+    return undefined;
+  }
+  if (arg instanceof PhaseTreeItem) {
+    return {
+      kind: "PhaseTreeItem",
+      planId: arg.plan.id,
+      phaseId: arg.phase.id,
+      planTitle: arg.plan.title,
+      phaseTitle: arg.phase.title,
+    };
+  }
+  if (arg instanceof TaskTreeItem) {
+    return {
+      kind: "TaskTreeItem",
+      planId: arg.plan.id,
+      phaseId: arg.phase.id,
+      taskId: arg.task.id,
+      taskDesc: arg.task.desc,
+    };
+  }
+  if (Array.isArray(arg)) {
+    return { kind: "array", length: arg.length, first: summarizeCommandArg(arg[0]) };
+  }
+  return { kind: typeof arg };
+}
 
 function orderPlans(plans: import("./plan/types").Plan[], orderedIds: string[] | undefined): import("./plan/types").Plan[] {
   const ids = Array.isArray(orderedIds) ? orderedIds : [];
@@ -49,25 +78,54 @@ export function activate(context: vscode.ExtensionContext): void {
   const sidebarUi = new PlanstackSidebarWebview(
     extUri,
     async (planId, phaseId) => {
-      const plan = currentPlans.find((p) => p.id === planId);
-      const phase = plan?.phases.find((ph) => ph.id === phaseId);
-      if (!plan || !phase) {
-        void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
-        return;
+      const tid = newTraceId("runphase-sidebar");
+      traceEvent(tid, "runphase.sidebar.enter", { planId, phaseId });
+      traceEvent(tid, "runphase.branch_prep", {
+        path: "sidebar_webview",
+        note: "ensurePlanWorkBranch is not invoked on this path (tree command path does).",
+      });
+      try {
+        const plan = currentPlans.find((p) => p.id === planId);
+        const phase = plan?.phases.find((ph) => ph.id === phaseId);
+        if (!plan || !phase) {
+          traceEvent(tid, "runphase.sidebar.abort", { reason: "phase_not_found" });
+          void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+          return;
+        }
+        traceEvent(tid, "runphase.sidebar.resolved", {
+          planTitle: plan.title,
+          phaseTitle: phase.title,
+        });
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const git = root
+          ? await summarizeGitForPlan(root, phase, plan)
+          : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
+        const eff = effectiveWorkBranch(phase, plan);
+        const prompt = buildPhaseHandoffPrompt(plan, phase, {
+          currentHead: git.currentBranchLabel,
+          effectiveWorkBranch: eff,
+          baseBranch: plan.git?.baseBranch,
+        });
+        traceMultiline(tid, "runphase.generated_prompt", prompt);
+        traceEvent(tid, "runphase.dispatch", {
+          statusLabel: `${plan.title} › ${phase.title}`,
+          traceId: tid,
+        });
+        await dispatchPhaseHandoff(prompt, context, {
+          statusLabel: `${plan.title} › ${phase.title}`,
+          traceId: tid,
+        });
+        traceEvent(tid, "runphase.sidebar.exit", { ok: true });
+      } catch (e) {
+        traceEvent(tid, "runphase.sidebar.exit", {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        if (e instanceof Error && e.stack) {
+          traceMultiline(tid, "runphase.sidebar.error.stack", e.stack);
+        }
+        throw e;
       }
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-      const git = root
-        ? await summarizeGitForPlan(root, phase, plan)
-        : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
-      const eff = effectiveWorkBranch(phase, plan);
-      const prompt = buildPhaseHandoffPrompt(plan, phase, {
-        currentHead: git.currentBranchLabel,
-        effectiveWorkBranch: eff,
-        baseBranch: plan.git?.baseBranch,
-      });
-      await dispatchPhaseHandoff(prompt, context, {
-        statusLabel: `${plan.title} › ${phase.title}`,
-      });
     },
     async (planId, phaseId, patch) => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -157,7 +215,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.refresh", async () => {
-      await refreshPlansOrdered(tree, sidebarUi);
+      const tid = newTraceId("cmd-refresh");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.refresh" });
+      try {
+        await refreshPlansOrdered(tree, sidebarUi);
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.refresh", ok: true });
+      } catch (e) {
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.planstack.refresh",
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        throw e;
+      }
     }),
   );
 
@@ -189,35 +259,80 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.runPhase", async (item: unknown) => {
-      const phaseItem = resolvePhaseTreeItem(item);
-      if (!phaseItem) {
-        await vscode.window.showInformationMessage(
-          "Run phase from the Planstack sidebar: expand a plan, then use Run on a phase.",
-        );
-        return;
-      }
-      const branchOk = await ensurePlanWorkBranch(phaseItem.plan, context.workspaceState);
-      if (!branchOk) {
-        return;
-      }
-      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-      const git = root
-        ? await summarizeGitForPlan(root, phaseItem.phase, phaseItem.plan)
-        : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
-      const eff = effectiveWorkBranch(phaseItem.phase, phaseItem.plan);
-      const prompt = buildPhaseHandoffPrompt(phaseItem.plan, phaseItem.phase, {
-        currentHead: git.currentBranchLabel,
-        effectiveWorkBranch: eff,
-        baseBranch: phaseItem.plan.git?.baseBranch,
+      const tid = newTraceId("runphase-tree");
+      traceEvent(tid, "command.enter", {
+        command: "hackupc.planstack.runPhase",
+        arg: summarizeCommandArg(item),
       });
-      await dispatchPhaseHandoff(prompt, context, {
-        statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
-      });
+      try {
+        const phaseItem = resolvePhaseTreeItem(item);
+        if (!phaseItem) {
+          traceEvent(tid, "runphase.tree.abort", { reason: "no_phase_tree_item" });
+          traceEvent(tid, "command.exit", {
+            command: "hackupc.planstack.runPhase",
+            ok: true,
+            skipped: "no_phase_tree_item",
+          });
+          await vscode.window.showInformationMessage(
+            "Run phase from the Planstack sidebar: expand a plan, then use Run on a phase.",
+          );
+          return;
+        }
+        traceEvent(tid, "runphase.tree.resolved", {
+          planId: phaseItem.plan.id,
+          phaseId: phaseItem.phase.id,
+          planTitle: phaseItem.plan.title,
+          phaseTitle: phaseItem.phase.title,
+        });
+        const branchOk = await ensurePlanWorkBranch(phaseItem.plan, context.workspaceState);
+        traceEvent(tid, "runphase.branch_prep", { path: "tree_command", ok: branchOk });
+        if (!branchOk) {
+          traceEvent(tid, "runphase.tree.abort", { reason: "branch_prep_failed" });
+          traceEvent(tid, "command.exit", {
+            command: "hackupc.planstack.runPhase",
+            ok: true,
+            skipped: "branch_prep_failed",
+          });
+          return;
+        }
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const git = root
+          ? await summarizeGitForPlan(root, phaseItem.phase, phaseItem.plan)
+          : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
+        const eff = effectiveWorkBranch(phaseItem.phase, phaseItem.plan);
+        const prompt = buildPhaseHandoffPrompt(phaseItem.plan, phaseItem.phase, {
+          currentHead: git.currentBranchLabel,
+          effectiveWorkBranch: eff,
+          baseBranch: phaseItem.plan.git?.baseBranch,
+        });
+        traceMultiline(tid, "runphase.generated_prompt", prompt);
+        traceEvent(tid, "runphase.dispatch", {
+          statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
+          traceId: tid,
+        });
+        await dispatchPhaseHandoff(prompt, context, {
+          statusLabel: `${phaseItem.plan.title} › ${phaseItem.phase.title}`,
+          traceId: tid,
+        });
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.runPhase", ok: true });
+      } catch (e) {
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.planstack.runPhase",
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        if (e instanceof Error && e.stack) {
+          traceMultiline(tid, "runphase.tree.error.stack", e.stack);
+        }
+        throw e;
+      }
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.setCursorApiKey", async () => {
+      const tid = newTraceId("cmd-setkey");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.setCursorApiKey" });
       const value = await vscode.window.showInputBox({
         title: "Cursor API key (Planstack / agent CLI)",
         prompt: "Stored in VS Code Secret Storage as CURSOR_API_KEY when spawning agent. Leave empty to clear.",
@@ -225,49 +340,95 @@ export function activate(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true,
       });
       if (value === undefined) {
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.setCursorApiKey", ok: true, cancelled: true });
         return;
       }
       if (!value.trim()) {
         await context.secrets.delete(CURSOR_API_KEY_SECRET);
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.setCursorApiKey", ok: true, cleared: true });
         void vscode.window.showInformationMessage("Planstack: cleared stored Cursor API key.");
         return;
       }
       await context.secrets.store(CURSOR_API_KEY_SECRET, value.trim());
+      traceEvent(tid, "command.exit", {
+        command: "hackupc.planstack.setCursorApiKey",
+        ok: true,
+        storedChars: value.trim().length,
+      });
       void vscode.window.showInformationMessage("Planstack: Cursor API key saved for this profile.");
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.debugCliConnection", async () => {
-      await debugCliConnection(context);
+      const tid = newTraceId("cmd-debugcli");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.debugCliConnection" });
+      try {
+        await debugCliConnection(context);
+        traceEvent(tid, "command.exit", { command: "hackupc.planstack.debugCliConnection", ok: true });
+      } catch (e) {
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.planstack.debugCliConnection",
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        throw e;
+      }
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.killAgentRuns", () => {
+      const tid = newTraceId("cmd-killagents");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.killAgentRuns" });
       const n = killAllAgentCliProcesses();
+      traceEvent(tid, "command.killAgentRuns", { processesSignaled: n });
       const msg =
         n > 0
           ? `Sent SIGTERM to ${n} agent process(es). In-flight runs will abort.`
           : "No Planstack agent process was running.";
       void vscode.window.showInformationMessage(`Planstack: ${msg}`);
+      traceEvent(tid, "command.exit", { command: "hackupc.planstack.killAgentRuns", ok: true });
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.nativeHandoff.demo", async () => {
-      const demo =
-        `HackUPC native handoff demo (${new Date().toISOString()}):\n\n` +
-        `Summarize docs/base_idea.md in two bullet points. Only that file for context.`;
-      await handoffToNativeComposer(demo);
+      const tid = newTraceId("cmd-nativeDemo");
+      traceEvent(tid, "command.enter", { command: "hackupc.nativeHandoff.demo" });
+      try {
+        const demo =
+          `HackUPC native handoff demo (${new Date().toISOString()}):\n\n` +
+          `Summarize docs/base_idea.md in two bullet points. Only that file for context.`;
+        traceMultiline(tid, "nativeHandoff.demo.prompt", demo);
+        await handoffToNativeComposer(demo);
+        traceEvent(tid, "command.exit", { command: "hackupc.nativeHandoff.demo", ok: true });
+      } catch (e) {
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.nativeHandoff.demo",
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        throw e;
+      }
     }),
   );
 
   for (const state of WORK_STATES) {
     context.subscriptions.push(
       vscode.commands.registerCommand(`hackupc.planstack.taskSetState.${state}`, async (item: unknown) => {
+        const tid = newTraceId("cmd-taskSetState");
+        traceEvent(tid, "command.enter", {
+          command: `hackupc.planstack.taskSetState.${state}`,
+          arg: summarizeCommandArg(item),
+        });
         const taskItem = resolveTaskTreeItem(item);
         if (!taskItem) {
+          traceEvent(tid, "command.exit", {
+            command: `hackupc.planstack.taskSetState.${state}`,
+            ok: true,
+            skipped: "no_task_item",
+          });
           await vscode.window.showInformationMessage(
             "Set task state from the Planstack sidebar: right-click a task, then pick Set state.",
           );
@@ -275,6 +436,11 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         const root = vscode.workspace.workspaceFolders?.[0]?.uri;
         if (!root) {
+          traceEvent(tid, "command.exit", {
+            command: `hackupc.planstack.taskSetState.${state}`,
+            ok: true,
+            skipped: "no_workspace",
+          });
           void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
           return;
         }
@@ -285,6 +451,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
         await savePlanPreservingFile(taskItem.plan, root);
         await refreshPlansOrdered(tree, sidebarUi);
+        traceEvent(tid, "command.exit", {
+          command: `hackupc.planstack.taskSetState.${state}`,
+          ok: true,
+          planId: taskItem.plan.id,
+          phaseId: taskItem.phase.id,
+          taskId: taskItem.task.id,
+        });
       }),
     );
   }

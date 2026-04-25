@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { logLine, showOutput } from "../log";
 import { AgentCliError, AgentRunBusyError, runAgentPrint } from "./agentCliRunner";
 import { resolveDefaultAgentExecutable } from "./agentPath";
@@ -18,8 +19,11 @@ function firstPathEntries(env: NodeJS.ProcessEnv, maxEntries = 5): string {
  * Chat/Create-plan and CLI phase execution paths.
  */
 export async function debugCliConnection(context: vscode.ExtensionContext): Promise<void> {
+  const tid = newTraceId("debugCli");
+  traceEvent(tid, "debugCli.enter", {});
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
+    traceEvent(tid, "debugCli.skip", { reason: "no_workspace" });
     await vscode.window.showErrorMessage("Planstack: open a workspace folder before running CLI diagnostics.");
     return;
   }
@@ -42,6 +46,7 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
   logLine(`debug-cli: PATH(first entries) ${firstPathEntries(env)}`);
 
   if (!apiKey) {
+    traceEvent(tid, "debugCli.skip", { reason: "no_api_key" });
     showOutput();
     await vscode.window.showErrorMessage(
       "Planstack: CURSOR_API_KEY is missing (run “Planstack: Set Cursor API key”). See Output → Planstack for diagnostics.",
@@ -50,6 +55,7 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
   }
 
   const prompt = "Reply with exactly OK.";
+  traceMultiline(tid, "debugCli.prompt", prompt);
   try {
     const { stdout, stderr, exitCode } = await runAgentPrint({
       agentPath: resolvedAgent,
@@ -58,6 +64,7 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
       env,
       timeoutMs,
       maxStdoutChars,
+      debugTraceId: tid,
     });
 
     const out = stdout.trim();
@@ -71,6 +78,7 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
     }
 
     if (exitCode !== 0) {
+      traceEvent(tid, "debugCli.exit", { ok: false, exitCode });
       showOutput();
       await vscode.window.showErrorMessage(
         `Planstack: CLI diagnostic failed (exit ${exitCode}). See Output → Planstack for stderr/stdout tails.`,
@@ -80,6 +88,7 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
 
     const ok = /\bOK\b/.test(out);
     if (!ok) {
+      traceEvent(tid, "debugCli.exit", { ok: false, reason: "missing_ok_token", stdoutChars: out.length });
       logLine("debug-cli: command succeeded but expected token 'OK' not found in stdout.");
       showOutput();
       await vscode.window.showWarningMessage(
@@ -88,9 +97,11 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
       return;
     }
 
+    traceEvent(tid, "debugCli.exit", { ok: true, stdoutChars: out.length });
     await vscode.window.showInformationMessage("Planstack: CLI bridge healthy (agent reachable from Extension Host).");
   } catch (e) {
     if (e instanceof AgentRunBusyError) {
+      traceEvent(tid, "debugCli.catch", { kind: "AgentRunBusyError", message: e.message });
       showOutput();
       await vscode.window.showWarningMessage(
         `Planstack: ${e.message}`,
@@ -98,6 +109,7 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
       return;
     }
     const msg = e instanceof AgentCliError ? e.message : e instanceof Error ? e.message : String(e);
+    traceEvent(tid, "debugCli.catch", { kind: e instanceof AgentCliError ? "AgentCliError" : "Error", message: msg });
     logLine(`debug-cli: exception ${msg}`);
     showOutput();
     await vscode.window.showErrorMessage(

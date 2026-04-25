@@ -1,5 +1,7 @@
 import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
+import * as path from "path";
+import { traceEvent, traceMultiline } from "../debug/trace";
 
 /** Reject second `runAgentPrint` while another is active (no queue). */
 export const AGENT_RUN_BUSY_MESSAGE =
@@ -18,6 +20,8 @@ export interface RunAgentPrintOptions {
   maxStreamChunkChars?: number;
   onStdoutChunk?: (text: string) => void;
   onStderrChunk?: (text: string) => void;
+  /** When set, verbose spawn/chunk/close logs go to Output → Planstack. */
+  debugTraceId?: string;
 }
 
 export class AgentCliError extends Error {
@@ -89,8 +93,19 @@ function clampChunk(s: string, maxChars: number): string {
  * Runs `agent -p --trust <prompt>` (print mode, same spirit as scripts/cursor-agent-smoke.sh).
  * Only one run may be active at a time across the extension host.
  */
+function envSummary(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const raw = env.PATH ?? "";
+  const pathHead = raw ? raw.split(path.delimiter).filter(Boolean).slice(0, 6).join(" | ") : "(empty)";
+  return {
+    PATH_head: pathHead,
+    CURSOR_API_KEY_set: Boolean(env.CURSOR_API_KEY && String(env.CURSOR_API_KEY).length > 0),
+  };
+}
+
 export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const tid = opts.debugTraceId ?? "agent";
   if (agentRunLocked) {
+    traceEvent(tid, "runAgentPrint.busy_reject", { agentPath: opts.agentPath, cwd: opts.cwd });
     return Promise.reject(new AgentRunBusyError());
   }
   agentRunLocked = true;
@@ -113,17 +128,43 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     const looksLikeCursorCli = /(^|[\\/])cursor(\.cmd|\.exe)?$/i.test(opts.agentPath.trim());
     const args = looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
     const useShell = win32SpawnNeedsShell(opts.agentPath);
+    const t0 = Date.now();
+    traceEvent(tid, "runAgentPrint.spawn", {
+      agentPath: opts.agentPath,
+      cwd: opts.cwd,
+      shell: useShell,
+      looksLikeCursorCli,
+      applyEdits: Boolean(opts.applyEdits),
+      timeoutMs: opts.timeoutMs,
+      maxStdoutChars: opts.maxStdoutChars,
+      argvLength: args.length,
+      env: envSummary(opts.env),
+    });
+    traceMultiline(tid, "runAgentPrint.prompt", opts.prompt);
+    traceEvent(tid, "runAgentPrint.spawnArgs", {
+      args: args.map((a, i) => ({ index: i, length: a.length, head: a.slice(0, 120) })),
+    });
+    traceMultiline(
+      tid,
+      "runAgentPrint.argv_full",
+      args.map((a, i) => `--- argv[${i}] len=${a.length} ---\n${a}`).join("\n"),
+    );
+
     const child = spawn(opts.agentPath, args, {
       cwd: opts.cwd,
       env: opts.env,
       shell: useShell,
     });
 
+    traceEvent(tid, "runAgentPrint.spawned", { pid: child.pid ?? null });
+
     activeRunCtl = { killed: false, child };
     registerChild(child);
 
     const outChunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
+    let stdoutChunkCount = 0;
+    let stderrChunkCount = 0;
 
     const emitOut = (raw: string): void => {
       opts.onStdoutChunk?.(clampChunk(raw, streamCap));
@@ -134,9 +175,21 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
 
     child.stdout?.on("data", (d: Buffer) => {
       outChunks.push(d);
-      emitOut(d.toString("utf8"));
+      const str = d.toString("utf8");
+      stdoutChunkCount++;
+      traceEvent(tid, "runAgentPrint.stdoutChunk", {
+        n: stdoutChunkCount,
+        bytes: d.length,
+        chars: str.length,
+        sample: str.slice(0, 200),
+      });
+      emitOut(str);
       const byteLen = Buffer.concat(outChunks).length;
       if (byteLen > opts.maxStdoutChars * 4) {
+        traceEvent(tid, "runAgentPrint.stdout_budget_kill", {
+          byteLen,
+          budgetBytes: opts.maxStdoutChars * 4,
+        });
         child.kill("SIGTERM");
         finish(() =>
           reject(
@@ -149,10 +202,19 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     });
     child.stderr?.on("data", (d: Buffer) => {
       errChunks.push(d);
-      emitErr(d.toString("utf8"));
+      const str = d.toString("utf8");
+      stderrChunkCount++;
+      traceEvent(tid, "runAgentPrint.stderrChunk", {
+        n: stderrChunkCount,
+        bytes: d.length,
+        chars: str.length,
+        sample: str.slice(0, 200),
+      });
+      emitErr(str);
     });
 
     const killTimer = setTimeout(() => {
+      traceEvent(tid, "runAgentPrint.timeout_kill", { afterMs: opts.timeoutMs });
       child.kill("SIGTERM");
       finish(() => reject(new AgentCliError(`agent timed out after ${opts.timeoutMs}ms`)));
     }, opts.timeoutMs);
@@ -171,6 +233,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
           ` On Windows, **EINVAL** often means the resolved file is a **.cmd/.bat** shim and could not be spawned. ` +
           `The extension uses a shell for those; if it still fails, set **planstack.cursor.agentPath** to **cursor.exe** or **agent.exe** (full path from \`where.exe\`).`;
       }
+      traceEvent(tid, "runAgentPrint.spawn_error", { message: msg, code: (e as NodeJS.ErrnoException).code });
       finish(() => reject(new AgentCliError(msg)));
     });
 
@@ -182,8 +245,17 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
       }
       const stdout = Buffer.concat(outChunks).toString("utf8");
       const stderr = Buffer.concat(errChunks).toString("utf8");
+      traceEvent(tid, "runAgentPrint.close", {
+        exitCode,
+        elapsedMs: Date.now() - t0,
+        stdoutChars: stdout.length,
+        stderrChars: stderr.length,
+        stdoutChunks: stdoutChunkCount,
+        stderrChunks: stderrChunkCount,
+      });
       const wasKilled = activeRunCtl?.killed === true;
       if (wasKilled) {
+        traceEvent(tid, "runAgentPrint.killed_exit", {});
         finish(() =>
           reject(
             new AgentCliError(
@@ -196,6 +268,10 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
         return;
       }
       if (stdout.length > opts.maxStdoutChars) {
+        traceEvent(tid, "runAgentPrint.stdout_char_budget_reject", {
+          stdoutChars: stdout.length,
+          maxStdoutChars: opts.maxStdoutChars,
+        });
         finish(() =>
           reject(
             new AgentCliError(
@@ -207,6 +283,7 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
         );
         return;
       }
+      traceEvent(tid, "runAgentPrint.resolve_ok", { exitCode });
       finish(() => resolve({ stdout, stderr, exitCode }));
     });
   });

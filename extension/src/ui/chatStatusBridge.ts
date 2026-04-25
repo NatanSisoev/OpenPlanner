@@ -4,8 +4,17 @@ type SystemSink = (text: string) => void;
 
 let sink: SystemSink | undefined;
 
+const pendingLines: string[] = [];
+const MAX_PENDING_LINES = 200;
+
 export function registerChatSystemSink(fn: SystemSink | undefined): void {
   sink = fn;
+  if (fn && pendingLines.length > 0) {
+    for (const line of pendingLines) {
+      fn(line);
+    }
+    pendingLines.length = 0;
+  }
 }
 
 export function postChatSystemMessage(text: string): void {
@@ -13,5 +22,12 @@ export function postChatSystemMessage(text: string): void {
   if (!line) {
     return;
   }
-  sink?.(line);
+  if (sink) {
+    sink(line);
+  } else {
+    if (pendingLines.length >= MAX_PENDING_LINES) {
+      pendingLines.shift();
+    }
+    pendingLines.push(line);
+  }
 }

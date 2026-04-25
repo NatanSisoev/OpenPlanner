@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import type { Plan } from "../plan/types";
 import type { ExecutionState } from "../plan/types";
 
@@ -47,7 +48,15 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     w.html = getSidebarHtml(csp, scriptUri);
 
     const sub = w.onDidReceiveMessage((msg: unknown) => {
+      const recvId = newTraceId("sidebarRecv");
+      traceEvent(recvId, "sidebar.onDidReceiveMessage", {
+        raw:
+          typeof msg === "object" && msg !== null
+            ? JSON.stringify(msg)
+            : String(msg),
+      });
       if (!msg || typeof msg !== "object") {
+        traceEvent(recvId, "sidebar.onDidReceiveMessage.ignore", { reason: "not_object" });
         return;
       }
       const m = msg as {
@@ -62,21 +71,49 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         orderedPlanIds?: string[];
       };
       if (m.type === "runPhase" && m.planId && m.phaseId) {
+        traceEvent(recvId, "sidebar.runPhase", { planId: m.planId, phaseId: m.phaseId });
         this.onRunPhase(m.planId, m.phaseId);
       }
       if (m.type === "updatePhase" && m.planId && m.phaseId) {
+        traceEvent(recvId, "sidebar.updatePhase", {
+          planId: m.planId,
+          phaseId: m.phaseId,
+          state: m.state,
+        });
         void this.onUpdatePhase(m.planId, m.phaseId, { state: m.state });
       }
       if (m.type === "reorderPlans" && Array.isArray(m.orderedPlanIds)) {
+        traceEvent(recvId, "sidebar.reorderPlans", { orderedPlanIds: m.orderedPlanIds });
         void this.onReorderPlans(m.orderedPlanIds);
       }
       if (m.type === "openTaskDetails" && m.planId && m.phaseId && m.taskId) {
+        traceEvent(recvId, "sidebar.openTaskDetails", {
+          planId: m.planId,
+          phaseId: m.phaseId,
+          taskId: m.taskId,
+        });
         void this.openTaskDetails(m.planId, m.phaseId, m.taskId);
       }
       if (m.type === "openPhaseDetails" && m.planId && m.phaseId) {
+        traceEvent(recvId, "sidebar.openPhaseDetails", { planId: m.planId, phaseId: m.phaseId });
         void this.openPhaseDetails(m.planId, m.phaseId);
       }
       if (m.type === "updateTask" && m.planId && m.phaseId && m.taskId) {
+        traceEvent(recvId, "sidebar.updateTask.meta", {
+          planId: m.planId,
+          phaseId: m.phaseId,
+          taskId: m.taskId,
+          state: m.state,
+          commit: m.commit,
+          descChars: typeof m.desc === "string" ? m.desc.length : 0,
+          promptChars: typeof m.prompt === "string" ? m.prompt.length : 0,
+        });
+        if (typeof m.desc === "string") {
+          traceMultiline(recvId, "sidebar.updateTask.desc", m.desc);
+        }
+        if (typeof m.prompt === "string") {
+          traceMultiline(recvId, "sidebar.updateTask.prompt", m.prompt);
+        }
         void this.onUpdateTask(m.planId, m.phaseId, m.taskId, {
           state: m.state,
           desc: m.desc,

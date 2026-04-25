@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
+import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { formatGitSummaryChatLine, getWorktreeChangeSummary } from "../git/worktreeChangeSummary";
 import { getOutput } from "../log";
 import { AgentCliError, AgentRunBusyError, runAgentPrint } from "../plan/agentCliRunner";
@@ -94,11 +95,16 @@ export async function handoffViaAgentCli(
   prompt: string,
   extensionContext: vscode.ExtensionContext,
   statusLabel?: string,
+  traceId?: string,
 ): Promise<void> {
+  const tid = traceId ?? newTraceId("cursorCli");
   const label = (statusLabel?.trim() || "Run phase").slice(0, 200);
+  traceEvent(tid, "handoffViaAgentCli.enter", { label, statusLabel, promptLength: prompt.length });
+  traceMultiline(tid, "handoffViaAgentCli.prompt", prompt);
 
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
+    traceEvent(tid, "handoffViaAgentCli.skip", { reason: "no_workspace_folder" });
     postChatSystemMessage(`${label}: skipped — no workspace folder open.`);
     await vscode.window.showErrorMessage("Planstack: open a workspace folder before running phase with the CLI.");
     return;
@@ -106,6 +112,7 @@ export async function handoffViaAgentCli(
 
   const apiKey = await resolveCursorApiKey(extensionContext);
   if (!apiKey) {
+    traceEvent(tid, "handoffViaAgentCli.skip", { reason: "no_cursor_api_key" });
     postChatSystemMessage(`${label}: skipped — CURSOR_API_KEY not set (use “Planstack: Set Cursor API key”).`);
     await vscode.window.showErrorMessage(
       "Planstack: CURSOR_API_KEY is not set. Use “Planstack: Set Cursor API key” or export it for the Extension Host.",
@@ -128,6 +135,18 @@ export async function handoffViaAgentCli(
   const cwd = folder.uri.fsPath;
   const env = await buildAgentEnv(extensionContext);
   const resolvedAgent = resolveDefaultAgentExecutable(agentPath);
+  traceEvent(tid, "handoffViaAgentCli.config", {
+    agentPath,
+    resolvedAgent,
+    timeoutMs,
+    maxStdoutChars,
+    streamToOutput,
+    progressThrottleMs,
+    chatThrottleMs,
+    showGitSummary,
+    useLiveChat,
+    cwd,
+  });
 
   const heartbeatEveryMs = 45_000;
   const startedAt = Date.now();
@@ -182,6 +201,7 @@ export async function handoffViaAgentCli(
             applyEdits: true,
             onStdoutChunk,
             onStderrChunk,
+            debugTraceId: tid,
           });
           if (r.exitCode !== 0) {
             endReason = "error";
@@ -202,6 +222,11 @@ export async function handoffViaAgentCli(
     );
 
     appendRunLog(stdout, stderr);
+    traceEvent(tid, "handoffViaAgentCli.agent_finished", {
+      exitCode,
+      stdoutChars: stdout.length,
+      stderrChars: stderr.length,
+    });
 
     if (exitCode !== 0) {
       const tail = stderr.trim() || stdout.slice(-500);
@@ -218,6 +243,11 @@ export async function handoffViaAgentCli(
 
     if (showGitSummary) {
       const summary = await getWorktreeChangeSummary(cwd);
+      traceEvent(tid, "handoffViaAgentCli.git_summary", {
+        hasSummary: Boolean(summary),
+        statusLine: summary?.statusLine ?? null,
+        diffStatHead: summary?.diffStat ? summary.diffStat.slice(0, 500) : null,
+      });
       if (summary) {
         output.appendLine(`\n--- Git vs HEAD (${label}) ---\n`);
         if (summary.statusLine) {
@@ -253,6 +283,11 @@ export async function handoffViaAgentCli(
       );
     }
   } catch (e) {
+    traceEvent(tid, "handoffViaAgentCli.catch", {
+      name: e instanceof Error ? e.name : typeof e,
+      message: e instanceof Error ? e.message : String(e),
+      agentRunBusy: e instanceof AgentRunBusyError,
+    });
     if (e instanceof AgentRunBusyError) {
       postChatSystemMessage(`${label}: skipped — ${e.message}`);
       void vscode.window.showWarningMessage(e.message);
@@ -275,5 +310,6 @@ export async function handoffViaAgentCli(
     }
   } finally {
     clearInterval(heartbeat);
+    traceEvent(tid, "handoffViaAgentCli.finally", {});
   }
 }
