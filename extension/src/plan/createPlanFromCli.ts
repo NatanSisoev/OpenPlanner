@@ -9,7 +9,7 @@ import { saveValidatedPlan } from "./writePlan";
 
 export const CURSOR_API_KEY_SECRET = "planstack.cursor.apiKey";
 
-async function resolveCursorApiKey(context: vscode.ExtensionContext): Promise<string | undefined> {
+export async function resolveCursorApiKey(context: vscode.ExtensionContext): Promise<string | undefined> {
   const fromSecret = await context.secrets.get(CURSOR_API_KEY_SECRET);
   if (fromSecret?.trim()) {
     return fromSecret.trim();
@@ -18,7 +18,7 @@ async function resolveCursorApiKey(context: vscode.ExtensionContext): Promise<st
   return fromEnv || undefined;
 }
 
-async function buildAgentEnv(context: vscode.ExtensionContext): Promise<NodeJS.ProcessEnv> {
+export async function buildAgentEnv(context: vscode.ExtensionContext): Promise<NodeJS.ProcessEnv> {
   let env = { ...process.env } as NodeJS.ProcessEnv;
   const key = await resolveCursorApiKey(context);
   if (key) {

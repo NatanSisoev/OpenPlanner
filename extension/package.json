@@ -1,7 +1,7 @@
 {
   "name": "hackupc-planstack-spike",
   "displayName": "HackUPC Planstack",
-  "description": "Phased plans, sidebar orchestration, and native Cursor handoff (clipboard + optional Composer command).",
+  "description": "Phased plans, sidebar orchestration, separate planning (Chat) and execution (Run phase) settings.",
   "version": "0.0.1",
   "publisher": "hackupc",
   "private": true,
@@ -55,7 +55,7 @@
       },
       {
         "command": "hackupc.planstack.runPhase",
-        "title": "Planstack: Run phase (native handoff)"
+        "title": "Planstack: Run phase (execution)"
       },
       {
         "command": "hackupc.planstack.setCursorApiKey",
@@ -85,11 +85,30 @@
     "configuration": {
       "title": "Planstack",
       "properties": {
+        "planstack.cursor.planningMode": {
+          "type": "string",
+          "default": "cli",
+          "enum": ["cli"],
+          "description": "How Chat → Create plan produces structured plan JSON. \"cli\" uses the Cursor headless agent in read-only print mode. Additional values may be added later."
+        },
+        "planstack.cursor.executionMode": {
+          "type": "string",
+          "default": "cli",
+          "enum": ["", "native-first", "sdk-local", "sdk-cloud", "cli"],
+          "markdownDescription": "How **Run phase** runs (Plans tree). Default **`cli`** runs the Cursor agent in the workspace with `--force`. Leave **empty** to use legacy `planstack.cursor.handoff`. Set **`native-first`** for clipboard + optional Composer command instead.",
+          "enumDescriptions": [
+            "Use legacy `planstack.cursor.handoff` when valid; otherwise cli.",
+            "Clipboard + optional Composer command (paste handoff).",
+            "Cursor SDK local (stub unless implemented).",
+            "Cursor SDK cloud (stub unless implemented).",
+            "Headless Cursor agent with --force in the workspace (may edit files); needs CURSOR_API_KEY and agent on PATH (see README)."
+          ]
+        },
         "planstack.cursor.handoff": {
           "type": "string",
-          "default": "native-first",
+          "default": "cli",
           "enum": ["native-first", "sdk-local", "sdk-cloud", "cli"],
-          "description": "How Run phase hands off execution. native-first matches the product default (clipboard + optional focus command)."
+          "markdownDescription": "**Deprecated:** use `planstack.cursor.executionMode` for phase execution. Still read when `executionMode` is empty, for existing workspaces."
         },
         "planstack.cursor.openComposerCommand": {
           "type": "string",
@@ -104,19 +123,19 @@
         "planstack.cursor.agentPath": {
           "type": "string",
           "default": "agent",
-          "description": "Executable for the Cursor headless CLI (must be on PATH or an absolute path). Used by Chat → Create plan."
+          "description": "Executable for the Cursor headless CLI (must be on PATH or an absolute path). Used for Chat → Create plan (planning) and CLI-based execution when wired."
         },
         "planstack.cursor.agentTimeoutMs": {
           "type": "number",
           "default": 180000,
           "minimum": 10000,
-          "description": "Max wait for a single agent -p run (milliseconds)."
+          "description": "Max wait for a single agent -p run (milliseconds). Applies to planning (Create plan) and CLI execution paths."
         },
         "planstack.cursor.agentMaxStdoutChars": {
           "type": "number",
           "default": 2000000,
           "minimum": 10000,
-          "description": "Max stdout characters captured from agent (safety cap)."
+          "description": "Max stdout characters captured from agent (safety cap). Applies to planning and CLI execution paths."
         }
       }
     }

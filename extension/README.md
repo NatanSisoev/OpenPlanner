@@ -1,6 +1,15 @@
 # HackUPC Planstack (VS Code / Cursor extension)
 
-Orchestration UI for phased plans (JSON under `.planstack/plans/` and optional `seed/`, schema aligned with [`seed/`](../seed/)) with **native handoff**: copy a phase prompt to the clipboard, then optionally run a VS Code command to focus Cursor Composer / Agent ([product plan](../docs/ide_plan_execution_1.plan.md)).
+Orchestration UI for phased plans (JSON under `.planstack/plans/` and optional `seed/`, schema aligned with [`seed/`](../seed/)) with separate **planning** vs **execution** settings ([product plan](../docs/ide_plan_execution_1.plan.md)).
+
+### Planning vs execution (two settings)
+
+| Context | User action | Setting | Default / notes |
+|--------|-------------|---------|-----------------|
+| **Planning** | **Chat → Create plan** | `planstack.cursor.planningMode` | `cli` — headless `agent -p --trust` (read-only), JSON plan on stdout |
+| **Execution** | **Plans → Run phase** | `planstack.cursor.executionMode` | **Default `cli`:** headless `agent -p --trust --force` (may edit files). **`native-first`:** clipboard + optional `openComposerCommand`. Empty → legacy `planstack.cursor.handoff` (default `cli`). |
+
+Shared: `planstack.cursor.agentPath`, `agentTimeoutMs`, `agentMaxStdoutChars`, and the stored Cursor API key (used for **Create plan** and for **`executionMode: cli`**).
 
 ## Try the UI in Cursor
 
@@ -9,7 +18,13 @@ Orchestration UI for phased plans (JSON under `.planstack/plans/` and optional `
 3. In the host window, open the **Planstack** icon in the **activity bar** (left).
 4. Sidebar order (top → bottom): **Overview**, **Plans** (tree: plans → phases → tasks from `.planstack/plans/*.json` and `seed/*.json`, e.g. [demo](../.planstack/plans/demo.json)), then **Chat**. Use the **Plans** view title **refresh** if needed.
 5. **Chat → Create plan:** type what you want in the box, then **Create plan** (not Send). The extension runs `agent -p --trust` in the workspace, parses a single JSON plan from stdout, validates it, and writes **`.planstack/plans/<id>.json`** (pretty-printed). **Send** stays local-only. You need **`CURSOR_API_KEY`** in the environment that launches Cursor, or run **Command Palette → “Planstack: Set Cursor API key”** (stored in VS Code Secret Storage). The Cursor CLI must be on `PATH` (or set **`planstack.cursor.agentPath`**).
-6. Expand the demo plan, **right‑click a phase → Planstack: Run phase** (or use the context action). Configure **`planstack.cursor.openComposerCommand`** (or legacy `hackupc.nativeHandoff.openComposerCommand`) for auto‑focus.
+6. Expand the demo plan, **right‑click a phase → Planstack: Run phase** (default: **CLI** in the repo with **`--force`**; needs **`CURSOR_API_KEY`** + `agent` like Create plan). For **Composer paste handoff** instead, set **`planstack.cursor.executionMode`** to **`native-first`** and optionally **`planstack.cursor.openComposerCommand`**.
+
+### Git branch on first Run phase (per plan)
+
+If the plan JSON includes **`git.planBranch`** (and optional **`git.baseBranch`**, default `main`), the **first** Run phase for that plan in this workspace uses the built-in **Git** extension to **create the branch from the base** (if missing) and **check it out**, then remembers success in **workspace state** (keyed by plan `id`). Later Run phases skip branch setup. Repos using **`master`** should set **`git.baseBranch`** accordingly.
+
+If **`git.planBranch`** is missing, or there is **no Git repo** / **Git extension**, a **Chat** system line explains the skip; execution still runs (unless branch checkout **fails**, in which case Run phase aborts after an error toast).
 
 **Command Palette:** `Planstack: Set Cursor API key` · `HackUPC: Native handoff demo` (fixed clipboard spike).
 
@@ -30,10 +45,14 @@ Matches [extension_and_repo_structure.plan.md](../docs/extension_and_repo_struct
 | `src/extension.ts` | Activation, tree view, commands |
 | `src/plan/*` | Types, validation, loader, CLI plan creation (`agentCliRunner`, `createPlanFromCli`, `writePlan`, …) |
 | `src/ui/planTreeProvider.ts` | Sidebar tree (plans → phases → tasks) |
-| `src/dispatch/router.ts` | `planstack.cursor.handoff` routing |
+| `src/dispatch/router.ts` | Phase execution dispatch (`getExecutionMode` / legacy handoff) |
+| `src/plan/modes.ts` | `planningMode` + `executionMode` resolution |
+| `src/ui/chatStatusBridge.ts` | Run phase CLI → Chat system lines when the Chat view is open |
 | `src/dispatch/cursorNativeHandoff.ts` | Clipboard + `executeCommand` |
-| `src/dispatch/cursorSdk.ts`, `cursorCli.ts`, `claudeCode.ts` | Stubs for non‑native modes |
-| `src/git/resolver.ts` | `effectiveWorkBranch` + best‑effort `vscode.git` snapshot |
+| `src/dispatch/cursorCli.ts` | **`executionMode: cli`** — `agent -p --trust --force` for phase work |
+| `src/dispatch/cursorSdk.ts`, `claudeCode.ts` | Stubs / optional paths |
+| `src/git/resolver.ts` | `effectiveWorkBranch` + exported `getGitApi` / `vscode.git` typings |
+| `src/git/ensurePlanWorkBranch.ts` | First Run phase per plan: create/checkout `git.planBranch` |
 
 ## Build
 

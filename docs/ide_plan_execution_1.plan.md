@@ -47,6 +47,8 @@ isProject: false
 
 **Principle:** the extension fills the gap **from structured intent to the start of execution**; **file changes** should look and feel **as close as possible to today’s native agent** (Composer / agent mode, familiar tool cards, inline diffs). Orchestration UI stays thin: tree, badges, run phase, blockers—not a second editor.
 
+**Settings alignment (Planstack extension):** **Planning** (Chat → structured plan JSON) and **execution** (Plans tree → run a phase) use different VS Code settings—`planstack.cursor.planningMode` vs `planstack.cursor.executionMode`—so a team can keep plan generation on the headless CLI while phase work uses native handoff or another path. Legacy `planstack.cursor.handoff` is still read when `executionMode` is empty.
+
 ## Product goal (button → native execution)
 
 **Run phase** should land the user (or the session) in the **same editing experience** they already use for agentic work, with the phase prompt already in play—**not** a bespoke “watch the extension webview while the repo changes” flow for normal development.

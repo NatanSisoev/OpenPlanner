@@ -34,5 +34,10 @@ export function buildPhaseHandoffPrompt(
       lines.push(`- Base branch: ${extras.baseBranch}`);
     }
   }
+
+  lines.push(
+    "",
+    "Implement the work in this repository with normal file edits (not JSON-only or plan-file output).",
+  );
   return lines.join("\n");
 }

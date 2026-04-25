@@ -55,17 +55,23 @@ interface GitExtension {
   getAPI(version: number): GitAPI | undefined;
 }
 
-interface GitAPI {
+export interface GitAPI {
   readonly repositories: GitRepository[];
+  /** Prefer this when resolving the repo for the first workspace folder (API v1+). */
+  getRepository?(uri: vscode.Uri): GitRepository | null;
 }
 
-interface GitRepository {
+export interface GitRepository {
+  readonly rootUri: vscode.Uri;
   readonly state: {
     readonly HEAD?: { readonly name?: string; readonly commit?: string };
   };
+  getBranch(name: string): Promise<unknown>;
+  createBranch(name: string, checkout: boolean, ref?: string): Promise<void>;
+  checkout(treeish: string): Promise<void>;
 }
 
-async function getGitApi(): Promise<GitAPI | undefined> {
+export async function getGitApi(): Promise<GitAPI | undefined> {
   const ext = vscode.extensions.getExtension<GitExtension>("vscode.git");
   if (!ext) {
     return undefined;

@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import { AgentCliError } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest } from "../plan/createPlanFromCli";
+import { getPlanningMode } from "../plan/modes";
+import { registerChatSystemSink } from "./chatStatusBridge";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
@@ -42,6 +44,16 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
 
     w.html = getChatHtml(csp, scriptUri);
 
+    const pushSystem = (text: string): void => {
+      this.transcript.push({ role: "system", text });
+      try {
+        w.postMessage({ type: "append", role: "system", text });
+      } catch {
+        // Webview disposed.
+      }
+    };
+    registerChatSystemSink(pushSystem);
+
     const sub = w.onDidReceiveMessage((msg: unknown) => {
       if (!msg || typeof msg !== "object") {
         return;
@@ -68,7 +80,11 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         void this.runCreatePlanFlow(w, text);
       }
     });
-    webviewView.onDidDispose(() => sub.dispose());
+    const disposeChat = webviewView.onDidDispose(() => {
+      registerChatSystemSink(undefined);
+      sub.dispose();
+      disposeChat.dispose();
+    });
 
     const snapshot = [...this.transcript];
     setTimeout(() => {
@@ -95,6 +111,13 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     w.postMessage({ type: "busy", busy: true });
 
     try {
+      const planningMode = getPlanningMode();
+      if (planningMode !== "cli") {
+        void vscode.window.showErrorMessage(
+          `Planstack: planning mode "${planningMode}" is not supported. Set planstack.cursor.planningMode to \"cli\" (default).`,
+        );
+        return;
+      }
       const { savedUri } = await createPlanFromUserRequest({
         extensionContext: this.extensionContext,
         workspaceRoot: folder.uri,
@@ -223,7 +246,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> to run the Cursor CLI and write <code>.planstack/plans/&lt;id&gt;.json</code> (same schema as <code>seed/</code>). Ordinary Send stays local.</div>
+  <div class="hint">Use <strong>Create plan</strong> to run the Cursor CLI and write <code>.planstack/plans/&lt;id&gt;.json</code> (same schema as <code>seed/</code>). <strong>Run phase</strong> (CLI) posts start/finish status here when this panel is open. Ordinary Send stays local.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <textarea id="input" rows="2" placeholder="Describe the plan you want…" aria-label="Message"></textarea>
