@@ -22,6 +22,9 @@ export interface RunAgentPrintOptions {
   onStderrChunk?: (text: string) => void;
   /** When set, verbose spawn/chunk/close logs go to Output → Planstack. */
   debugTraceId?: string;
+  /** Windows only: spawn via `wsl.exe -d <wslDistro>` instead of native Windows. */
+  useWsl?: boolean;
+  wslDistro?: string;
 }
 
 export class AgentCliError extends Error {
@@ -82,6 +85,13 @@ function win32SpawnNeedsShell(agentPath: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(agentPath.trim());
 }
 
+/** Convert a Windows absolute path to its WSL /mnt/<drive>/... equivalent. */
+function toWslPath(winPath: string): string {
+  return winPath
+    .replace(/^([A-Za-z]):[/\\]/, (_, d: string) => `/mnt/${d.toLowerCase()}/`)
+    .replace(/\\/g, "/");
+}
+
 function clampChunk(s: string, maxChars: number): string {
   if (s.length <= maxChars) {
     return s;
@@ -126,34 +136,66 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
 
     const baseArgs = opts.applyEdits ? ["-p", "--trust", "--force", opts.prompt] : ["-p", "--trust", opts.prompt];
     const looksLikeCursorCli = /(^|[\\/])cursor(\.cmd|\.exe)?$/i.test(opts.agentPath.trim());
-    const args = looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
-    const useShell = win32SpawnNeedsShell(opts.agentPath);
+    const agentArgs = looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
+
+    const useWsl = opts.useWsl === true && process.platform === "win32";
+    let spawnExe: string;
+    let spawnArgs: string[];
+    let spawnCwd: string;
+    let spawnShell: boolean;
+    let spawnEnv: NodeJS.ProcessEnv;
+
+    if (useWsl) {
+      const distro = opts.wslDistro?.trim() || "Ubuntu";
+      const wslCwd = toWslPath(opts.cwd);
+      // wsl.exe lives in System32 which the Extension Host PATH may not include.
+      const systemRoot = process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows";
+      spawnExe = path.join(systemRoot, "System32", "wsl.exe");
+      spawnArgs = ["-d", distro, "--cd", wslCwd, "--exec", opts.agentPath, ...agentArgs];
+      spawnCwd = opts.cwd;
+      spawnShell = false;
+      const existingWslEnv = opts.env.WSLENV;
+      spawnEnv = {
+        ...opts.env,
+        WSLENV: existingWslEnv ? `${existingWslEnv}:CURSOR_API_KEY/u` : "CURSOR_API_KEY/u",
+      };
+    } else {
+      spawnExe = opts.agentPath;
+      spawnArgs = agentArgs;
+      spawnCwd = opts.cwd;
+      spawnShell = win32SpawnNeedsShell(opts.agentPath);
+      spawnEnv = opts.env;
+    }
+
     const t0 = Date.now();
     traceEvent(tid, "runAgentPrint.spawn", {
       agentPath: opts.agentPath,
       cwd: opts.cwd,
-      shell: useShell,
+      shell: spawnShell,
       looksLikeCursorCli,
       applyEdits: Boolean(opts.applyEdits),
       timeoutMs: opts.timeoutMs,
       maxStdoutChars: opts.maxStdoutChars,
-      argvLength: args.length,
+      argvLength: spawnArgs.length,
+      useWsl,
+      wslExe: useWsl ? spawnExe : undefined,
+      wslDistro: useWsl ? (opts.wslDistro?.trim() || "Ubuntu") : undefined,
       env: envSummary(opts.env),
     });
     traceMultiline(tid, "runAgentPrint.prompt", opts.prompt);
     traceEvent(tid, "runAgentPrint.spawnArgs", {
-      args: args.map((a, i) => ({ index: i, length: a.length, head: a.slice(0, 120) })),
+      args: spawnArgs.map((a, i) => ({ index: i, length: a.length, head: a.slice(0, 120) })),
     });
     traceMultiline(
       tid,
       "runAgentPrint.argv_full",
-      args.map((a, i) => `--- argv[${i}] len=${a.length} ---\n${a}`).join("\n"),
+      spawnArgs.map((a, i) => `--- argv[${i}] len=${a.length} ---\n${a}`).join("\n"),
     );
 
-    const child = spawn(opts.agentPath, args, {
-      cwd: opts.cwd,
-      env: opts.env,
-      shell: useShell,
+    const child = spawn(spawnExe, spawnArgs, {
+      cwd: spawnCwd,
+      env: spawnEnv,
+      shell: spawnShell,
     });
 
     traceEvent(tid, "runAgentPrint.spawned", { pid: child.pid ?? null });

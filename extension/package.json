@@ -283,6 +283,16 @@
           "minimum": 0,
           "maximum": 300000,
           "markdownDescription": "While **Run phase (CLI)** is in progress, post a **short tail** of accumulated agent stdout/stderr to Chat as system lines on this interval (ms). Only posts when the tail **changes**. **0** disables. Works alongside **agentChatLiveStream**."
+        },
+        "planstack.cursor.useWsl": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Windows only.** Spawn the Cursor agent inside WSL (`wsl.exe -d <wslDistro> --exec`) instead of native Windows. Useful when the agent CLI is installed inside WSL rather than on Windows. The workspace path is automatically converted to the WSL mount path (`C:\\...` → `/mnt/c/...`). Set `planstack.cursor.agentPath` to the Linux binary name (e.g. `agent` or `cursor`) when this is enabled."
+        },
+        "planstack.cursor.wslDistro": {
+          "type": "string",
+          "default": "Ubuntu",
+          "description": "WSL distribution name to use when planstack.cursor.useWsl is enabled (e.g. \"Ubuntu\", \"Ubuntu-22.04\"). Run `wsl -l` in a terminal to list installed distributions."
         }
       }
     }

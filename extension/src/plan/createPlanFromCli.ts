@@ -203,14 +203,45 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
   });
   traceMultiline(tid, "createPlan.userRequest", opts.userRequest);
 
+<<<<<<< HEAD
   const prompt = buildPlanCreationPrompt(opts.userRequest);
   const plan = await runAgentForPlanJson({
     extensionContext: opts.extensionContext,
     workspaceRoot: opts.workspaceRoot,
+=======
+  const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+  const agentPath = cfg.get<string>("agentPath")?.trim() || "agent";
+  const timeoutMs = cfg.get<number>("agentTimeoutMs") ?? 180_000;
+  const maxStdoutChars = cfg.get<number>("agentMaxStdoutChars") ?? 2_000_000;
+  const useWsl = cfg.get<boolean>("useWsl") ?? false;
+  const wslDistro = cfg.get<string>("wslDistro")?.trim() || "Ubuntu";
+
+  const apiKey = await resolveKey(opts.extensionContext);
+  if (!apiKey) {
+    traceEvent(tid, "createPlan.fail", { reason: "no_api_key" });
+    throw new AgentCliError(
+      "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command \"Planstack: Set Cursor API key\".",
+    );
+  }
+
+  const cwd = opts.workspaceRoot.fsPath;
+  const env = await buildEnvForAgent(opts.extensionContext);
+  // In WSL mode the agent path is a Linux path -- skip Windows-specific executable resolution.
+  const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
+  const prompt = buildPlanCreationPrompt(opts.userRequest);
+  traceEvent(tid, "createPlan.config", { agentPath, resolvedAgent, cwd, timeoutMs, maxStdoutChars, useWsl, wslDistro: useWsl ? wslDistro : undefined });
+  traceMultiline(tid, "createPlan.planCreationPrompt", prompt);
+
+  const { stdout, stderr, exitCode } = await runAgentPrint({
+    agentPath: resolvedAgent,
+    cwd,
+>>>>>>> wsl-alternative
     prompt,
     onAgentStdoutChunk: opts.onAgentStdoutChunk,
     onAgentStderrChunk: opts.onAgentStderrChunk,
     debugTraceId: tid,
+    useWsl,
+    wslDistro,
   });
   const savedUri = await saveValidatedPlan(plan, opts.workspaceRoot);
   traceEvent(tid, "createPlan.success", { savedPath: savedUri.fsPath, planId: plan.id });

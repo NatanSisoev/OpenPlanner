@@ -156,10 +156,13 @@ export async function handoffViaAgentCli(
   const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
   const gitSnapshotEveryMs = cfg.get<number>("cliRunGitSnapshotIntervalMs") ?? 30_000;
   const agentDigestEveryMs = cfg.get<number>("cliRunAgentDigestIntervalMs") ?? 15_000;
+  const useWsl = cfg.get<boolean>("useWsl") ?? false;
+  const wslDistro = cfg.get<string>("wslDistro")?.trim() || "Ubuntu";
 
   const cwd = folder.uri.fsPath;
   const env = await buildAgentEnv(extensionContext);
-  const resolvedAgent = resolveDefaultAgentExecutable(agentPath);
+  // In WSL mode the agent path is a Linux path — skip Windows-specific executable resolution.
+  const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
   traceEvent(tid, "handoffViaAgentCli.config", {
     agentPath,
     resolvedAgent,
@@ -172,6 +175,8 @@ export async function handoffViaAgentCli(
     useLiveChat,
     gitSnapshotEveryMs,
     agentDigestEveryMs,
+    useWsl,
+    wslDistro: useWsl ? wslDistro : undefined,
     cwd,
   });
 
@@ -303,6 +308,8 @@ export async function handoffViaAgentCli(
             onStdoutChunk,
             onStderrChunk,
             debugTraceId: tid,
+            useWsl,
+            wslDistro,
           });
           if (r.exitCode !== 0) {
             endReason = "error";
