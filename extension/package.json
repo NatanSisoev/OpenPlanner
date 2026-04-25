@@ -1,7 +1,7 @@
 {
   "name": "hackupc-planstack-spike",
-  "displayName": "HackUPC planstack (native handoff spike)",
-  "description": "Spike: copy phase prompt to clipboard and optionally executeCommand to focus Cursor Composer.",
+  "displayName": "HackUPC Planstack",
+  "description": "Phased plans, sidebar orchestration, and native Cursor handoff (clipboard + optional Composer command).",
   "version": "0.0.1",
   "publisher": "hackupc",
   "private": true,
@@ -9,22 +9,114 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onCommand:hackupc.nativeHandoff.demo"],
+  "activationEvents": [
+    "onView:hackupc.planstack.ui",
+    "onView:hackupc.planstack.chat",
+    "onView:hackupc.planstackPlans",
+    "onCommand:hackupc.planstack.refresh",
+    "onCommand:hackupc.planstack.runPhase",
+    "onCommand:hackupc.planstack.setCursorApiKey",
+    "onCommand:hackupc.nativeHandoff.demo"
+  ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hackupc-planstack",
+          "title": "Planstack",
+          "icon": "media/planstack.svg"
+        }
+      ]
+    },
+    "views": {
+      "hackupc-planstack": [
+        {
+          "id": "hackupc.planstack.ui",
+          "name": "Overview",
+          "type": "webview"
+        },
+        {
+          "id": "hackupc.planstackPlans",
+          "name": "Plans"
+        },
+        {
+          "id": "hackupc.planstack.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "hackupc.planstack.refresh",
+        "title": "Planstack: Refresh plans",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "hackupc.planstack.runPhase",
+        "title": "Planstack: Run phase (native handoff)"
+      },
+      {
+        "command": "hackupc.planstack.setCursorApiKey",
+        "title": "Planstack: Set Cursor API key"
+      },
       {
         "command": "hackupc.nativeHandoff.demo",
         "title": "HackUPC: Native handoff demo (clipboard + Composer)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "hackupc.planstack.refresh",
+          "when": "view == hackupc.planstackPlans",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "hackupc.planstack.runPhase",
+          "when": "view == hackupc.planstackPlans && viewItem == hackupcPhase",
+          "group": "inline@0"
+        }
+      ]
+    },
     "configuration": {
-      "title": "HackUPC native handoff",
+      "title": "Planstack",
       "properties": {
+        "planstack.cursor.handoff": {
+          "type": "string",
+          "default": "native-first",
+          "enum": ["native-first", "sdk-local", "sdk-cloud", "cli"],
+          "description": "How Run phase hands off execution. native-first matches the product default (clipboard + optional focus command)."
+        },
+        "planstack.cursor.openComposerCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional VS Code command ID to open or focus Cursor Composer/Agent after the prompt is copied. Overrides legacy hackupc.nativeHandoff.openComposerCommand when set."
+        },
         "hackupc.nativeHandoff.openComposerCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional. VS Code command ID to open or focus Cursor Composer/Agent after the prompt is copied. Find it via Command Palette (Cmd+Shift+P), search for the panel you want, click the gear → Copy Command ID. Leave empty to only copy to clipboard."
+          "description": "Legacy: same as planstack.cursor.openComposerCommand. Used when planstack.cursor.openComposerCommand is empty."
+        },
+        "planstack.cursor.agentPath": {
+          "type": "string",
+          "default": "agent",
+          "description": "Executable for the Cursor headless CLI (must be on PATH or an absolute path). Used by Chat → Create plan."
+        },
+        "planstack.cursor.agentTimeoutMs": {
+          "type": "number",
+          "default": 180000,
+          "minimum": 10000,
+          "description": "Max wait for a single agent -p run (milliseconds)."
+        },
+        "planstack.cursor.agentMaxStdoutChars": {
+          "type": "number",
+          "default": 2000000,
+          "minimum": 10000,
+          "description": "Max stdout characters captured from agent (safety cap)."
         }
       }
     }

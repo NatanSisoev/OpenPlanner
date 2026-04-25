@@ -1,6 +1,6 @@
 .vscode/**
-.vscode-test/**
 src/**
-.gitignore
-**/tsconfig.json
 **/*.map
+tsconfig.json
+.gitignore
+**/.DS_Store

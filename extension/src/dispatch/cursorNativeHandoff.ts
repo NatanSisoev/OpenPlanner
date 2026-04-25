@@ -7,10 +7,9 @@ import * as vscode from "vscode";
 export async function handoffToNativeComposer(prompt: string): Promise<void> {
   await vscode.env.clipboard.writeText(prompt);
 
-  const commandId = vscode.workspace
-    .getConfiguration("hackupc.nativeHandoff")
-    .get<string>("openComposerCommand")
-    ?.trim();
+  const commandId =
+    vscode.workspace.getConfiguration("planstack.cursor").get<string>("openComposerCommand")?.trim() ||
+    vscode.workspace.getConfiguration("hackupc.nativeHandoff").get<string>("openComposerCommand")?.trim();
 
   if (!commandId) {
     await vscode.window.showInformationMessage(

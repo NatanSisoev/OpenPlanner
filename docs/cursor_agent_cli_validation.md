@@ -7,6 +7,16 @@ This matches the optional **headless** path in [ide_plan_execution_1.plan.md](id
 1. **Cursor CLI** — `agent` must be on your `PATH`. Install: [Cursor CLI installation](https://cursor.com/docs/cli/installation.md).
 2. **`CURSOR_API_KEY`** — Required for non-interactive runs. Create a key from the [Cloud Agents dashboard](https://cursor.com/dashboard/cloud-agents) or team service accounts. **Do not commit keys**; use shell exports or CI secret stores only. A repo-root `.env` with `CURSOR_API_KEY=…` is gitignored and is sourced automatically by `./scripts/cursor-agent-smoke.sh` when present.
 
+## From the Planstack extension (Chat → Create plan)
+
+The HackUPC extension can spawn the same **`agent -p --trust`** flow from the **Planstack → Chat** view (**Create plan** button). It uses the **first workspace folder** as `cwd`, passes a prompt that asks for **JSON-only** plan output, then **parses stdout**, validates against the extension schema, and writes **`.planstack/plans/<id>.json`** itself (print mode only; no `--force` in that path).
+
+- **API key:** The Extension Host does **not** read repo `.env`. Either launch Cursor with `CURSOR_API_KEY` set in your environment, or use **Command Palette → “Planstack: Set Cursor API key”** to store a key in VS Code **Secret Storage** (the extension sets `CURSOR_API_KEY` when spawning `agent`).
+- **Executable:** Defaults to `agent` on `PATH`; override with **`planstack.cursor.agentPath`** if needed.
+- **Limits:** **`planstack.cursor.agentTimeoutMs`** and **`planstack.cursor.agentMaxStdoutChars`** guard runaway output or hangs.
+
+See [extension/README.md](../extension/README.md) for F5 and UI steps.
+
 ## Shell smoke test (CLI)
 
 From the repository root:
