@@ -173,6 +173,7 @@ export function validatePlanJson(raw: unknown): Plan {
     id: asString(raw.id, "id"),
     state: asPlanState(raw.state, "state"),
     title: asString(raw.title, "title"),
+    description: asOptionalString(raw.description),
     createdAt: asOptionalString(raw.createdAt),
     phases,
     git: asGitInfo(raw.git, "git"),

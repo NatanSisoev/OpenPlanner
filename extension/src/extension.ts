@@ -16,14 +16,35 @@ import { WORK_STATES, type ExecutionState } from "./plan/types";
 
 let currentPlans: import("./plan/types").Plan[] = [];
 
-async function refreshPlans(provider: PlanTreeProvider, sidebar: PlanstackSidebarWebview): Promise<void> {
-  currentPlans = await loadPlansFromWorkspace();
-  provider.setPlans(currentPlans);
-  sidebar.setPlans(currentPlans);
+const PLAN_ORDER_KEY = "hackupc.planstack.planOrder";
+
+function orderPlans(plans: import("./plan/types").Plan[], orderedIds: string[] | undefined): import("./plan/types").Plan[] {
+  const ids = Array.isArray(orderedIds) ? orderedIds : [];
+  const index = new Map<string, number>();
+  ids.forEach((id, i) => index.set(id, i));
+  const withKeys = plans.map((p, originalIdx) => ({
+    p,
+    k: index.has(p.id) ? index.get(p.id)! : Number.POSITIVE_INFINITY,
+    originalIdx,
+  }));
+  withKeys.sort((a, b) => {
+    if (a.k !== b.k) return a.k - b.k;
+    return a.originalIdx - b.originalIdx;
+  });
+  return withKeys.map((x) => x.p);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   const extUri = context.extensionUri;
+
+  async function refreshPlansOrdered(provider: PlanTreeProvider, sidebar: PlanstackSidebarWebview): Promise<void> {
+    const loaded = await loadPlansFromWorkspace();
+    const savedOrder = context.workspaceState.get<string[]>(PLAN_ORDER_KEY);
+    currentPlans = orderPlans(loaded, savedOrder);
+    provider.setPlans(currentPlans);
+    sidebar.setPlans(currentPlans);
+  }
+
   const sidebarUi = new PlanstackSidebarWebview(
     extUri,
     async (planId, phaseId) => {
@@ -46,6 +67,28 @@ export function activate(context: vscode.ExtensionContext): void {
       await dispatchPhaseHandoff(prompt, context, {
         statusLabel: `${plan.title} › ${phase.title}`,
       });
+    },
+    async (planId, phaseId, patch) => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) {
+        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+        return false;
+      }
+      const plan = currentPlans.find((p) => p.id === planId);
+      const phase = plan?.phases.find((ph) => ph.id === phaseId);
+      if (!plan || !phase) {
+        void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+        return false;
+      }
+
+      if (patch.state) {
+        phase.state = patch.state;
+      }
+      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+      return true;
     },
     async (planId, phaseId, taskId, patch) => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -79,8 +122,14 @@ export function activate(context: vscode.ExtensionContext): void {
       plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
 
       await savePlanPreservingFile(plan, root);
-      await refreshPlans(tree, sidebarUi);
+      await refreshPlansOrdered(tree, sidebarUi);
       return true;
+    },
+    async (orderedPlanIds) => {
+      const loadedIds = new Set(currentPlans.map((p) => p.id));
+      const cleaned = orderedPlanIds.filter((id) => loadedIds.has(id));
+      await context.workspaceState.update(PLAN_ORDER_KEY, cleaned);
+      await refreshPlansOrdered(tree, sidebarUi);
     },
   );
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(SIDEBAR_WEBVIEW_ID, sidebarUi));
@@ -93,13 +142,13 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(view);
 
   const chatUi = new PlanstackChatWebview(extUri, context, async () => {
-    await refreshPlans(tree, sidebarUi);
+    await refreshPlansOrdered(tree, sidebarUi);
   });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(CHAT_WEBVIEW_ID, chatUi));
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.refresh", async () => {
-      await refreshPlans(tree, sidebarUi);
+      await refreshPlansOrdered(tree, sidebarUi);
     }),
   );
 
@@ -215,18 +264,18 @@ export function activate(context: vscode.ExtensionContext): void {
         taskItem.plan.state = deriveAggregateState(taskItem.plan.phases.map((p) => p.state));
 
         await savePlanPreservingFile(taskItem.plan, root);
-        await refreshPlans(tree, sidebarUi);
+        await refreshPlansOrdered(tree, sidebarUi);
       }),
     );
   }
 
-  void refreshPlans(tree, sidebarUi);
+  void refreshPlansOrdered(tree, sidebarUi);
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      void refreshPlans(tree, sidebarUi);
+      void refreshPlansOrdered(tree, sidebarUi);
     }),
     watchPlans(() => {
-      void refreshPlans(tree, sidebarUi);
+      void refreshPlansOrdered(tree, sidebarUi);
     }),
   );
 }

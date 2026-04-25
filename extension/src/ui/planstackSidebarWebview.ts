@@ -13,12 +13,14 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   constructor(
     private readonly extUri: vscode.Uri,
     private readonly onRunPhase: (planId: string, phaseId: string) => void,
+    private readonly onUpdatePhase: (planId: string, phaseId: string, patch: { state?: ExecutionState }) => Promise<boolean>,
     private readonly onUpdateTask: (
       planId: string,
       phaseId: string,
       taskId: string,
       patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
     ) => Promise<boolean>,
+    private readonly onReorderPlans: (orderedPlanIds: string[]) => Promise<void>,
   ) {}
 
   resolveWebviewView(
@@ -57,9 +59,16 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         desc?: string;
         prompt?: string;
         commit?: boolean;
+        orderedPlanIds?: string[];
       };
       if (m.type === "runPhase" && m.planId && m.phaseId) {
         this.onRunPhase(m.planId, m.phaseId);
+      }
+      if (m.type === "updatePhase" && m.planId && m.phaseId) {
+        void this.onUpdatePhase(m.planId, m.phaseId, { state: m.state });
+      }
+      if (m.type === "reorderPlans" && Array.isArray(m.orderedPlanIds)) {
+        void this.onReorderPlans(m.orderedPlanIds);
       }
       if (m.type === "openTaskDetails" && m.planId && m.phaseId && m.taskId) {
         void this.openTaskDetails(m.planId, m.phaseId, m.taskId);
@@ -287,6 +296,9 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       gap: 8px; user-select: none;
     }
     .plan-header:hover { background: var(--c-hover); }
+    .plan-header:hover .run-btn { opacity: 1; }
+    .plan-header.drag-over { outline: 1px dashed rgba(86,156,214,0.6); outline-offset: -2px; }
+    .plan-header.dragging { opacity: 0.65; }
 
     .plan-header-left {
       display: flex; align-items: center; gap: 6px;

@@ -1,7 +1,8 @@
 {
   "id": "plan-auth-001",
-  "state": "pending",
+  "state": "in_progress",
   "title": "Auth System Refactor",
+  "description": "Modernize authentication by removing legacy sessions, rolling out JWT + refresh rotation, and safely migrating existing users with minimal downtime and strong security guarantees.",
   "createdAt": "2026-04-24T08:00:00Z",
   "phases": [
     {
@@ -32,7 +33,7 @@
     },
     {
       "id": "phase-auth-002",
-      "state": "pending",
+      "state": "in_progress",
       "title": "Implement JWT authentication",
       "description": "Add stateless JWT-based auth with refresh token rotation and secure HttpOnly cookie delivery.",
       "tasks": [
@@ -64,7 +65,7 @@
     },
     {
       "id": "phase-auth-003",
-      "state": "pending",
+      "state": "in_progress",
       "title": "Migrate existing users",
       "description": "Run a one-time migration script to invalidate all legacy sessions and force re-authentication.",
       "tasks": [

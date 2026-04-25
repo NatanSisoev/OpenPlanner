@@ -9,6 +9,7 @@
   let activeSubMenu = null;
   let activeSubMenuAnchor = null;
   let closeSubMenuTimer = null;
+  let draggedPlanId = null;
 
   const root = document.getElementById("root");
 
@@ -142,7 +143,10 @@
             <span class="phase-status-dot dot-${phase.state}"></span>
             <span class="phase-title">${esc(phase.title)}</span>
           </div>
-          <div class="phase-header-right">${badgeHtml(phase.state)}</div>
+          <div class="phase-header-right">
+            ${badgeHtml(phase.state)}
+            <button class="run-btn" data-action="runPhase" data-plan="${pid}" data-phase="${phid}" title="Run this phase">▶ Run</button>
+          </div>
         </div>
         <div class="phase-tasks" style="margin:4px 0 0 8px;padding:0 0 0 10px;">
           ${tasks.map((task) => renderTask(plan, phase, task)).join("")}
@@ -176,7 +180,7 @@
 
     return `
       <div class="plan-card">
-        <div class="plan-header" data-action="togglePlan" data-plan="${pid}">
+        <div class="plan-header" data-action="togglePlan" data-plan="${pid}" draggable="true" title="Drag to reorder">
           <div class="plan-header-left">
             <span class="chevron${isOpen ? " expanded" : ""}">›</span>
             <span class="plan-title">${esc(plan.title)}</span>
@@ -184,6 +188,7 @@
           <div class="plan-header-right">
             <span class="plan-progress">${done}/${total}</span>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <button class="run-btn" data-action="runPlan" data-plan="${pid}" title="Run next phase">▶ Run</button>
           </div>
         </div>
         ${isOpen ? `<div class="plan-phases">${phases.map((ph) => renderPhase(plan, ph)).join("")}</div>` : ""}
@@ -241,6 +246,7 @@
   function renderTask(plan, phase, task) {
     const isCancelled = task.state === "cancelled";
     const isCompleted = task.state === "completed";
+    const isRunning = task.state === "in_progress";
     const pid = esc(plan.id);
     const phid = esc(phase.id);
     const tid = esc(task.id);
@@ -251,11 +257,10 @@
                    data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="completed"
                    title="Mark done">✓</button>`);
     }
-    if (task.state === "pending") {
-      btns.push(`<button class="task-btn run-task" data-action="taskStatus"
-                   data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="in_progress"
-                   title="Start">▶</button>`);
-    }
+    btns.push(`<button class="task-btn run-task" data-action="taskRun"
+                 data-plan="${pid}" data-phase="${phid}" data-task="${tid}"
+                 ${isRunning ? "disabled" : ""}
+                 title="${isRunning ? "Already running" : "Run task"}">▶</button>`);
     if (!isCompleted && !isCancelled) {
       btns.push(`<button class="task-btn cancel-btn" data-action="taskStatus"
                    data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="cancelled"
@@ -330,7 +335,44 @@
 
     if (action === "runPhase") {
       e.stopPropagation();
+      // Optimistic local update + persist phase running state
+      const plan = plans.find((p) => p.id === planId);
+      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+      if (phase) {
+        phase.state = "in_progress";
+        vscode.postMessage({ type: "updatePhase", planId, phaseId, state: "in_progress" });
+        render();
+      }
       vscode.postMessage({ type: "runPhase", planId, phaseId });
+      return;
+    }
+
+    if (action === "runPlan") {
+      e.stopPropagation();
+      const plan = plans.find((p) => p.id === planId);
+      const phases = plan?.phases || [];
+      const next =
+        phases.find((ph) => ph.state !== "completed" && ph.state !== "cancelled") || phases[0];
+      if (!next) {
+        return;
+      }
+      next.state = "in_progress";
+      vscode.postMessage({ type: "updatePhase", planId, phaseId: next.id, state: "in_progress" });
+      render();
+      vscode.postMessage({ type: "runPhase", planId, phaseId: next.id });
+      return;
+    }
+
+    if (action === "taskRun") {
+      e.stopPropagation();
+      const plan = plans.find((p) => p.id === planId);
+      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+      const task = phase?.tasks?.find((t) => t.id === taskId);
+      if (task && task.state !== "in_progress") {
+        task.state = "in_progress";
+        vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: "in_progress" });
+        render();
+      }
       return;
     }
 
@@ -347,6 +389,85 @@
         render();
       }
     }
+  });
+
+  // ── Plan drag & drop ordering ────────────────────────────────────────────
+
+  document.addEventListener("dragstart", (e) => {
+    const header = e.target.closest(".plan-header");
+    if (!header) {
+      return;
+    }
+    const planId = header.dataset.plan;
+    if (!planId) {
+      return;
+    }
+    draggedPlanId = planId;
+    try {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", planId);
+    } catch {
+      // ignore
+    }
+    header.classList.add("dragging");
+  });
+
+  document.addEventListener("dragend", (e) => {
+    const header = e.target.closest(".plan-header");
+    if (header) {
+      header.classList.remove("dragging");
+    }
+    document.querySelectorAll(".plan-header.drag-over").forEach((el) => el.classList.remove("drag-over"));
+    draggedPlanId = null;
+  });
+
+  document.addEventListener("dragover", (e) => {
+    const header = e.target.closest(".plan-header");
+    if (!header || !draggedPlanId || viewMode !== "list") {
+      return;
+    }
+    e.preventDefault();
+    header.classList.add("drag-over");
+    try {
+      e.dataTransfer.dropEffect = "move";
+    } catch {
+      // ignore
+    }
+  });
+
+  document.addEventListener("dragleave", (e) => {
+    const header = e.target.closest(".plan-header");
+    if (header) {
+      header.classList.remove("drag-over");
+    }
+  });
+
+  document.addEventListener("drop", (e) => {
+    const header = e.target.closest(".plan-header");
+    if (!header || !draggedPlanId || viewMode !== "list") {
+      return;
+    }
+    e.preventDefault();
+    const targetId = header.dataset.plan;
+    if (!targetId || targetId === draggedPlanId) {
+      header.classList.remove("drag-over");
+      return;
+    }
+    header.classList.remove("drag-over");
+
+    const ids = plans.map((p) => p.id);
+    const from = ids.indexOf(draggedPlanId);
+    const to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) {
+      return;
+    }
+    ids.splice(from, 1);
+    ids.splice(to, 0, draggedPlanId);
+
+    const byId = new Map(plans.map((p) => [p.id, p]));
+    plans = ids.map((id) => byId.get(id)).filter(Boolean);
+    render();
+    vscode.postMessage({ type: "reorderPlans", orderedPlanIds: ids });
   });
 
   document.addEventListener("contextmenu", (e) => {
