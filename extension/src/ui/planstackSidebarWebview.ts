@@ -33,6 +33,8 @@ interface PlanstackSidebarCallbacks {
   onDeletePlan: (planId: string) => Promise<void>;
   onDeletePhase: (planId: string, phaseId: string) => Promise<void>;
   onDeleteTask: (planId: string, phaseId: string, taskId: string) => Promise<void>;
+  onRunPlanFully: (planId: string) => Promise<void>;
+  onRunTask: (planId: string, phaseId: string, taskId: string) => Promise<void>;
 }
 
 export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
@@ -53,6 +55,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private readonly onDeletePlan: PlanstackSidebarCallbacks["onDeletePlan"];
   private readonly onDeletePhase: PlanstackSidebarCallbacks["onDeletePhase"];
   private readonly onDeleteTask: PlanstackSidebarCallbacks["onDeleteTask"];
+  private readonly onRunPlanFully: PlanstackSidebarCallbacks["onRunPlanFully"];
+  private readonly onRunTask: PlanstackSidebarCallbacks["onRunTask"];
   private readonly promptEditors = new Map<
     string,
     { kind: "plan" | "phase"; planId: string; phaseId?: string }
@@ -71,6 +75,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     this.onDeletePlan = callbacks.onDeletePlan;
     this.onDeletePhase = callbacks.onDeletePhase;
     this.onDeleteTask = callbacks.onDeleteTask;
+    this.onRunPlanFully = callbacks.onRunPlanFully;
+    this.onRunTask = callbacks.onRunTask;
   }
 
   resolveWebviewView(
@@ -227,6 +233,12 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "deleteTask" && m.planId && m.phaseId && m.taskId) {
         void this.onDeleteTask(m.planId, m.phaseId, m.taskId);
+      }
+      if (m.type === "runPlanFully" && m.planId) {
+        void this.onRunPlanFully(m.planId);
+      }
+      if (m.type === "runTask" && m.planId && m.phaseId && m.taskId) {
+        void this.onRunTask(m.planId, m.phaseId, m.taskId);
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -873,12 +885,19 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       display: flex;
       flex-direction: column;
       justify-content: center;
-      gap: 3px;
+      gap: 5px;
       padding: 8px 10px;
     }
     .graph-plan-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 65%, transparent); }
     .graph-plan-node.tone-completed { border-color: color-mix(in srgb, var(--c-done) 65%, transparent); }
     .graph-plan-node.tone-in_progress { border-color: color-mix(in srgb, var(--c-running) 65%, transparent); }
+    .graph-plan-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .graph-plan-run-btn { flex-shrink: 0; }
     .graph-plan-kicker {
       font-size: 0.64em;
       text-transform: uppercase;
@@ -956,11 +975,20 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .graph-run-btn {
+    /* Higher-specificity selectors so these always beat the generic
+       .run-btn { opacity: 0 } rule defined later in the stylesheet. */
+    .graph-phase-node .graph-run-btn,
+    .graph-plan-node .graph-run-btn {
       opacity: 1;
-      height: 18px;
-      font-size: 0.67em;
-      padding: 1px 7px;
+      height: 24px;
+      font-size: 0.78em;
+      padding: 2px 12px;
+      font-weight: 700;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+    }
+    .graph-phase-node .graph-run-btn:hover,
+    .graph-plan-node .graph-run-btn:hover {
+      background: var(--vscode-button-hoverBackground, var(--vscode-button-background, #0e70c0));
     }
 
     .graph-controls {
