@@ -141,7 +141,7 @@
     }
 
     return `
-      <div class="task-row">
+      <div class="task-row" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
         ${taskIconHtml(task.state)}
         <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
         <div class="task-actions">${btns.join("")}</div>
@@ -200,6 +200,25 @@
         render();
       }
     }
+  });
+
+  document.addEventListener("contextmenu", (e) => {
+    // Ignore right-clicks on buttons inside the task row.
+    if (e.target.closest("button")) {
+      return;
+    }
+    const row = e.target.closest(".task-row");
+    if (!row) {
+      return;
+    }
+    e.preventDefault();
+    const planId = row.dataset.plan;
+    const phaseId = row.dataset.phase;
+    const taskId = row.dataset.task;
+    if (!planId || !phaseId || !taskId) {
+      return;
+    }
+    vscode.postMessage({ type: "openTaskDetails", planId, phaseId, taskId });
   });
 
   // ── Message handler ──────────────────────────────────────────────────────
