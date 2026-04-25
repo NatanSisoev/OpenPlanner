@@ -13,6 +13,7 @@ import {
   type AgentStreamEndReason,
 } from "./agentChatStreamBridge";
 import { registerChatSystemSink } from "./chatStatusBridge";
+import { postAnimatedStatus, registerRichChatSink } from "./richChatBridge";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
@@ -103,6 +104,14 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       },
     });
 
+    registerRichChatSink((msg) => {
+      try {
+        w.postMessage(msg);
+      } catch {
+        // Webview disposed.
+      }
+    });
+
     const sub = w.onDidReceiveMessage((msg: unknown) => {
       const recvId = newTraceId("chatRecv");
       traceEvent(recvId, "chat.onDidReceiveMessage", { raw: safeJson(msg) });
@@ -141,6 +150,45 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         void this.runCreatePlanFlow(w, text);
       }
+      if (m.type === "openScm") {
+        void vscode.commands.executeCommand("workbench.view.scm");
+        return;
+      }
+      if (m.type === "openFileDiff" && typeof (m as { filePath?: unknown }).filePath === "string") {
+        const filePath = (m as { filePath: string }).filePath;
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (!folder) {
+          return;
+        }
+        const absUri = vscode.Uri.joinPath(folder.uri, filePath);
+        void (async () => {
+          try {
+            const gitExt = vscode.extensions.getExtension("vscode.git");
+            if (gitExt?.isActive) {
+              const api = (gitExt.exports as { getAPI(v: 1): { getRepository(uri: vscode.Uri): { state: { workingTreeChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }>; indexChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }> } } | null } | null }).getAPI(1);
+              const repo = api?.getRepository(folder.uri);
+              if (repo) {
+                const changes = [...repo.state.workingTreeChanges, ...repo.state.indexChanges];
+                const change = changes.find((c) => c.uri.fsPath === absUri.fsPath);
+                if (change?.originalUri) {
+                  await vscode.commands.executeCommand(
+                    "vscode.diff",
+                    change.originalUri,
+                    change.uri,
+                    `${filePath.split("/").pop() ?? filePath} (HEAD ↔ Working Tree)`,
+                  );
+                  return;
+                }
+              }
+            }
+          } catch {
+            // fall through to simple open
+          }
+          await vscode.window.showTextDocument(absUri, { preview: true });
+          await vscode.commands.executeCommand("workbench.view.scm");
+        })();
+        return;
+      }
       if (m.type === "stopAgents") {
         const n = killAllAgentCliProcesses();
         traceEvent(recvId, "chat.stopAgents", { processesSignaled: n });
@@ -162,6 +210,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     const disposeChat = webviewView.onDidDispose(() => {
       registerChatSystemSink(undefined);
       registerAgentStreamSink(undefined);
+      registerRichChatSink(undefined);
       sub.dispose();
       disposeChat.dispose();
     });
@@ -227,6 +276,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       traceEvent(flowId, "createPlanFlow.run_context", { runId, streamToOutput, useLiveChat });
       let streamActive = false;
       let endReason: AgentStreamEndReason = "complete";
+
+      postAnimatedStatus(runId);
 
       let lastChatAt = 0;
       const pushStreamChat = (prefix: string, chunk: string): void => {
@@ -316,10 +367,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           planErr instanceof AgentCliError && msg.includes("stopped") ? "stopped" : "error";
         throw planErr;
       } finally {
-        if (streamActive) {
-          postAgentStreamEnd(runId, endReason);
-          streamActive = false;
-        }
+        postAgentStreamEnd(runId, endReason);
+        streamActive = false;
       }
     } catch (e) {
       if (e instanceof AgentRunBusyError) {
@@ -621,6 +670,60 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       font-size: 0.72em;
       opacity: 0.65;
       padding: 3px 0 6px;
+    }
+    /* Animated status (cooking phrases) */
+    .animated-status-bubble {
+      display: flex; align-items: center; gap: 6px;
+      font-style: italic; opacity: 0.8;
+    }
+    .animated-spinner {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 1em; min-width: 1ch; display: inline-block;
+    }
+    .animated-phrase { transition: opacity 0.25s ease; }
+    /* Run summary card */
+    .run-summary-row { max-width: 95%; align-self: stretch; }
+    .run-summary-card {
+      background: var(--vscode-editor-background, rgba(0,0,0,0.15));
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 8px; padding: 10px 12px; font-size: 0.88em;
+    }
+    .run-summary-header { font-weight: 600; margin-bottom: 3px; }
+    .run-summary-stats { opacity: 0.7; font-size: 0.9em; margin-bottom: 8px; }
+    .run-summary-files {
+      display: flex; flex-direction: column; gap: 3px;
+      border-top: 1px solid rgba(127,127,127,0.15);
+      padding-top: 6px; margin-bottom: 8px;
+    }
+    .run-summary-file-row {
+      display: flex; align-items: center; gap: 6px; font-size: 0.88em;
+    }
+    .run-summary-file-path {
+      flex: 1; font-family: var(--vscode-editor-font-family);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    }
+    .run-summary-file-diff {
+      color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
+      white-space: nowrap; font-size: 0.85em; flex-shrink: 0;
+    }
+    .run-summary-diff-btn {
+      flex-shrink: 0; padding: 1px 6px; cursor: pointer; font-size: 0.78em;
+      border: 1px solid rgba(127,127,127,0.3); border-radius: 3px;
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      color: var(--vscode-foreground); white-space: nowrap;
+    }
+    .run-summary-diff-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
+    }
+    .run-summary-scm-btn {
+      display: block; width: 100%; padding: 5px 0; cursor: pointer;
+      font-size: 0.82em; text-align: center;
+      border: 1px solid rgba(127,127,127,0.25); border-radius: 4px;
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      color: var(--vscode-foreground);
+    }
+    .run-summary-scm-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
     }
   </style>
 </head>
