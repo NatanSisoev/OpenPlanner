@@ -4,11 +4,14 @@
   "description": "Phased plans, sidebar orchestration, separate planning (Chat) and execution (Run phase) settings.",
   "version": "0.0.1",
   "publisher": "hackupc",
+  "license": "MIT",
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onView:hackupc.planstack.ui",
     "onView:hackupc.planstack.chat",
@@ -192,13 +195,21 @@
         "planstack.cursor.planningMode": {
           "type": "string",
           "default": "cli",
-          "enum": ["cli"],
+          "enum": [
+            "cli"
+          ],
           "description": "How Chat → Create plan produces structured plan JSON. \"cli\" uses the Cursor headless agent in read-only print mode. Additional values may be added later."
         },
         "planstack.cursor.executionMode": {
           "type": "string",
           "default": "cli",
-          "enum": ["", "native-first", "sdk-local", "sdk-cloud", "cli"],
+          "enum": [
+            "",
+            "native-first",
+            "sdk-local",
+            "sdk-cloud",
+            "cli"
+          ],
           "markdownDescription": "How **Run phase** runs (Plans tree). Default **`cli`** runs the Cursor agent in the workspace with `--force`. Leave **empty** to use legacy `planstack.cursor.handoff`. Set **`native-first`** for clipboard + optional Composer command instead.",
           "enumDescriptions": [
             "Use legacy `planstack.cursor.handoff` when valid; otherwise cli.",
@@ -211,7 +222,12 @@
         "planstack.cursor.handoff": {
           "type": "string",
           "default": "cli",
-          "enum": ["native-first", "sdk-local", "sdk-cloud", "cli"],
+          "enum": [
+            "native-first",
+            "sdk-local",
+            "sdk-cloud",
+            "cli"
+          ],
           "markdownDescription": "**Deprecated:** use `planstack.cursor.executionMode` for phase execution. Still read when `executionMode` is empty, for existing workspaces."
         },
         "planstack.cursor.openComposerCommand": {
@@ -323,13 +339,19 @@
       }
     }
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NatanSisoev/HackUPC"
+  },
   "scripts": {
     "compile": "tsc -p .",
-    "watch": "tsc -watch -p ."
+    "watch": "tsc -watch -p .",
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.1",
     "typescript": "^5.7.2"
   }
 }
