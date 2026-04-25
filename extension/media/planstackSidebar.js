@@ -30,6 +30,12 @@
   let mutationSeq = 0;
   const pendingMutations = new Map();
 
+  // Red-button UX spec: Overview webview only — place a destructive-styled control labeled "Stop agents"
+  // (title: abort in-flight headless agent runs) in the top toolbar’s right group beside Sync; the webview
+  // will post to the host to run hackupc.planstack.confirmStopHeadlessAgents, which must show a modal
+  // confirmation, then on "Stop" chain to hackupc.planstack.killAgentRuns (not used on the graph
+  // control strip or the Chat webview in this workstream).
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   function esc(s) {

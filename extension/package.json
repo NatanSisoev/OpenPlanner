@@ -32,6 +32,7 @@
     "onCommand:hackupc.planstack.setCursorApiKey",
     "onCommand:hackupc.planstack.debugCliConnection",
     "onCommand:hackupc.planstack.killAgentRuns",
+    "onCommand:hackupc.planstack.confirmStopHeadlessAgents",
     "onCommand:hackupc.nativeHandoff.demo"
   ],
   "main": "./out/extension.js",
@@ -129,6 +130,10 @@
       {
         "command": "hackupc.planstack.killAgentRuns",
         "title": "Planstack: Stop agent CLI processes"
+      },
+      {
+        "command": "hackupc.planstack.confirmStopHeadlessAgents",
+        "title": "Planstack: Stop headless agents (confirm)"
       },
       {
         "command": "hackupc.nativeHandoff.demo",

@@ -1986,6 +1986,28 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.confirmStopHeadlessAgents", async () => {
+      const tid = newTraceId("cmd-confirm-killagents");
+      traceEvent(tid, "command.enter", { command: "hackupc.planstack.confirmStopHeadlessAgents" });
+      const pick = await vscode.window.showWarningMessage(
+        "Stop running Planstack headless agent processes? In-flight runs will abort.",
+        { modal: true },
+        "Stop",
+      );
+      if (pick !== "Stop") {
+        traceEvent(tid, "command.exit", {
+          command: "hackupc.planstack.confirmStopHeadlessAgents",
+          ok: true,
+          cancelled: true,
+        });
+        return;
+      }
+      await vscode.commands.executeCommand("hackupc.planstack.killAgentRuns");
+      traceEvent(tid, "command.exit", { command: "hackupc.planstack.confirmStopHeadlessAgents", ok: true });
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.nativeHandoff.demo", async () => {
       const tid = newTraceId("cmd-nativeDemo");
       traceEvent(tid, "command.enter", { command: "hackupc.nativeHandoff.demo" });
