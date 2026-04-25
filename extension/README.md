@@ -45,6 +45,8 @@ The extension also **prepends `~/.local/bin` to the child `PATH`** when that dir
 
 If the binary lives somewhere else, set **`planstack.cursor.agentPath`** to the **absolute path** from `which agent` in a shell where the CLI works.
 
+On **Windows**, if diagnostics show **`agent.cmd`** / **`cursor.cmd`**, the extension spawns those through a shell (Node cannot run `.cmd` with `shell: false`). You can still point **`planstack.cursor.agentPath`** at **`agent.exe`** or **`cursor.exe`** if you prefer a direct executable.
+
 ## Source layout
 
 Matches [extension_and_repo_structure.plan.md](../docs/extension_and_repo_structure.plan.md):

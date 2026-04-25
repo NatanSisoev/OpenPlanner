@@ -22,6 +22,11 @@ export class AgentCliError extends Error {
   }
 }
 
+/** Windows `.cmd`/`.bat` shims cannot be started with `shell: false` (spawn EINVAL). */
+function win32SpawnNeedsShell(agentPath: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(agentPath.trim());
+}
+
 /**
  * Runs `agent -p --trust <prompt>` (print mode, same spirit as scripts/cursor-agent-smoke.sh).
  */
@@ -41,10 +46,11 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     // not a standalone `agent` executable.
     const looksLikeCursorCli = /(^|[\\/])cursor(\.cmd|\.exe)?$/i.test(opts.agentPath.trim());
     const args = looksLikeCursorCli ? ["agent", ...baseArgs] : baseArgs;
+    const useShell = win32SpawnNeedsShell(opts.agentPath);
     const child = spawn(opts.agentPath, args, {
       cwd: opts.cwd,
       env: opts.env,
-      shell: false,
+      shell: useShell,
     });
 
     const outChunks: Buffer[] = [];
@@ -79,6 +85,10 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
         msg +=
           ` Cannot find "${opts.agentPath}". The extension prepends ~/.local/bin when present and also resolves common Cursor install locations. ` +
           `If needed, set **planstack.cursor.agentPath** to an absolute executable path (Windows: output of \`where cursor\` or \`where agent\`; macOS/Linux: \`which cursor\` or \`which agent\`).`;
+      } else if (process.platform === "win32" && err.code === "EINVAL") {
+        msg +=
+          ` On Windows, **EINVAL** often means the resolved file is a **.cmd/.bat** shim and could not be spawned. ` +
+          `The extension uses a shell for those; if it still fails, set **planstack.cursor.agentPath** to **cursor.exe** or **agent.exe** (full path from \`where.exe\`).`;
       }
       finish(() => reject(new AgentCliError(msg)));
     });
