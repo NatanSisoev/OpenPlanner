@@ -8,7 +8,6 @@
     2. orange: currently executing.
     3. red: not executing at all.
 
-- **Pipeline system**
-## Creation, mantainance and deletion flow of plans
+- **Tasks**: When clicking on a node, show the tasks with checkboxes to select which ones want to be executed.
 
 

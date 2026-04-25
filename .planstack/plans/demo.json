@@ -1,0 +1,32 @@
+{
+  "id": "demo-plan",
+  "title": "Demo plan (Planstack UI)",
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/demo-plan"
+  },
+  "phases": [
+    {
+      "id": "p1",
+      "title": "Scaffold",
+      "body": "Confirm `.planstack/plans/*.json` appears under the Planstack sidebar and refresh works.",
+      "status": "done"
+    },
+    {
+      "id": "p2",
+      "title": "Run phase handoff",
+      "body": "Right-click this phase → Run phase. You should get the native handoff (clipboard + optional Composer command).",
+      "status": "in_progress",
+      "dependsOn": ["p1"]
+    },
+    {
+      "id": "p3",
+      "title": "Optional per-phase branch",
+      "body": "This phase overrides the plan branch in metadata (example only).",
+      "status": "pending",
+      "git": {
+        "phaseBranch": "planstack/demo-plan-phase-p3"
+      }
+    }
+  ]
+}
