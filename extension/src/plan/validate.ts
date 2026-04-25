@@ -35,7 +35,7 @@ function asString(v: unknown, field: string): string {
   throw new Error(`Invalid or missing string: ${field}`);
 }
 
-function asOptionalString(v: unknown, field: string): string | undefined {
+function asOptionalString(v: unknown): string | undefined {
   if (v === undefined || v === null) {
     return undefined;
   }
@@ -43,7 +43,7 @@ function asOptionalString(v: unknown, field: string): string | undefined {
     const t = v.trim();
     return t.length > 0 ? t : undefined;
   }
-  throw new Error(`Invalid optional string: ${field}`);
+  return undefined;
 }
 
 function asPlanState(v: unknown, field: string): PlanState {
@@ -74,28 +74,16 @@ function asBoolean(v: unknown, field: string): boolean {
   throw new Error(`Invalid boolean: ${field}`);
 }
 
-function parsePhaseGit(raw: unknown): Phase["git"] {
-  if (raw === undefined || raw === null) {
-    return undefined;
-  }
+function parseTask(raw: unknown, phaseIndex: number, taskIndex: number): Task {
   if (!isRecord(raw)) {
-    throw new Error("phase.git must be an object");
+    throw new Error(`phases[${phaseIndex}].tasks[${taskIndex}] must be an object`);
   }
   return {
-    phaseBranch: asOptionalString(raw.phaseBranch, "phase.git.phaseBranch"),
-  };
-}
-
-function parsePlanGit(raw: unknown): Plan["git"] {
-  if (raw === undefined || raw === null) {
-    return undefined;
-  }
-  if (!isRecord(raw)) {
-    throw new Error("plan.git must be an object");
-  }
-  return {
-    baseBranch: asOptionalString(raw.baseBranch, "git.baseBranch"),
-    planBranch: asOptionalString(raw.planBranch, "git.planBranch"),
+    id: asString(raw.id, `phases[${phaseIndex}].tasks[${taskIndex}].id`),
+    state: asState(raw.state, `phases[${phaseIndex}].tasks[${taskIndex}].state`),
+    desc: typeof raw.desc === "string" ? raw.desc.trim() : "",
+    commit: raw.commit === true,
+    prompt: asOptionalString(raw.prompt),
   };
 }
 
@@ -150,7 +138,6 @@ export function validatePlanJson(raw: unknown): Plan {
   if (!Array.isArray(phasesRaw)) {
     throw new Error("Plan must have a phases array");
   }
-  const phases = phasesRaw.map((p, i) => parsePhase(p, i));
   return {
     id: asString(raw.id, "id"),
     state: asPlanState(raw.state, "state"),

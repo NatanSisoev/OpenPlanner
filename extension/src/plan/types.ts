@@ -6,13 +6,17 @@ export type PhaseState = "pending" | "in_progress" | "completed" | "failed" | "c
 
 export type TaskState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
 
-export interface PhaseGitMeta {
-  phaseBranch?: string;
+export interface GitInfo {
+  baseBranch: string;
+  planBranch: string;
 }
 
-export interface PlanGitMeta {
-  baseBranch?: string;
-  planBranch?: string;
+export interface Task {
+  id: string;
+  state: TaskState;
+  desc: string;
+  commit: boolean;
+  prompt?: string;
 }
 
 export interface Task {
@@ -38,5 +42,4 @@ export interface Plan {
   title: string;
   createdAt?: string;
   phases: Phase[];
-  git?: PlanGitMeta;
 }

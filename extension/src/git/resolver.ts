@@ -1,19 +1,16 @@
 import * as vscode from "vscode";
-import type { Phase, Plan } from "../plan/types";
+import type { Plan } from "../plan/types";
 
 /**
- * Normative: `effectiveWorkBranch(phase) := phase.git.phaseBranch ?? plan.git.planBranch ?? null`
+ * Normative: effectiveWorkBranch := plan.git.planBranch (phases no longer carry per-phase git metadata).
  */
-export function effectiveWorkBranch(phase: Phase, plan: Plan): string | undefined {
-  return phase.git?.phaseBranch ?? plan.git?.planBranch ?? undefined;
+export function effectiveWorkBranch(_phase: unknown, plan: Plan): string | undefined {
+  return plan.git?.planBranch || undefined;
 }
 
 export interface GitBranchSummary {
-  /** Resolved work branch name from plan metadata, if any. */
   effectiveBranch: string | undefined;
-  /** Whether the built-in Git extension reported a repository for this workspace (best-effort). */
   hasGitRepository: boolean;
-  /** Current HEAD branch or short ref label when available. */
   currentBranchLabel?: string;
 }
 
@@ -22,10 +19,10 @@ export interface GitBranchSummary {
  */
 export async function summarizeGitForPlan(
   _workspaceRoot: vscode.Uri,
-  phase: Phase,
+  _phase: unknown,
   plan: Plan,
 ): Promise<GitBranchSummary> {
-  const effectiveBranch = effectiveWorkBranch(phase, plan);
+  const effectiveBranch = effectiveWorkBranch(_phase, plan);
   let hasGitRepository = false;
   let currentBranchLabel: string | undefined;
 
@@ -42,13 +39,13 @@ export async function summarizeGitForPlan(
       }
     }
   } catch {
-    // Git extension unavailable or API mismatch — still return branch metadata from plan JSON.
+    // Git extension unavailable — still return branch metadata from plan JSON.
   }
 
   return { effectiveBranch, hasGitRepository, currentBranchLabel };
 }
 
-// ---- Minimal vscode.git typings (avoid coupling to unpublished @types) ----
+// ---- Minimal vscode.git typings ----
 
 interface GitExtension {
   readonly enabled: boolean;
