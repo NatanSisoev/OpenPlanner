@@ -39,20 +39,23 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
   const agentPath = cfg.get<string>("agentPath")?.trim() || "agent";
   const timeoutMs = cfg.get<number>("agentTimeoutMs") ?? 180_000;
   const maxStdoutChars = cfg.get<number>("agentMaxStdoutChars") ?? 2_000_000;
+  const useWsl = cfg.get<boolean>("useWsl") ?? false;
+  const wslDistro = cfg.get<string>("wslDistro")?.trim() || "Ubuntu";
 
   const apiKey = await resolveKey(opts.extensionContext);
   if (!apiKey) {
     traceEvent(tid, "createPlan.fail", { reason: "no_api_key" });
     throw new AgentCliError(
-      "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command “Planstack: Set Cursor API key”.",
+      "CURSOR_API_KEY is not set. Export it in the environment that launches Cursor, or run command \"Planstack: Set Cursor API key\".",
     );
   }
 
   const cwd = opts.workspaceRoot.fsPath;
   const env = await buildEnvForAgent(opts.extensionContext);
-  const resolvedAgent = resolveDefaultAgentExecutable(agentPath);
+  // In WSL mode the agent path is a Linux path -- skip Windows-specific executable resolution.
+  const resolvedAgent = useWsl ? agentPath : resolveDefaultAgentExecutable(agentPath);
   const prompt = buildPlanCreationPrompt(opts.userRequest);
-  traceEvent(tid, "createPlan.config", { agentPath, resolvedAgent, cwd, timeoutMs, maxStdoutChars });
+  traceEvent(tid, "createPlan.config", { agentPath, resolvedAgent, cwd, timeoutMs, maxStdoutChars, useWsl, wslDistro: useWsl ? wslDistro : undefined });
   traceMultiline(tid, "createPlan.planCreationPrompt", prompt);
 
   const { stdout, stderr, exitCode } = await runAgentPrint({
@@ -65,6 +68,8 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
     onStdoutChunk: opts.onAgentStdoutChunk,
     onStderrChunk: opts.onAgentStderrChunk,
     debugTraceId: tid,
+    useWsl,
+    wslDistro,
   });
 
   traceEvent(tid, "createPlan.agent_exit", {
