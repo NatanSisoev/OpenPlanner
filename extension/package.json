@@ -22,6 +22,7 @@
     "onCommand:hackupc.planstack.taskSetState.cancelled",
     "onCommand:hackupc.planstack.setCursorApiKey",
     "onCommand:hackupc.planstack.debugCliConnection",
+    "onCommand:hackupc.planstack.killAgentRuns",
     "onCommand:hackupc.nativeHandoff.demo"
   ],
   "main": "./out/extension.js",
@@ -90,6 +91,10 @@
       {
         "command": "hackupc.planstack.debugCliConnection",
         "title": "Planstack: Debug Cursor CLI connection"
+      },
+      {
+        "command": "hackupc.planstack.killAgentRuns",
+        "title": "Planstack: Stop agent CLI processes"
       },
       {
         "command": "hackupc.nativeHandoff.demo",
@@ -199,6 +204,35 @@
           "default": 2000000,
           "minimum": 10000,
           "description": "Max stdout characters captured from agent (safety cap). Applies to planning and CLI execution paths."
+        },
+        "planstack.cursor.agentChatLiveStream": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show live agent stdout/stderr in the Planstack Chat panel (scrollable block). When false, use throttled system-line bubbles instead (cliStreamChatThrottleMs)."
+        },
+        "planstack.cursor.cliStreamAgentOutput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stream live agent stdout/stderr to Output → Planstack during Create plan and Run phase (CLI)."
+        },
+        "planstack.cursor.cliStreamProgressThrottleMs": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 60000,
+          "description": "Minimum interval (ms) between Run phase notification progress updates driven by agent stderr."
+        },
+        "planstack.cursor.cliStreamChatThrottleMs": {
+          "type": "number",
+          "default": 25000,
+          "minimum": 3000,
+          "maximum": 120000,
+          "description": "Minimum interval (ms) between Chat system lines when mirroring agent output during CLI runs."
+        },
+        "planstack.cursor.showGitSummaryAfterCliRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a successful Run phase (CLI), append git diff --stat vs HEAD to Output and post a short summary to Chat."
         }
       }
     }

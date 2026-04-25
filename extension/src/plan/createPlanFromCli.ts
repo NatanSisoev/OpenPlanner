@@ -15,6 +15,10 @@ export interface CreatePlanFromCliOptions {
   extensionContext: vscode.ExtensionContext;
   workspaceRoot: vscode.Uri;
   userRequest: string;
+  /** Live agent stdout (e.g. append to Output + Chat); optional. */
+  onAgentStdoutChunk?: (text: string) => void;
+  /** Live agent stderr; optional. */
+  onAgentStderrChunk?: (text: string) => void;
 }
 
 /**
@@ -45,6 +49,8 @@ export async function createPlanFromUserRequest(opts: CreatePlanFromCliOptions):
     env,
     timeoutMs,
     maxStdoutChars,
+    onStdoutChunk: opts.onAgentStdoutChunk,
+    onStderrChunk: opts.onAgentStderrChunk,
   });
 
   if (exitCode !== 0) {

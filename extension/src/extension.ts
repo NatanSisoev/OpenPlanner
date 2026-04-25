@@ -8,6 +8,7 @@ import { deriveAggregateState } from "./plan/aggregate";
 import { buildPhaseHandoffPrompt } from "./plan/prompt";
 import { CURSOR_API_KEY_SECRET } from "./plan/createPlanFromCli";
 import { debugCliConnection } from "./plan/debugCliConnection";
+import { killAllAgentCliProcesses } from "./plan/agentCliRunner";
 import { savePlanPreservingFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
@@ -182,6 +183,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.debugCliConnection", async () => {
       await debugCliConnection(context);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.killAgentRuns", () => {
+      const n = killAllAgentCliProcesses();
+      const msg =
+        n > 0
+          ? `Sent SIGTERM to ${n} agent process(es). In-flight runs will abort.`
+          : "No Planstack agent process was running.";
+      void vscode.window.showInformationMessage(`Planstack: ${msg}`);
     }),
   );
 

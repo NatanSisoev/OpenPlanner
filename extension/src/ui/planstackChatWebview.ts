@@ -1,7 +1,16 @@
+import { randomUUID } from "crypto";
 import * as vscode from "vscode";
-import { AgentCliError } from "../plan/agentCliRunner";
+import { getOutput } from "../log";
+import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
+import {
+  postAgentStreamChunk,
+  postAgentStreamEnd,
+  postAgentStreamStart,
+  registerAgentStreamSink,
+  type AgentStreamEndReason,
+} from "./agentChatStreamBridge";
 import { registerChatSystemSink } from "./chatStatusBridge";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
@@ -54,6 +63,36 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     };
     registerChatSystemSink(pushSystem);
 
+    registerAgentStreamSink({
+      onStart: (runId, meta) => {
+        try {
+          w.postMessage({
+            type: "agentStreamStart",
+            runId,
+            label: meta.label,
+            source: meta.source,
+            initialLine: meta.initialLine,
+          });
+        } catch {
+          // Webview disposed.
+        }
+      },
+      onChunk: (runId, stream, text) => {
+        try {
+          w.postMessage({ type: "agentStreamAppend", runId, stream, text });
+        } catch {
+          // Webview disposed.
+        }
+      },
+      onEnd: (runId, reason) => {
+        try {
+          w.postMessage({ type: "agentStreamEnd", runId, reason });
+        } catch {
+          // Webview disposed.
+        }
+      },
+    });
+
     const sub = w.onDidReceiveMessage((msg: unknown) => {
       if (!msg || typeof msg !== "object") {
         return;
@@ -79,9 +118,24 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         void this.runCreatePlanFlow(w, text);
       }
+      if (m.type === "stopAgents") {
+        const n = killAllAgentCliProcesses();
+        const line =
+          n > 0
+            ? `Stop agents: sent SIGTERM to ${n} process(es). In-flight runs will abort.`
+            : "Stop agents: no Planstack agent process was running.";
+        this.transcript.push({ role: "system", text: line });
+        try {
+          w.postMessage({ type: "append", role: "system", text: line });
+        } catch {
+          // Webview disposed.
+        }
+        void vscode.window.showInformationMessage(`Planstack: ${line}`);
+      }
     });
     const disposeChat = webviewView.onDidDispose(() => {
       registerChatSystemSink(undefined);
+      registerAgentStreamSink(undefined);
       sub.dispose();
       disposeChat.dispose();
     });
@@ -121,26 +175,126 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       const startLine = "Create plan: starting Cursor CLI run (agent -p --trust)…";
       this.transcript.push({ role: "system", text: startLine });
       w.postMessage({ type: "append", role: "system", text: startLine });
-      const { savedUri } = await createPlanFromUserRequest({
-        extensionContext: this.extensionContext,
-        workspaceRoot: folder.uri,
-        userRequest,
-      });
-      const rel = vscode.workspace.asRelativePath(savedUri);
-      const line = `Saved plan file: ${rel}`;
-      this.transcript.push({ role: "system", text: line });
-      w.postMessage({ type: "append", role: "system", text: line });
-      await this.onPlanSaved();
-      void vscode.window.showInformationMessage(`Planstack: wrote ${rel}`);
-      await vscode.window.showTextDocument(savedUri, { preview: true });
+
+      const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+      const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
+      const chatThrottleMs = cfg.get<number>("cliStreamChatThrottleMs") ?? 25_000;
+      const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
+      const out = getOutput();
+      out.show(true);
+      out.appendLine(`\n=== Create plan: agent run ${new Date().toISOString()} ===\n`);
+
+      const runId = randomUUID();
+      let streamActive = false;
+      let endReason: AgentStreamEndReason = "complete";
+
+      let lastChatAt = 0;
+      const pushStreamChat = (prefix: string, chunk: string): void => {
+        const t = chunk.trim();
+        if (!t) {
+          return;
+        }
+        const now = Date.now();
+        if (now - lastChatAt < chatThrottleMs) {
+          return;
+        }
+        lastChatAt = now;
+        const line = `${prefix}${t.slice(-200)}`;
+        this.transcript.push({ role: "system", text: line });
+        try {
+          w.postMessage({ type: "append", role: "system", text: line });
+        } catch {
+          // Webview disposed.
+        }
+      };
+
+      try {
+        if (useLiveChat) {
+          streamActive = true;
+          postAgentStreamStart(runId, {
+            label: "Create plan",
+            source: "createPlan",
+            initialLine:
+              "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
+          });
+        }
+        const { savedUri } = await createPlanFromUserRequest({
+          extensionContext: this.extensionContext,
+          workspaceRoot: folder.uri,
+          userRequest,
+          onAgentStdoutChunk:
+            streamToOutput || useLiveChat
+              ? (text) => {
+                  if (streamToOutput && text) {
+                    out.append(text);
+                  }
+                  if (!text) {
+                    return;
+                  }
+                  if (useLiveChat) {
+                    postAgentStreamChunk(runId, "stdout", text);
+                  } else if (streamToOutput) {
+                    pushStreamChat("Create plan: ", text);
+                  }
+                }
+              : undefined,
+          onAgentStderrChunk:
+            streamToOutput || useLiveChat
+              ? (text) => {
+                  if (streamToOutput && text) {
+                    out.append(text);
+                  }
+                  if (!text) {
+                    return;
+                  }
+                  if (useLiveChat) {
+                    postAgentStreamChunk(runId, "stderr", text);
+                  } else if (streamToOutput) {
+                    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+                    const last = lines.length > 0 ? lines[lines.length - 1]! : text;
+                    pushStreamChat("Create plan (stderr): ", last);
+                  }
+                }
+              : undefined,
+        });
+        const rel = vscode.workspace.asRelativePath(savedUri);
+        const line = `Saved plan file: ${rel}`;
+        this.transcript.push({ role: "system", text: line });
+        w.postMessage({ type: "append", role: "system", text: line });
+        await this.onPlanSaved();
+        void vscode.window.showInformationMessage(`Planstack: wrote ${rel}`);
+        await vscode.window.showTextDocument(savedUri, { preview: true });
+      } catch (planErr) {
+        const msg = planErr instanceof Error ? planErr.message : String(planErr);
+        endReason =
+          planErr instanceof AgentCliError && msg.includes("stopped") ? "stopped" : "error";
+        throw planErr;
+      } finally {
+        if (streamActive) {
+          postAgentStreamEnd(runId, endReason);
+          streamActive = false;
+        }
+      }
     } catch (e) {
+      if (e instanceof AgentRunBusyError) {
+        const line = `Create plan skipped: ${e.message}`;
+        this.transcript.push({ role: "system", text: line });
+        w.postMessage({ type: "append", role: "system", text: line });
+        void vscode.window.showWarningMessage(e.message);
+        return;
+      }
       let detail = e instanceof Error ? e.message : String(e);
       if (e instanceof AgentCliError && e.stderr?.trim()) {
         detail = `${detail}\n${e.stderr.trim().slice(0, 800)}`;
       }
+      const stopped = e instanceof AgentCliError && detail.includes("stopped");
       this.transcript.push({ role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
       w.postMessage({ type: "append", role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
-      void vscode.window.showErrorMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      if (stopped) {
+        void vscode.window.showWarningMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      } else {
+        void vscode.window.showErrorMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      }
     } finally {
       this.createPlanInFlight = false;
       w.postMessage({ type: "busy", busy: false });
@@ -210,8 +364,8 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       border-radius: 5px; outline: none;
     }
     #input:focus { border-color: var(--vscode-focusBorder, #007acc); }
-    #composerActions { display: flex; gap: 6px; justify-content: flex-end; }
-    #send, #createPlan {
+    #composerActions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+    #send, #createPlan, #stopAgents {
       flex-shrink: 0; padding: 0 12px; height: 28px;
       cursor: pointer; font-size: 0.85em;
       border: none; border-radius: 4px; white-space: nowrap;
@@ -226,17 +380,55 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.2));
     }
     #send:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.3)); }
-    #send:disabled, #createPlan:disabled, #input:disabled {
+    #stopAgents {
+      color: var(--vscode-foreground);
+      background: var(--vscode-inputValidation-warningBackground, rgba(200, 140, 0, 0.25));
+      border: 1px solid rgba(127,127,127,0.25);
+    }
+    #stopAgents:hover { background: var(--vscode-inputValidation-warningBackground, rgba(200, 140, 0, 0.35)); }
+    #send:disabled, #createPlan:disabled, #stopAgents:disabled, #input:disabled {
       opacity: 0.45; cursor: not-allowed;
+    }
+    .agent-stream-row {
+      max-width: 98%;
+      align-self: stretch;
+    }
+    .agent-stream-header {
+      font-size: 0.75em;
+      opacity: 0.78;
+      padding: 4px 0 2px;
+    }
+    .agent-stream {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.82em;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: min(40vh, 320px);
+      overflow-y: auto;
+      padding: 8px 10px;
+      margin: 0;
+      background: var(--vscode-editor-background, rgba(0,0,0,0.2));
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 6px;
+    }
+    .agent-stream-ended .agent-stream {
+      max-height: min(22vh, 180px);
+    }
+    .agent-stream-footer {
+      font-size: 0.72em;
+      opacity: 0.65;
+      padding: 3px 0 6px;
     }
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> to run the Cursor CLI and write <code>.planstack/plans/&lt;id&gt;.json</code> (same schema as <code>seed/</code>). <strong>Run phase</strong> (CLI) posts start/finish status here when this panel is open. Ordinary Send stays local.</div>
+  <div class="hint">Use <strong>Create plan</strong> for <code>.planstack/plans/&lt;id&gt;.json</code>. Agent stdout/stderr can appear in a <strong>live block</strong> below (and in <strong>Output → Planstack</strong>). Toggle <code>planstack.cursor.agentChatLiveStream</code> off for throttled bubbles only. One agent at a time; <strong>Stop agents</strong> sends SIGTERM. <strong>Send</strong> stays local.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <textarea id="input" rows="2" placeholder="Describe the plan you want…" aria-label="Message"></textarea>
     <div id="composerActions">
+      <button type="button" id="stopAgents">Stop agents</button>
       <button type="button" id="createPlan">Create plan</button>
       <button type="button" id="send">Send</button>
     </div>

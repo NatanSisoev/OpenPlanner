@@ -24,7 +24,7 @@ Each `.planstack/plans/*.json` file is a single plan. Every level (plan / phase 
 
 | Mode             | File                          | Behaviour                                                                |
 |------------------|-------------------------------|--------------------------------------------------------------------------|
-| `cli` *(default)* | `dispatch/cursorCli.ts`       | Runs `agent -p --trust --force` headless and edits the workspace.        |
+| `cli` *(default)* | `dispatch/cursorCli.ts`       | Runs `agent -p --trust --force` headless; streams to Output, single-flight, optional Git summary vs HEAD. |
 | `native-first`   | `dispatch/cursorNativeHandoff.ts` | Copies the prompt to the clipboard and (optionally) focuses Composer. |
 | `sdk-local`      | `dispatch/cursorSdk.ts`       | `@cursor/february` local headless. Stub-level.                           |
 | `sdk-cloud`      | `dispatch/cursorSdk.ts`       | `@cursor/february` cloud. Stub-level.                                    |
@@ -39,6 +39,10 @@ The extension exposes:
 - `planstack.cursor.agentPath` — full path to the Cursor `agent` binary; defaults to bare `agent` and falls back to `~/.local/bin/agent` when present.
 - `planstack.cursor.agentTimeoutMs` — kill the headless agent after this many ms.
 - `planstack.cursor.agentMaxStdoutChars` — backpressure cap on `stdout` chars.
+- `planstack.cursor.agentChatLiveStream` — show live agent output in the Planstack Chat panel (default on).
+- `planstack.cursor.cliStreamAgentOutput` — stream live agent stdout/stderr to Output → Planstack (default on).
+- `planstack.cursor.cliStreamProgressThrottleMs` / `cliStreamChatThrottleMs` — throttle Run phase notification and Chat mirror lines.
+- `planstack.cursor.showGitSummaryAfterCliRun` — after successful CLI Run phase, append `git diff --stat` vs HEAD and a short Chat line (default on).
 
 The `CURSOR_API_KEY` is stored in VS Code's secret storage (`Planstack: Set Cursor API key`) and falls back to the environment variable when absent.
 

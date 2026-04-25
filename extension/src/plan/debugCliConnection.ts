@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import { logLine, showOutput } from "../log";
-import { AgentCliError, runAgentPrint } from "./agentCliRunner";
+import { AgentCliError, AgentRunBusyError, runAgentPrint } from "./agentCliRunner";
 import { resolveDefaultAgentExecutable } from "./agentPath";
 import { buildAgentEnv, resolveCursorApiKey } from "./cursorApiKey";
 
@@ -90,6 +90,13 @@ export async function debugCliConnection(context: vscode.ExtensionContext): Prom
 
     await vscode.window.showInformationMessage("Planstack: CLI bridge healthy (agent reachable from Extension Host).");
   } catch (e) {
+    if (e instanceof AgentRunBusyError) {
+      showOutput();
+      await vscode.window.showWarningMessage(
+        `Planstack: ${e.message}`,
+      );
+      return;
+    }
     const msg = e instanceof AgentCliError ? e.message : e instanceof Error ? e.message : String(e);
     logLine(`debug-cli: exception ${msg}`);
     showOutput();
