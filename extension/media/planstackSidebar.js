@@ -11,6 +11,10 @@
   let closeSubMenuTimer = null;
   let draggedPlanId = null;
   let wizardState = null;
+  const PHASE_STATES = ["completed", "in_progress", "pending", "failed", "cancelled"];
+  const phaseStatusFilter = new Set(PHASE_STATES);
+  const GLOBAL_GRAPH_KEY = "__all_plans__";
+  let graphExpanded = false;
 
   const root = document.getElementById("root");
   const wizardOverlay = document.getElementById("wizardOverlay");
@@ -20,6 +24,8 @@
   const wizardError = document.getElementById("wizardError");
   const wizardPrimary = document.getElementById("wizardPrimary");
   const wizardSecondary = document.getElementById("wizardSecondary");
+  const graphViewState = Object.create(null);
+  let activeGraphPan = null;
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -80,6 +86,9 @@
       ? renderNodesView()
       : plans.map(renderPlan).join("");
     root.innerHTML = controls + body;
+    if (viewMode === "nodes") {
+      syncGraphScenes();
+    }
   }
 
   function renderToolbar(onlyCreate) {
@@ -106,63 +115,315 @@
   }
 
   function renderNodesView() {
+    const graph = buildUnifiedGraph(plans, phaseStatusFilter);
+    ensureGraphState(GLOBAL_GRAPH_KEY);
     const legend = `
-      <div style="display:flex;gap:10px;flex-wrap:wrap;padding:0 8px 8px;font-size:11px;opacity:0.85;">
-        <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid #f44747;"></span>failed</span>
-        <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid #4ec9b0;"></span>completed</span>
-        <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid #569cd6;"></span>running</span>
+      <div class="graph-legend">
+        <span><span class="graph-legend-dot plan"></span>plan</span>
+        <span><span class="graph-legend-dot tone-failed"></span>failed</span>
+        <span><span class="graph-legend-dot tone-completed"></span>completed</span>
+        <span><span class="graph-legend-dot tone-in_progress"></span>running</span>
+        <span><span class="graph-legend-dot tone-pending"></span>pending</span>
+        <span><span class="graph-legend-dot tone-cancelled"></span>cancelled</span>
       </div>
     `;
+    const filter = `
+      <div class="graph-filter-row">
+        <span class="graph-filter-label">Filter status</span>
+        ${PHASE_STATES.map((state) => {
+          const active = phaseStatusFilter.has(state) ? " active" : "";
+          return `<button class="graph-filter-chip${active}" data-action="filterStatus" data-status="${state}">${state.replace("_", " ")}</button>`;
+        }).join("")}
+      </div>
+    `;
+    const expanded = graph.visiblePhases
+      .filter((entry) => expandedPhases.has(entry.plan.id + "::" + entry.phase.id))
+      .map((entry) => renderNodePhase(entry.plan, entry.phase))
+      .join("");
     return `
       ${legend}
-      <div class="nodes-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:4px 8px 10px;">
-        ${plans.map((plan) => renderPlanNode(plan)).join("")}
+      ${filter}
+      <section class="plan-graph-card ${graphExpanded ? "expanded" : ""}">
+        <header class="plan-graph-header">
+          <div class="plan-graph-title">All plans dependency map</div>
+          <div class="plan-graph-meta">${graph.visiblePhases.length}/${graph.totalPhases} phases visible</div>
+        </header>
+        <div class="graph-viewport" data-graph="${GLOBAL_GRAPH_KEY}">
+          <div class="graph-scene" data-graph="${GLOBAL_GRAPH_KEY}" style="width:${graph.width}px;height:${graph.height}px;">
+            ${renderGraphEdges(graph)}
+            ${graph.nodes.map((node) => renderGraphNode(node, graph)).join("")}
+          </div>
+        </div>
+        <div class="graph-controls">
+          <button class="graph-control-btn" data-action="graphZoomIn" data-graph="${GLOBAL_GRAPH_KEY}" title="Zoom in">+</button>
+          <button class="graph-control-btn" data-action="graphZoomOut" data-graph="${GLOBAL_GRAPH_KEY}" title="Zoom out">-</button>
+          <button class="graph-control-btn" data-action="graphZoomReset" data-graph="${GLOBAL_GRAPH_KEY}" title="Reset view">Reset</button>
+          <button class="graph-control-btn" data-action="graphToggleExpand" data-graph="${GLOBAL_GRAPH_KEY}" title="Toggle chart size">${graphExpanded ? "Compact" : "Expand"}</button>
+        </div>
+        <div class="graph-expanded-details ${expanded ? "" : "empty"}">
+          ${expanded || "<div class=\"graph-empty-hint\">Select a phase node to inspect tasks.</div>"}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderGraphNode(node, graph) {
+    if (node.kind === "plan") {
+      return `
+        <div class="graph-plan-node tone-${node.tone}"
+             style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
+          <span class="graph-plan-kicker">plan</span>
+          <span class="graph-plan-title">${esc(node.title)}</span>
+        </div>
+      `;
+    }
+    const pid = esc(node.plan.id);
+    const phid = esc(node.phase.id);
+    const key = node.plan.id + "::" + node.phase.id;
+    const isOpen = expandedPhases.has(key);
+    return `
+      <div class="graph-phase-node tone-${node.phase.state} ${isOpen ? "expanded" : ""}"
+           style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
+        <button class="graph-phase-main"
+                data-action="togglePhase"
+                data-plan="${pid}"
+                data-phase="${phid}"
+                title="${esc(node.phase.title)}">
+          <span class="phase-status-dot dot-${node.phase.state}"></span>
+          <span class="graph-phase-title">${esc(node.phase.title)}</span>
+          ${badgeHtml(node.phase.state)}
+        </button>
+        <div class="graph-phase-footer">
+          <span class="graph-phase-plan">${esc(node.plan.title)}</span>
+          <button class="run-btn graph-run-btn"
+                  data-action="runPhase"
+                  data-plan="${pid}"
+                  data-phase="${phid}"
+                  title="Run this phase">▶</button>
+        </div>
       </div>
     `;
   }
 
-  function renderPlanNode(plan) {
-    const { tone, borderColor, glowColor } = derivePlanNodeTone(plan);
-    const isOpen = expandedPlans.has(plan.id);
-    const pid = esc(plan.id);
-    const phases = Array.isArray(plan.phases) ? plan.phases : [];
-    const totalTasks = phases.reduce((acc, ph) => acc + ((ph.tasks && ph.tasks.length) || 0), 0);
-    const completedTasks = phases.reduce(
-      (acc, ph) => acc + ((ph.tasks || []).filter((t) => t.state === "completed").length),
-      0,
-    );
+  function renderGraphEdges(graph) {
+    const markerId = "graph-arrow-global";
+    const lines = graph.edges.map((edge) => {
+      const from = graph.nodesById.get(edge.from);
+      const to = graph.nodesById.get(edge.to);
+      if (!from || !to) {
+        return "";
+      }
+      const startX = from.x + from.width;
+      const startY = from.y + from.height / 2;
+      const endX = to.x;
+      const endY = to.y + to.height / 2;
+      const bend = Math.max(34, (endX - startX) * 0.45);
+      return `<path d="M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}" marker-end="url(#${markerId})" />`;
+    }).join("");
     return `
-      <div class="node-wrapper">
-        <button class="plan-node tone-${tone}"
-                data-action="toggleNodeDetails"
-                data-plan="${pid}"
-                title="${esc(plan.title)}"
-                style="
-                  width: 132px;
-                  height: 132px;
-                  border-radius: 50%;
-                  border: 3px solid ${borderColor};
-                  box-shadow: 0 0 0 2px ${glowColor} inset, 0 6px 14px rgba(0,0,0,0.28);
-                  display: flex;
-                  align-items: center;
-                  justify-content: center;
-                  text-align: center;
-                  padding: 12px;
-                  margin: 0 auto;
-                  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.04), rgba(0,0,0,0.18));
-                  cursor: pointer;
-                ">
-          <span class="node-name" style="white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;">${esc(plan.title)}</span>
-        </button>
-        ${isOpen
-          ? `<div class="node-details" style="margin-top:8px;border:1px solid rgba(127,127,127,0.25);border-radius:8px;padding:8px;background:rgba(127,127,127,0.08);">
-               <div style="font-size:12px;opacity:0.9;margin-bottom:6px;"><strong>${esc(plan.title)}</strong></div>
-               <div style="font-size:11px;opacity:0.8;margin-bottom:8px;">${completedTasks}/${totalTasks} tasks completed · ${phases.length} phases</div>
-               ${phases.map((phase) => renderNodePhase(plan, phase)).join("")}
-             </div>`
-          : ""}
-      </div>
+      <svg class="graph-edges" viewBox="0 0 ${graph.width} ${graph.height}" aria-hidden="true">
+        <defs>
+          <marker id="${markerId}" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L10,4 L0,8 z"></path>
+          </marker>
+        </defs>
+        ${lines}
+      </svg>
     `;
+  }
+
+  function buildUnifiedGraph(allPlans, filterSet) {
+    const planOrder = new Map(allPlans.map((plan, idx) => [plan.id, idx]));
+    const phaseEntries = [];
+    const phaseNodeIdByLocal = new Map();
+    const phaseNodeIdsByRawId = new Map();
+
+    allPlans.forEach((plan, planIdx) => {
+      const phases = Array.isArray(plan.phases) ? plan.phases : [];
+      phases.forEach((phase, phaseIdx) => {
+        const nodeId = "phase::" + plan.id + "::" + phase.id;
+        phaseEntries.push({ nodeId, plan, phase, planIdx, phaseIdx });
+        phaseNodeIdByLocal.set(plan.id + "::" + phase.id, nodeId);
+        if (!phaseNodeIdsByRawId.has(phase.id)) {
+          phaseNodeIdsByRawId.set(phase.id, []);
+        }
+        phaseNodeIdsByRawId.get(phase.id).push(nodeId);
+      });
+    });
+
+    const visiblePhases = phaseEntries.filter((entry) => filterSet.has(entry.phase.state));
+    const visiblePhaseIds = new Set(visiblePhases.map((entry) => entry.nodeId));
+    const dependencyEdges = [];
+    const incoming = new Map();
+    const outgoing = new Map();
+
+    visiblePhases.forEach((entry) => {
+      incoming.set(entry.nodeId, 0);
+      outgoing.set(entry.nodeId, []);
+    });
+
+    visiblePhases.forEach((entry) => {
+      const deps = Array.isArray(entry.phase.dependsOn) ? entry.phase.dependsOn : [];
+      deps.forEach((depId) => {
+        let sourceId = phaseNodeIdByLocal.get(entry.plan.id + "::" + depId) || null;
+        if (!sourceId) {
+          const matches = phaseNodeIdsByRawId.get(depId) || [];
+          if (matches.length === 1) {
+            sourceId = matches[0];
+          }
+        }
+        if (!sourceId || !visiblePhaseIds.has(sourceId)) {
+          return;
+        }
+        dependencyEdges.push({ from: sourceId, to: entry.nodeId });
+        incoming.set(entry.nodeId, (incoming.get(entry.nodeId) || 0) + 1);
+        outgoing.get(sourceId).push(entry.nodeId);
+      });
+    });
+
+    const queue = visiblePhases
+      .filter((entry) => (incoming.get(entry.nodeId) || 0) === 0)
+      .sort((a, b) => (a.planIdx - b.planIdx) || (a.phaseIdx - b.phaseIdx))
+      .map((entry) => entry.nodeId);
+    const levels = new Map();
+    queue.forEach((nodeId) => levels.set(nodeId, 0));
+    while (queue.length) {
+      const nodeId = queue.shift();
+      const nextLevel = levels.get(nodeId) || 0;
+      (outgoing.get(nodeId) || []).forEach((toNodeId) => {
+        levels.set(toNodeId, Math.max(levels.get(toNodeId) || 0, nextLevel + 1));
+        const remaining = (incoming.get(toNodeId) || 0) - 1;
+        incoming.set(toNodeId, remaining);
+        if (remaining === 0) {
+          queue.push(toNodeId);
+        }
+      });
+    }
+    visiblePhases.forEach((entry) => {
+      if (!levels.has(entry.nodeId)) {
+        levels.set(entry.nodeId, 0);
+      }
+    });
+
+    const planNodes = allPlans.map((plan) => {
+      const { tone } = derivePlanNodeTone(plan);
+      return {
+        id: "plan::" + plan.id,
+        kind: "plan",
+        title: plan.title,
+        tone,
+        plan,
+        level: 0,
+      };
+    });
+
+    const incomingVisibleByPlan = new Map();
+    visiblePhases.forEach((entry) => incomingVisibleByPlan.set(entry.nodeId, 0));
+    dependencyEdges.forEach((edge) => {
+      incomingVisibleByPlan.set(edge.to, (incomingVisibleByPlan.get(edge.to) || 0) + 1);
+    });
+    const planEdges = [];
+    allPlans.forEach((plan) => {
+      const roots = visiblePhases.filter(
+        (entry) => entry.plan.id === plan.id && (incomingVisibleByPlan.get(entry.nodeId) || 0) === 0,
+      );
+      roots.forEach((entry) => {
+        planEdges.push({ from: "plan::" + plan.id, to: entry.nodeId });
+      });
+    });
+
+    const phaseNodes = visiblePhases.map((entry) => ({
+      id: entry.nodeId,
+      kind: "phase",
+      plan: entry.plan,
+      phase: entry.phase,
+      level: 1 + (levels.get(entry.nodeId) || 0),
+      planIdx: entry.planIdx,
+      phaseIdx: entry.phaseIdx,
+    }));
+
+    const allNodes = [...planNodes, ...phaseNodes];
+    const buckets = new Map();
+    allNodes.forEach((node) => {
+      if (!buckets.has(node.level)) {
+        buckets.set(node.level, []);
+      }
+      buckets.get(node.level).push(node);
+    });
+    const sortedLevels = [...buckets.keys()].sort((a, b) => a - b);
+    sortedLevels.forEach((level) => {
+      buckets.get(level).sort((a, b) => {
+        const aPlan = planOrder.get(a.plan?.id || a.id.replace(/^plan::/, "")) || 0;
+        const bPlan = planOrder.get(b.plan?.id || b.id.replace(/^plan::/, "")) || 0;
+        const aPhase = a.phaseIdx || 0;
+        const bPhase = b.phaseIdx || 0;
+        return (aPlan - bPlan) || aPhase - bPhase;
+      });
+    });
+
+    const nodeWidth = 224;
+    const planNodeHeight = 74;
+    const phaseNodeHeight = 94;
+    const columnGap = 312;
+    const rowGap = 132;
+    const padding = 44;
+    const maxRows = Math.max(1, ...sortedLevels.map((level) => buckets.get(level).length));
+    const nodes = [];
+    sortedLevels.forEach((level, levelIndex) => {
+      const list = buckets.get(level);
+      const ySpan = (list.length - 1) * rowGap;
+      const yStart = padding + ((maxRows - 1) * rowGap - ySpan) / 2;
+      list.forEach((node, idx) => {
+        const height = node.kind === "plan" ? planNodeHeight : phaseNodeHeight;
+        nodes.push({
+          ...node,
+          x: padding + levelIndex * columnGap,
+          y: yStart + idx * rowGap,
+          width: nodeWidth,
+          height,
+        });
+      });
+    });
+
+    const levelCount = Math.max(1, sortedLevels.length);
+    const width = padding * 2 + (levelCount - 1) * columnGap + nodeWidth;
+    const height = padding * 2 + (maxRows - 1) * rowGap + phaseNodeHeight;
+    const edges = [...planEdges, ...dependencyEdges];
+    return {
+      width,
+      height,
+      nodes,
+      edges,
+      totalPhases: phaseEntries.length,
+      visiblePhases,
+      nodesById: new Map(nodes.map((node) => [node.id, node])),
+    };
+  }
+
+  function ensureGraphState(graphId) {
+    if (!graphViewState[graphId]) {
+      graphViewState[graphId] = { x: 22, y: 18, scale: 1 };
+    }
+    return graphViewState[graphId];
+  }
+
+  function applyGraphSceneTransform(graphId) {
+    const scene = [...document.querySelectorAll(".graph-scene[data-graph]")].find((el) => el.dataset.graph === graphId);
+    if (!scene) {
+      return;
+    }
+    const state = ensureGraphState(graphId);
+    scene.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`;
+  }
+
+  function syncGraphScenes() {
+    document.querySelectorAll(".graph-scene[data-graph]").forEach((scene) => {
+      const graphId = scene.dataset.graph;
+      if (!graphId) {
+        return;
+      }
+      applyGraphSceneTransform(graphId);
+    });
   }
 
   function renderNodePhase(plan, phase) {
@@ -170,8 +431,8 @@
     const phid = esc(phase.id);
     const tasks = Array.isArray(phase.tasks) ? phase.tasks : [];
     return `
-      <div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(127,127,127,0.18);">
-        <div class="phase-header" data-plan="${pid}" data-phase="${phid}" style="padding:2px 0;cursor:default;">
+      <div class="node-phase-block">
+        <div class="phase-header node-phase-header" data-plan="${pid}" data-phase="${phid}">
           <div class="phase-header-left">
             <span class="phase-status-dot dot-${phase.state}"></span>
             <span class="phase-title">${esc(phase.title)}</span>
@@ -181,7 +442,7 @@
             <button class="run-btn" data-action="runPhase" data-plan="${pid}" data-phase="${phid}" title="Run this phase">▶ Run</button>
           </div>
         </div>
-        <div class="phase-tasks" style="margin:4px 0 0 8px;padding:0 0 0 10px;">
+        <div class="phase-tasks node-phase-tasks">
           ${tasks.map((task) => renderTask(plan, phase, task)).join("")}
         </div>
       </div>
@@ -191,16 +452,19 @@
   function derivePlanNodeTone(plan) {
     const phases = Array.isArray(plan.phases) ? plan.phases : [];
     const tasks = phases.flatMap((phase) => (Array.isArray(phase.tasks) ? phase.tasks : []));
+    if (!tasks.length) {
+      return { tone: "pending" };
+    }
     if (tasks.some((task) => task.state === "failed")) {
-      return { tone: "failed", borderColor: "#f44747", glowColor: "rgba(244,71,71,0.20)" };
+      return { tone: "failed" };
     }
     if (tasks.every((task) => task.state === "completed")) {
-      return { tone: "completed", borderColor: "#4ec9b0", glowColor: "rgba(78,201,176,0.20)" };
+      return { tone: "completed" };
     }
     if (tasks.some((task) => task.state === "in_progress")) {
-      return { tone: "in_progress", borderColor: "#569cd6", glowColor: "rgba(86,156,214,0.20)" };
+      return { tone: "in_progress" };
     }
-    return { tone: "pending", borderColor: "#6e6e6e", glowColor: "rgba(110,110,110,0.18)" };
+    return { tone: "pending" };
   }
 
   function renderPlan(plan) {
@@ -210,6 +474,13 @@
     const total = phases.length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     const pid = esc(plan.id);
+    const canMergePlan = plan.state === "completed" && !!plan.git?.planBranch;
+    const mergeButton = canMergePlan
+      ? `<button class="run-btn"
+                 data-action="mergePlan"
+                 data-plan="${pid}"
+                 title="Merge ${esc(plan.git.planBranch)} into ${esc(plan.git?.baseBranch || "main")}">⇢ Merge</button>`
+      : "";
 
     return `
       <div class="plan-card">
@@ -221,6 +492,7 @@
           <div class="plan-header-right">
             <span class="plan-progress">${done}/${total}</span>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            ${mergeButton}
             <button class="run-btn" data-action="runPlan" data-plan="${pid}" title="Run next phase">▶ Run</button>
           </div>
         </div>
@@ -310,18 +582,9 @@
     const planId = el.dataset.plan;
     const phaseId = el.dataset.phase;
     const taskId = el.dataset.task;
+    const graphId = el.dataset.graph;
 
     if (action === "togglePlan") {
-      if (expandedPlans.has(planId)) {
-        expandedPlans.delete(planId);
-      } else {
-        expandedPlans.add(planId);
-      }
-      render();
-      return;
-    }
-
-    if (action === "toggleNodeDetails") {
       if (expandedPlans.has(planId)) {
         expandedPlans.delete(planId);
       } else {
@@ -355,6 +618,42 @@
       return;
     }
 
+    if (action === "filterStatus") {
+      const status = el.dataset.status;
+      if (!PHASE_STATES.includes(status)) {
+        return;
+      }
+      if (phaseStatusFilter.has(status)) {
+        if (phaseStatusFilter.size > 1) {
+          phaseStatusFilter.delete(status);
+        }
+      } else {
+        phaseStatusFilter.add(status);
+      }
+      render();
+      return;
+    }
+
+    if (action === "graphZoomIn" || action === "graphZoomOut" || action === "graphZoomReset") {
+      const state = ensureGraphState(graphId || GLOBAL_GRAPH_KEY);
+      if (action === "graphZoomReset") {
+        state.scale = 1;
+        state.x = 22;
+        state.y = 18;
+      } else {
+        const factor = action === "graphZoomIn" ? 1.14 : 0.88;
+        state.scale = Math.min(1.95, Math.max(0.55, state.scale * factor));
+      }
+      applyGraphSceneTransform(graphId || GLOBAL_GRAPH_KEY);
+      return;
+    }
+
+    if (action === "graphToggleExpand") {
+      graphExpanded = !graphExpanded;
+      render();
+      return;
+    }
+
     if (action === "togglePhase") {
       const key = planId + "::" + phaseId;
       if (expandedPhases.has(key)) {
@@ -368,14 +667,6 @@
 
     if (action === "runPhase") {
       e.stopPropagation();
-      // Optimistic local update + persist phase running state
-      const plan = plans.find((p) => p.id === planId);
-      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
-      if (phase) {
-        phase.state = "in_progress";
-        vscode.postMessage({ type: "updatePhase", planId, phaseId, state: "in_progress" });
-        render();
-      }
       vscode.postMessage({ type: "runPhase", planId, phaseId });
       return;
     }
@@ -389,10 +680,13 @@
       if (!next) {
         return;
       }
-      next.state = "in_progress";
-      vscode.postMessage({ type: "updatePhase", planId, phaseId: next.id, state: "in_progress" });
-      render();
       vscode.postMessage({ type: "runPhase", planId, phaseId: next.id });
+      return;
+    }
+
+    if (action === "mergePlan") {
+      e.stopPropagation();
+      vscode.postMessage({ type: "mergePlan", planId });
       return;
     }
 
@@ -450,6 +744,73 @@
       }
       return;
     }
+  });
+
+  document.addEventListener("wheel", (e) => {
+    if (viewMode !== "nodes") {
+      return;
+    }
+    const viewport = e.target.closest(".graph-viewport");
+    if (!viewport) {
+      return;
+    }
+    e.preventDefault();
+    const graphId = viewport.dataset.graph;
+    if (!graphId) {
+      return;
+    }
+    const state = ensureGraphState(graphId);
+    const rect = viewport.getBoundingClientRect();
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
+    const worldX = (cursorX - state.x) / state.scale;
+    const worldY = (cursorY - state.y) / state.scale;
+    const zoomFactor = e.deltaY < 0 ? 1.09 : 0.91;
+    const nextScale = Math.min(1.95, Math.max(0.55, state.scale * zoomFactor));
+    state.x = cursorX - worldX * nextScale;
+    state.y = cursorY - worldY * nextScale;
+    state.scale = nextScale;
+    applyGraphSceneTransform(graphId);
+  }, { passive: false });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (viewMode !== "nodes") {
+      return;
+    }
+    const viewport = e.target.closest(".graph-viewport");
+    if (!viewport || e.target.closest("[data-action]")) {
+      return;
+    }
+    const graphId = viewport.dataset.graph;
+    if (!graphId) {
+      return;
+    }
+    activeGraphPan = { graphId, startX: e.clientX, startY: e.clientY };
+    viewport.classList.add("is-panning");
+  });
+
+  document.addEventListener("pointermove", (e) => {
+    if (!activeGraphPan) {
+      return;
+    }
+    const state = ensureGraphState(activeGraphPan.graphId);
+    state.x += e.clientX - activeGraphPan.startX;
+    state.y += e.clientY - activeGraphPan.startY;
+    activeGraphPan.startX = e.clientX;
+    activeGraphPan.startY = e.clientY;
+    applyGraphSceneTransform(activeGraphPan.graphId);
+  });
+
+  document.addEventListener("pointerup", () => {
+    if (!activeGraphPan) {
+      return;
+    }
+    const viewport = [...document.querySelectorAll(".graph-viewport[data-graph]")]
+      .find((el) => el.dataset.graph === activeGraphPan.graphId);
+    if (viewport) {
+      viewport.classList.remove("is-panning");
+    }
+    activeGraphPan = null;
   });
 
   // ── Plan drag & drop ordering ────────────────────────────────────────────

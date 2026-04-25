@@ -11,6 +11,13 @@ export type TaskPatch = {
   commit?: boolean;
 };
 
+export type PhasePatch = {
+  state?: WorkState;
+  title?: string;
+  description?: string;
+  dependsOn?: string[];
+};
+
 /**
  * Single source of truth for plans loaded from `.planstack/plans/`. The
  * extension, tree provider, and sidebar webview all subscribe to changes here
@@ -45,6 +52,19 @@ export class PlansStore implements vscode.Disposable {
     const found = this.findPhase(planId, phaseId);
     const task = found?.phase.tasks.find((t) => t.id === taskId);
     return found && task ? { ...found, task } : undefined;
+  }
+
+  private validateDependsOn(plan: Plan, phaseId: string, dependsOn: string[] | undefined): boolean {
+    if (!dependsOn) {
+      return true;
+    }
+    const validIds = new Set(plan.phases.map((p) => p.id));
+    for (const dep of dependsOn) {
+      if (dep === phaseId || !validIds.has(dep)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -112,6 +132,163 @@ export class PlansStore implements vscode.Disposable {
       return true;
     } catch {
       // Out of sync with disk; pull authoritative state back.
+      await this.refresh();
+      return false;
+    }
+  }
+
+  async updatePhase(
+    planId: string,
+    phaseId: string,
+    patch: PhasePatch,
+    workspaceRoot: vscode.Uri,
+  ): Promise<boolean> {
+    const found = this.findPhase(planId, phaseId);
+    if (!found) {
+      return false;
+    }
+    const { plan, phase } = found;
+
+    if (patch.state !== undefined) {
+      phase.state = patch.state;
+    }
+    if (patch.title !== undefined) {
+      phase.title = patch.title;
+    }
+    if (patch.description !== undefined) {
+      phase.description = patch.description;
+    }
+    if (patch.dependsOn !== undefined) {
+      if (!this.validateDependsOn(plan, phase.id, patch.dependsOn)) {
+        return false;
+      }
+      phase.dependsOn = patch.dependsOn.length > 0 ? [...patch.dependsOn] : undefined;
+    }
+    recomputeAggregates(plan);
+
+    try {
+      await savePlanPreservingFile(plan, workspaceRoot);
+      this._onDidChange.fire(this.plans);
+      return true;
+    } catch {
+      await this.refresh();
+      return false;
+    }
+  }
+
+  async createPhase(
+    planId: string,
+    phase: Phase,
+    workspaceRoot: vscode.Uri,
+  ): Promise<boolean> {
+    const plan = this.findPlan(planId);
+    if (!plan || plan.phases.some((p) => p.id === phase.id)) {
+      return false;
+    }
+    if (!this.validateDependsOn(plan, phase.id, phase.dependsOn)) {
+      return false;
+    }
+
+    plan.phases.push({
+      ...phase,
+      tasks: [...phase.tasks],
+      dependsOn: phase.dependsOn && phase.dependsOn.length > 0 ? [...phase.dependsOn] : undefined,
+    });
+    recomputeAggregates(plan);
+
+    try {
+      await savePlanPreservingFile(plan, workspaceRoot);
+      this._onDidChange.fire(this.plans);
+      return true;
+    } catch {
+      await this.refresh();
+      return false;
+    }
+  }
+
+  async deletePhase(
+    planId: string,
+    phaseId: string,
+    workspaceRoot: vscode.Uri,
+  ): Promise<boolean> {
+    const plan = this.findPlan(planId);
+    if (!plan) {
+      return false;
+    }
+    const originalLen = plan.phases.length;
+    plan.phases = plan.phases.filter((p) => p.id !== phaseId);
+    if (plan.phases.length === originalLen) {
+      return false;
+    }
+
+    for (const phase of plan.phases) {
+      if (!phase.dependsOn || phase.dependsOn.length === 0) {
+        continue;
+      }
+      phase.dependsOn = phase.dependsOn.filter((dep) => dep !== phaseId);
+      if (phase.dependsOn.length === 0) {
+        delete phase.dependsOn;
+      }
+    }
+    recomputeAggregates(plan);
+
+    try {
+      await savePlanPreservingFile(plan, workspaceRoot);
+      this._onDidChange.fire(this.plans);
+      return true;
+    } catch {
+      await this.refresh();
+      return false;
+    }
+  }
+
+  async createTask(
+    planId: string,
+    phaseId: string,
+    task: Task,
+    workspaceRoot: vscode.Uri,
+  ): Promise<boolean> {
+    const found = this.findPhase(planId, phaseId);
+    if (!found || found.phase.tasks.some((t) => t.id === task.id)) {
+      return false;
+    }
+    const { plan, phase } = found;
+    phase.tasks.push({ ...task });
+    recomputeAggregates(plan);
+
+    try {
+      await savePlanPreservingFile(plan, workspaceRoot);
+      this._onDidChange.fire(this.plans);
+      return true;
+    } catch {
+      await this.refresh();
+      return false;
+    }
+  }
+
+  async deleteTask(
+    planId: string,
+    phaseId: string,
+    taskId: string,
+    workspaceRoot: vscode.Uri,
+  ): Promise<boolean> {
+    const found = this.findPhase(planId, phaseId);
+    if (!found) {
+      return false;
+    }
+    const { plan, phase } = found;
+    const originalLen = phase.tasks.length;
+    phase.tasks = phase.tasks.filter((t) => t.id !== taskId);
+    if (phase.tasks.length === originalLen) {
+      return false;
+    }
+    recomputeAggregates(plan);
+
+    try {
+      await savePlanPreservingFile(plan, workspaceRoot);
+      this._onDidChange.fire(this.plans);
+      return true;
+    } catch {
       await this.refresh();
       return false;
     }

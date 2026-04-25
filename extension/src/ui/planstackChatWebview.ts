@@ -1,9 +1,11 @@
 import { randomUUID } from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
-import { getOutput } from "../log";
+import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
-import { createPlanFromUserRequest } from "../plan/createPlanFromCli";
+import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
 import {
   postAgentStreamChunk,
@@ -13,16 +15,51 @@ import {
   type AgentStreamEndReason,
 } from "./agentChatStreamBridge";
 import { registerChatSystemSink } from "./chatStatusBridge";
+import { postAnimatedStatus, registerRichChatSink } from "./richChatBridge";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
 const MAX_MESSAGE_CHARS = 8000;
+const execFileAsync = promisify(execFile);
 
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
     return String(value);
+  }
+}
+
+function normalizeRelPath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").replace(/^\.?\//, "");
+}
+
+function fileNameFromPath(filePath: string): string {
+  const parts = normalizeRelPath(filePath).split("/");
+  return parts[parts.length - 1] || filePath;
+}
+
+async function exists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getHeadFileContent(cwd: string, relPath: string): Promise<string | undefined> {
+  const git = process.platform === "win32" ? "git.exe" : "git";
+  try {
+    const { stdout } = await execFileAsync(git, ["show", `HEAD:${normalizeRelPath(relPath)}`], {
+      cwd,
+      timeout: 15_000,
+      maxBuffer: 8 * 1024 * 1024,
+      windowsHide: true,
+    });
+    return String(stdout);
+  } catch {
+    return undefined;
   }
 }
 
@@ -34,6 +71,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private readonly transcript: ChatTurn[] = [];
   private createPlanInFlight = false;
+  private sendInFlight = false;
 
   constructor(
     private readonly extUri: vscode.Uri,
@@ -102,6 +140,14 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       },
     });
 
+    registerRichChatSink((msg) => {
+      try {
+        w.postMessage(msg);
+      } catch {
+        // Webview disposed.
+      }
+    });
+
     const sub = w.onDidReceiveMessage((msg: unknown) => {
       const recvId = newTraceId("chatRecv");
       traceEvent(recvId, "chat.onDidReceiveMessage", { raw: safeJson(msg) });
@@ -126,7 +172,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         this.transcript.push({ role: "user", text });
         w.postMessage({ type: "append", role: "user", text });
-        traceEvent(recvId, "chat.send.done", { storedChars: text.length });
+        void this.runSendPromptFlow(w, text);
+        traceEvent(recvId, "chat.send.done", { storedChars: text.length, handled: true });
         return;
       }
       if (m.type === "createPlan" && typeof m.text === "string") {
@@ -138,6 +185,90 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           return;
         }
         void this.runCreatePlanFlow(w, text);
+      }
+      if (m.type === "openScm") {
+        void vscode.commands.executeCommand("workbench.view.scm");
+        return;
+      }
+      if (m.type === "openFileDiff" && typeof (m as { filePath?: unknown }).filePath === "string") {
+        const filePath = normalizeRelPath((m as { filePath: string }).filePath);
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (!folder) {
+          return;
+        }
+        const absUri = vscode.Uri.joinPath(folder.uri, ...filePath.split("/"));
+        void (async () => {
+          try {
+            // Primary path: show exactly what summary reports (HEAD -> working tree).
+            const relFromWorkspace = normalizeRelPath(vscode.workspace.asRelativePath(absUri, false));
+            const [headContent, workingTreeExists] = await Promise.all([
+              getHeadFileContent(folder.uri.fsPath, relFromWorkspace),
+              exists(absUri),
+            ]);
+            if (headContent !== undefined || workingTreeExists) {
+              const leftDoc = await vscode.workspace.openTextDocument({ content: headContent ?? "" });
+              const rightDoc = workingTreeExists
+                ? undefined
+                : await vscode.workspace.openTextDocument({ content: "" });
+              await vscode.commands.executeCommand(
+                "vscode.diff",
+                leftDoc.uri,
+                rightDoc?.uri ?? absUri,
+                `${fileNameFromPath(filePath)} (HEAD ↔ Working Tree)`,
+              );
+              return;
+            }
+            logLine(`openFileDiff: could not resolve HEAD or working-tree content for ${filePath}`);
+          } catch {
+            // fall through to simple open
+          }
+
+          // Fallback: use SCM change resource if available.
+          try {
+            const gitExt = vscode.extensions.getExtension("vscode.git");
+            if (gitExt) {
+              if (!gitExt.isActive) {
+                await gitExt.activate();
+              }
+              const api = (gitExt.exports as {
+                getAPI(v: 1):
+                  | {
+                      getRepository(uri: vscode.Uri):
+                        | {
+                            state: {
+                              workingTreeChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }>;
+                              indexChanges: Array<{ uri: vscode.Uri; originalUri: vscode.Uri }>;
+                            };
+                          }
+                        | null;
+                    }
+                  | null;
+              }).getAPI(1);
+              const repo = api?.getRepository(folder.uri);
+              if (repo) {
+                const changes = [...repo.state.workingTreeChanges, ...repo.state.indexChanges];
+                const change = changes.find(
+                  (c) => normalizeRelPath(vscode.workspace.asRelativePath(c.uri, false)) === filePath,
+                );
+                if (change?.originalUri) {
+                  await vscode.commands.executeCommand(
+                    "vscode.diff",
+                    change.originalUri,
+                    change.uri,
+                    `${fileNameFromPath(filePath)} (HEAD ↔ Working Tree)`,
+                  );
+                  return;
+                }
+              }
+            }
+          } catch {
+            // fall through to simple open
+          }
+
+          await vscode.window.showTextDocument(absUri, { preview: true });
+          await vscode.commands.executeCommand("workbench.view.scm");
+        })();
+        return;
       }
       if (m.type === "stopAgents") {
         const n = killAllAgentCliProcesses();
@@ -160,6 +291,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     const disposeChat = webviewView.onDidDispose(() => {
       registerChatSystemSink(undefined);
       registerAgentStreamSink(undefined);
+      registerRichChatSink(undefined);
       sub.dispose();
       disposeChat.dispose();
     });
@@ -226,6 +358,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       let streamActive = false;
       let endReason: AgentStreamEndReason = "complete";
 
+      postAnimatedStatus(runId);
+
       let lastChatAt = 0;
       const pushStreamChat = (prefix: string, chunk: string): void => {
         const t = chunk.trim();
@@ -252,8 +386,6 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           postAgentStreamStart(runId, {
             label: "Create plan",
             source: "createPlan",
-            initialLine:
-              "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
           });
         }
         traceEvent(flowId, "createPlanFlow.calling_createPlanFromUserRequest", {
@@ -314,10 +446,8 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           planErr instanceof AgentCliError && msg.includes("stopped") ? "stopped" : "error";
         throw planErr;
       } finally {
-        if (streamActive) {
-          postAgentStreamEnd(runId, endReason);
-          streamActive = false;
-        }
+        postAgentStreamEnd(runId, endReason);
+        streamActive = false;
       }
     } catch (e) {
       if (e instanceof AgentRunBusyError) {
@@ -350,6 +480,151 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     } finally {
       traceEvent(flowId, "createPlanFlow.finally", { createPlanInFlight_cleared: true });
       this.createPlanInFlight = false;
+      w.postMessage({ type: "busy", busy: false });
+    }
+  }
+
+  private pushSystem(w: vscode.Webview, text: string): void {
+    this.transcript.push({ role: "system", text });
+    try {
+      w.postMessage({ type: "append", role: "system", text });
+    } catch {
+      // Webview disposed.
+    }
+  }
+
+  private async runSendPromptFlow(w: vscode.Webview, userPrompt: string): Promise<void> {
+    const flowId = newTraceId("sendPromptFlow");
+    traceEvent(flowId, "sendPromptFlow.start", { promptChars: userPrompt.length });
+    traceMultiline(flowId, "sendPromptFlow.userPrompt", userPrompt);
+    if (this.sendInFlight) {
+      this.pushSystem(w, "Send is busy with another request. Please wait.");
+      return;
+    }
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      this.pushSystem(w, "Send failed: open a workspace folder first.");
+      return;
+    }
+
+    this.sendInFlight = true;
+    w.postMessage({ type: "busy", busy: true });
+
+    const cfg = vscode.workspace.getConfiguration("planstack.cursor");
+    const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
+    const chatThrottleMs = cfg.get<number>("cliStreamChatThrottleMs") ?? 25_000;
+    const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
+    const out = getOutput();
+    out.show(true);
+    out.appendLine(`\n=== Send prompt: agent run ${new Date().toISOString()} ===\n`);
+
+    const runId = randomUUID();
+    let streamActive = false;
+    let endReason: AgentStreamEndReason = "complete";
+    let lastChatAt = 0;
+    const pushStreamChat = (prefix: string, chunk: string): void => {
+      const t = chunk.trim();
+      if (!t) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastChatAt < chatThrottleMs) {
+        return;
+      }
+      lastChatAt = now;
+      this.pushSystem(w, `${prefix}${t.slice(-220)}`);
+    };
+
+    try {
+      this.pushSystem(w, "Send: starting Cursor CLI run (agent -p --trust --force)…");
+      if (useLiveChat) {
+        streamActive = true;
+        postAgentStreamStart(runId, {
+          label: "Send prompt",
+          source: "sendPrompt",
+        });
+      }
+
+      const result = await runAgentPromptEdits({
+        extensionContext: this.extensionContext,
+        workspaceRoot: folder.uri,
+        prompt: userPrompt,
+        debugTraceId: flowId,
+        onAgentStdoutChunk:
+          streamToOutput || useLiveChat
+            ? (text) => {
+                if (streamToOutput && text) {
+                  out.append(text);
+                }
+                if (!text) {
+                  return;
+                }
+                if (useLiveChat) {
+                  postAgentStreamChunk(runId, "stdout", text);
+                } else if (streamToOutput) {
+                  pushStreamChat("Send: ", text);
+                }
+              }
+            : undefined,
+        onAgentStderrChunk:
+          streamToOutput || useLiveChat
+            ? (text) => {
+                if (streamToOutput && text) {
+                  out.append(text);
+                }
+                if (!text) {
+                  return;
+                }
+                if (useLiveChat) {
+                  postAgentStreamChunk(runId, "stderr", text);
+                } else if (streamToOutput) {
+                  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+                  const last = lines.length > 0 ? lines[lines.length - 1]! : text;
+                  pushStreamChat("Send (stderr): ", last);
+                }
+              }
+            : undefined,
+      });
+
+      if (result.exitCode !== 0) {
+        const tail = result.stderr.trim() || result.stdout.slice(-400);
+        throw new AgentCliError(
+          `agent exited with code ${result.exitCode}. ${tail ? `Details: ${tail}` : ""}`.trim(),
+          result.exitCode,
+          result.stderr,
+        );
+      }
+
+      const saidNoChanges = /no changes|no files? (were )?modified|nothing to (edit|change)/i.test(
+        result.stdout,
+      );
+      this.pushSystem(
+        w,
+        saidNoChanges
+          ? "Send completed: Cursor reported no changes."
+          : "Send completed: Cursor applied edits (check git diff / workspace changes).",
+      );
+      await this.onPlanSaved();
+    } catch (e) {
+      let detail = e instanceof Error ? e.message : String(e);
+      if (e instanceof AgentCliError && e.stderr?.trim()) {
+        detail = `${detail}\n${e.stderr.trim().slice(0, 800)}`;
+      }
+      const stopped = e instanceof AgentCliError && detail.includes("stopped");
+      endReason = stopped ? "stopped" : "error";
+      this.pushSystem(w, `Send failed: ${detail.slice(0, 500)}`);
+      if (e instanceof AgentRunBusyError) {
+        void vscode.window.showWarningMessage(e.message);
+      } else if (stopped) {
+        void vscode.window.showWarningMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      } else {
+        void vscode.window.showErrorMessage(`Planstack: ${detail.slice(0, 2000)}`);
+      }
+    } finally {
+      if (streamActive) {
+        postAgentStreamEnd(runId, endReason);
+      }
+      this.sendInFlight = false;
       w.postMessage({ type: "busy", busy: false });
     }
   }
@@ -445,11 +720,83 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     .agent-stream-row {
       max-width: 98%;
       align-self: stretch;
+      border: 1px solid rgba(127,127,127,0.22);
+      border-radius: 8px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--vscode-editor-background) 78%, transparent);
     }
     .agent-stream-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       font-size: 0.75em;
-      opacity: 0.78;
-      padding: 4px 0 2px;
+      opacity: 0.9;
+      padding: 6px 8px;
+      background: color-mix(in srgb, var(--vscode-sideBar-background) 55%, transparent);
+      border-bottom: 1px solid rgba(127,127,127,0.18);
+    }
+    .agent-stream-header-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-stream-title {
+      font-weight: 600;
+      opacity: 0.95;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-stream-source {
+      opacity: 0.72;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-size: 0.92em;
+    }
+    .agent-stream-status {
+      font-size: 0.9em;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-radius: 999px;
+      padding: 2px 7px;
+      border: 1px solid rgba(127,127,127,0.35);
+      opacity: 0.95;
+      flex-shrink: 0;
+    }
+    .agent-stream-status.live {
+      color: var(--vscode-terminal-ansiBlue, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiBlue) 22%, transparent);
+    }
+    .agent-stream-status.finished {
+      color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 22%, transparent);
+    }
+    .agent-stream-status.error {
+      color: var(--vscode-terminal-ansiRed, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiRed) 22%, transparent);
+    }
+    .agent-stream-status.stopped {
+      color: var(--vscode-terminal-ansiYellow, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 22%, transparent);
+    }
+    .agent-stream-toggle {
+      border: 1px solid rgba(127,127,127,0.28);
+      border-radius: 4px;
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      color: var(--vscode-foreground);
+      font-size: 0.9em;
+      line-height: 1;
+      padding: 2px 6px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .agent-stream-toggle:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.24));
     }
     .agent-stream {
       font-family: var(--vscode-editor-font-family);
@@ -457,29 +804,88 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       line-height: 1.35;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: min(40vh, 320px);
+      max-height: min(38vh, 300px);
       overflow-y: auto;
       padding: 8px 10px;
       margin: 0;
       background: var(--vscode-editor-background, rgba(0,0,0,0.2));
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 6px;
+      border: 0;
     }
-    .agent-stream-ended .agent-stream {
-      max-height: min(22vh, 180px);
+    .agent-stream-collapsed .agent-stream {
+      display: none;
     }
     .agent-stream-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       font-size: 0.72em;
-      opacity: 0.65;
-      padding: 3px 0 6px;
+      opacity: 0.76;
+      padding: 5px 8px;
+      border-top: 1px solid rgba(127,127,127,0.14);
+      background: color-mix(in srgb, var(--vscode-sideBar-background) 70%, transparent);
+    }
+    /* Animated status (cooking phrases) */
+    .animated-status-bubble {
+      display: flex; align-items: center; gap: 6px;
+      font-style: italic; opacity: 0.8;
+    }
+    .animated-spinner {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 1em; min-width: 1ch; display: inline-block;
+    }
+    .animated-phrase { transition: opacity 0.25s ease; }
+    /* Run summary card */
+    .run-summary-row { max-width: 95%; align-self: stretch; }
+    .run-summary-card {
+      background: var(--vscode-editor-background, rgba(0,0,0,0.15));
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 8px; padding: 10px 12px; font-size: 0.88em;
+    }
+    .run-summary-header { font-weight: 600; margin-bottom: 3px; }
+    .run-summary-stats { opacity: 0.7; font-size: 0.9em; margin-bottom: 8px; }
+    .run-summary-files {
+      display: flex; flex-direction: column; gap: 3px;
+      border-top: 1px solid rgba(127,127,127,0.15);
+      padding-top: 6px; margin-bottom: 8px;
+    }
+    .run-summary-file-row {
+      display: flex; align-items: center; gap: 6px; font-size: 0.88em;
+    }
+    .run-summary-file-path {
+      flex: 1; font-family: var(--vscode-editor-font-family);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    }
+    .run-summary-file-diff {
+      color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
+      white-space: nowrap; font-size: 0.85em; flex-shrink: 0;
+    }
+    .run-summary-diff-btn {
+      flex-shrink: 0; padding: 1px 6px; cursor: pointer; font-size: 0.78em;
+      border: 1px solid rgba(127,127,127,0.3); border-radius: 3px;
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      color: var(--vscode-foreground); white-space: nowrap;
+    }
+    .run-summary-diff-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
+    }
+    .run-summary-scm-btn {
+      display: block; width: 100%; padding: 5px 0; cursor: pointer;
+      font-size: 0.82em; text-align: center;
+      border: 1px solid rgba(127,127,127,0.25); border-radius: 4px;
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      color: var(--vscode-foreground);
+    }
+    .run-summary-scm-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
     }
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> for <code>.planstack/plans/&lt;id&gt;.json</code>. Agent stdout/stderr can appear in a <strong>live block</strong> below (and in <strong>Output → Planstack</strong>). Toggle <code>planstack.cursor.agentChatLiveStream</code> off for throttled bubbles only. One agent at a time; <strong>Stop agents</strong> sends SIGTERM. <strong>Send</strong> stays local.</div>
+  <div class="hint">Use <strong>Create plan</strong> for new <code>.planstack/plans/&lt;id&gt;.json</code> files. Use <strong>Send</strong> for freeform edits via headless Cursor CLI. Live output appears below and in <strong>Output → Planstack</strong>. One run at a time; <strong>Stop agents</strong> sends SIGTERM.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
-    <textarea id="input" rows="2" placeholder="Describe the plan you want…" aria-label="Message"></textarea>
+    <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>
     <div id="composerActions">
       <button type="button" id="stopAgents">Stop agents</button>
       <button type="button" id="createPlan">Create plan</button>

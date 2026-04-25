@@ -5,8 +5,10 @@ import { formatGitSnapshotDeltaForChat, gitSnapshotFingerprint } from "../git/gi
 import {
   formatGitSummaryChatLine,
   getWorktreeChangeSummary,
+  getWorktreeNumstat,
   type WorktreeChangeSummary,
 } from "../git/worktreeChangeSummary";
+import { postAnimatedStatus, postRunSummary } from "../ui/richChatBridge";
 import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, runAgentPrint } from "../plan/agentCliRunner";
 import { buildAgentEnv, resolveCursorApiKey } from "../plan/createPlanFromCli";
@@ -173,13 +175,7 @@ export async function handoffViaAgentCli(
     cwd,
   });
 
-  const heartbeatEveryMs = 45_000;
   const startedAt = Date.now();
-  const heartbeat = setInterval(() => {
-    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
-    const elapsedHuman = elapsedSec < 60 ? `${elapsedSec}s` : `~${Math.floor(elapsedSec / 60)} min`;
-    postChatSystemMessage(`${label}: still running (${elapsedHuman} elapsed)…`);
-  }, heartbeatEveryMs);
 
   const output = getOutput();
   output.show(true);
@@ -189,6 +185,8 @@ export async function handoffViaAgentCli(
     const runId = randomUUID();
     let streamActive = false;
     let endReason: AgentStreamEndReason = "complete";
+
+    postAnimatedStatus(runId);
 
     const { stdout, stderr, exitCode } = await vscode.window.withProgress(
       {
@@ -270,8 +268,6 @@ export async function handoffViaAgentCli(
           postAgentStreamStart(runId, {
             label,
             source: "runPhase",
-            initialLine:
-              "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
           });
         }
         const baseHandlers = buildStreamHandlers({
@@ -319,15 +315,11 @@ export async function handoffViaAgentCli(
           throw e;
         } finally {
           clearProgressTimers();
-          if (streamActive) {
-            postAgentStreamEnd(runId, endReason);
-            streamActive = false;
-          }
+          postAgentStreamEnd(runId, endReason);
+          streamActive = false;
         }
       },
     );
-
-    clearInterval(heartbeat);
 
     appendRunLog(stdout, stderr);
     traceEvent(tid, "handoffViaAgentCli.agent_finished", {
@@ -349,14 +341,19 @@ export async function handoffViaAgentCli(
     }
 
     await notifyFinished("success");
-    postChatSystemMessage(`${label}: finished — check the workspace for changes (Output → Planstack for a log tail).`);
+
+    const durationSec = Math.floor((Date.now() - startedAt) / 1000);
 
     if (showGitSummary) {
-      const summary = await getWorktreeChangeSummary(cwd);
+      const [summary, files] = await Promise.all([
+        getWorktreeChangeSummary(cwd),
+        getWorktreeNumstat(cwd),
+      ]);
       traceEvent(tid, "handoffViaAgentCli.git_summary", {
         hasSummary: Boolean(summary),
         statusLine: summary?.statusLine ?? null,
         diffStatHead: summary?.diffStat ? summary.diffStat.slice(0, 500) : null,
+        fileCount: files.length,
       });
       if (summary) {
         output.appendLine(`\n--- Git vs HEAD (${label}) ---\n`);
@@ -368,26 +365,17 @@ export async function handoffViaAgentCli(
         } else {
           output.appendLine("(no file changes vs HEAD)");
         }
-        const chatLine = formatGitSummaryChatLine(summary);
-        postChatSystemMessage(`${label}: changes vs HEAD —\n${chatLine}`);
-        const openScm = "Open Source Control";
-        await vscode.window
-          .showInformationMessage(
-            "Planstack: phase finished. Git summary vs HEAD is in Output → Planstack; open Source Control for the full diff.",
-            openScm,
-          )
-          .then((choice) => {
-            if (choice === openScm) {
-              void vscode.commands.executeCommand("workbench.view.scm");
-            }
-          });
-      } else {
-        postChatSystemMessage(`${label}: Git summary skipped (not a repo or git unavailable).`);
-        await vscode.window.showInformationMessage(
-          "Planstack: phase CLI run finished. Check the workspace for changes; see Output → Planstack for a log tail.",
-        );
       }
+      postRunSummary(runId, {
+        phaseLabel: label,
+        durationSec,
+        files,
+        totalAdditions: files.reduce((s, f) => s + f.additions, 0),
+        totalDeletions: files.reduce((s, f) => s + f.deletions, 0),
+        exitCode: 0,
+      });
     } else {
+      postChatSystemMessage(`${label}: finished — check the workspace for changes (Output → Planstack for a log tail).`);
       await vscode.window.showInformationMessage(
         "Planstack: phase CLI run finished. Check the workspace for changes; see Output → Planstack for a log tail.",
       );
@@ -420,7 +408,6 @@ export async function handoffViaAgentCli(
       await vscode.window.showErrorMessage(`Planstack: ${msg.slice(0, 2000)}`);
     }
   } finally {
-    clearInterval(heartbeat);
     traceEvent(tid, "handoffViaAgentCli.finally", {});
   }
 }
