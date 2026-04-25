@@ -9,13 +9,14 @@
   /** Max characters retained per run in the live <pre> (tail kept). */
   const MAX_AGENT_STREAM_CHARS = 400000;
 
-  /** @type {Map<string, { wrap: HTMLElement; pre: HTMLPreElement; len: number }>} */
+  /** @type {Map<string, { wrap: HTMLElement; pre: HTMLPreElement; len: number; statusEl: HTMLElement; toggleBtn: HTMLButtonElement; footerTextEl: HTMLElement; collapsed: boolean }>} */
   const agentStreams = new Map();
 
   /** @type {Map<string, { wrap: HTMLElement; intervalId: ReturnType<typeof setInterval> }>} */
   const animatedStatuses = new Map();
 
   function appendBubble(role, text) {
+    const shouldStick = isNearBottom(messagesEl);
     const wrap = document.createElement("div");
     wrap.className = role === "system" ? "row system" : "row user";
     const bubble = document.createElement("div");
@@ -23,7 +24,24 @@
     bubble.textContent = text;
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (shouldStick) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  function isNearBottom(el, thresholdPx = 80) {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx;
+  }
+
+  function setStreamCollapsed(st, collapsed) {
+    st.collapsed = !!collapsed;
+    st.wrap.classList.toggle("agent-stream-collapsed", st.collapsed);
+    st.toggleBtn.textContent = st.collapsed ? "Expand" : "Collapse";
+  }
+
+  function setStreamStatus(st, statusLabel, statusClass) {
+    st.statusEl.textContent = statusLabel;
+    st.statusEl.className = `agent-stream-status ${statusClass}`;
   }
 
   function capStreamText(pre, state, add) {
@@ -58,6 +76,7 @@
       return;
     }
 
+    const shouldStick = isNearBottom(messagesEl);
     const wrap = document.createElement("div");
     wrap.className = "row system";
 
@@ -77,7 +96,9 @@
     bubble.appendChild(textEl);
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (shouldStick) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
 
     let phraseIdx = 0;
     let spinIdx = 0;
@@ -105,6 +126,7 @@
 
   function renderRunSummary(runId, summary) {
     clearAnimatedStatus(runId);
+    const shouldStick = isNearBottom(messagesEl);
 
     const wrap = document.createElement("div");
     wrap.className = "row system run-summary-row";
@@ -185,7 +207,9 @@
 
     wrap.appendChild(card);
     messagesEl.appendChild(wrap);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (shouldStick) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
   }
 
   // ── Input / buttons ──────────────────────────────────────────────────────────
@@ -275,12 +299,16 @@
       if (agentStreams.has(runId)) {
         return;
       }
+      const shouldStick = isNearBottom(messagesEl);
       const wrap = document.createElement("div");
       wrap.className = "row system agent-stream-row";
       wrap.dataset.runId = runId;
 
       const header = document.createElement("div");
       header.className = "agent-stream-header";
+
+      const headerMain = document.createElement("div");
+      headerMain.className = "agent-stream-header-main";
       const label = typeof msg.label === "string" ? msg.label : "Agent";
       const src =
         msg.source === "createPlan"
@@ -288,24 +316,65 @@
           : msg.source === "sendPrompt"
             ? "Send"
             : "Run phase";
-      header.textContent = `${label} · ${src} · live`;
+      const title = document.createElement("span");
+      title.className = "agent-stream-title";
+      title.textContent = label;
+      const source = document.createElement("span");
+      source.className = "agent-stream-source";
+      source.textContent = src;
+      headerMain.appendChild(title);
+      headerMain.appendChild(source);
+
+      const headerActions = document.createElement("div");
+      headerActions.className = "agent-stream-header-main";
+      headerActions.style.flexShrink = "0";
+      const status = document.createElement("span");
+      setStreamStatus({ statusEl: status }, "LIVE", "live");
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "agent-stream-toggle";
+      toggleBtn.textContent = "Collapse";
+      headerActions.appendChild(status);
+      headerActions.appendChild(toggleBtn);
+
+      header.appendChild(headerMain);
+      header.appendChild(headerActions);
 
       const pre = document.createElement("pre");
       pre.className = "agent-stream";
       pre.setAttribute("aria-label", "Agent output stream");
-      const defaultWait =
-        "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering output until the run completes. Full log still goes to Output → Planstack.\n\n";
       const initial =
         typeof msg.initialLine === "string" && msg.initialLine.trim().length > 0
           ? msg.initialLine
-          : defaultWait;
-      pre.appendChild(document.createTextNode(initial));
+          : "";
+      if (initial.length > 0) {
+        pre.appendChild(document.createTextNode(initial));
+      }
+
+      const footer = document.createElement("div");
+      footer.className = "agent-stream-footer";
+      const footerText = document.createElement("span");
+      footerText.textContent = "Running…";
+      footer.appendChild(footerText);
 
       wrap.appendChild(header);
       wrap.appendChild(pre);
+      wrap.appendChild(footer);
       messagesEl.appendChild(wrap);
-      agentStreams.set(runId, { wrap, pre, len: initial.length });
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      const state = {
+        wrap,
+        pre,
+        len: initial.length,
+        statusEl: status,
+        toggleBtn,
+        footerTextEl: footerText,
+        collapsed: false,
+      };
+      toggleBtn.addEventListener("click", () => setStreamCollapsed(state, !state.collapsed));
+      agentStreams.set(runId, state);
+      if (shouldStick) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
       return;
     }
 
@@ -314,10 +383,15 @@
       if (!st || !msg.text) {
         return;
       }
+      const shouldStick = isNearBottom(messagesEl);
       const chunk = msg.stream === "stderr" ? "[stderr] " + msg.text : msg.text;
       capStreamText(st.pre, st, chunk);
-      st.pre.scrollTop = st.pre.scrollHeight;
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (!st.collapsed) {
+        st.pre.scrollTop = st.pre.scrollHeight;
+      }
+      if (shouldStick) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
       return;
     }
 
@@ -327,15 +401,24 @@
       if (!st) {
         return;
       }
-      st.wrap.classList.add("agent-stream-ended");
-      const foot = document.createElement("div");
-      foot.className = "agent-stream-footer";
       const r = msg.reason;
-      foot.textContent =
-        r === "stopped" ? "Stopped." : r === "error" ? "Ended with error." : "Finished.";
-      st.wrap.appendChild(foot);
+      if (r === "stopped") {
+        setStreamStatus(st, "STOPPED", "stopped");
+        st.footerTextEl.textContent = "Stopped.";
+        setStreamCollapsed(st, false);
+      } else if (r === "error") {
+        setStreamStatus(st, "ERROR", "error");
+        st.footerTextEl.textContent = "Ended with error.";
+        setStreamCollapsed(st, false);
+      } else {
+        setStreamStatus(st, "FINISHED", "finished");
+        st.footerTextEl.textContent = "Finished.";
+        setStreamCollapsed(st, true);
+      }
       agentStreams.delete(msg.runId);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (isNearBottom(messagesEl)) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
     }
   });
 })();

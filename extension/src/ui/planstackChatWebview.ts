@@ -386,8 +386,6 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           postAgentStreamStart(runId, {
             label: "Create plan",
             source: "createPlan",
-            initialLine:
-              "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
           });
         }
         traceEvent(flowId, "createPlanFlow.calling_createPlanFromUserRequest", {
@@ -544,8 +542,6 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         postAgentStreamStart(runId, {
           label: "Send prompt",
           source: "sendPrompt",
-          initialLine:
-            "Waiting for agent stdout/stderr…\n\nThe run can edit files directly in your workspace.\n\n",
         });
       }
 
@@ -724,11 +720,83 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     .agent-stream-row {
       max-width: 98%;
       align-self: stretch;
+      border: 1px solid rgba(127,127,127,0.22);
+      border-radius: 8px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--vscode-editor-background) 78%, transparent);
     }
     .agent-stream-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       font-size: 0.75em;
-      opacity: 0.78;
-      padding: 4px 0 2px;
+      opacity: 0.9;
+      padding: 6px 8px;
+      background: color-mix(in srgb, var(--vscode-sideBar-background) 55%, transparent);
+      border-bottom: 1px solid rgba(127,127,127,0.18);
+    }
+    .agent-stream-header-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-stream-title {
+      font-weight: 600;
+      opacity: 0.95;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-stream-source {
+      opacity: 0.72;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-size: 0.92em;
+    }
+    .agent-stream-status {
+      font-size: 0.9em;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-radius: 999px;
+      padding: 2px 7px;
+      border: 1px solid rgba(127,127,127,0.35);
+      opacity: 0.95;
+      flex-shrink: 0;
+    }
+    .agent-stream-status.live {
+      color: var(--vscode-terminal-ansiBlue, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiBlue) 22%, transparent);
+    }
+    .agent-stream-status.finished {
+      color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 22%, transparent);
+    }
+    .agent-stream-status.error {
+      color: var(--vscode-terminal-ansiRed, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiRed) 22%, transparent);
+    }
+    .agent-stream-status.stopped {
+      color: var(--vscode-terminal-ansiYellow, var(--vscode-foreground));
+      background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 22%, transparent);
+    }
+    .agent-stream-toggle {
+      border: 1px solid rgba(127,127,127,0.28);
+      border-radius: 4px;
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      color: var(--vscode-foreground);
+      font-size: 0.9em;
+      line-height: 1;
+      padding: 2px 6px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .agent-stream-toggle:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.24));
     }
     .agent-stream {
       font-family: var(--vscode-editor-font-family);
@@ -736,21 +804,26 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       line-height: 1.35;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: min(40vh, 320px);
+      max-height: min(38vh, 300px);
       overflow-y: auto;
       padding: 8px 10px;
       margin: 0;
       background: var(--vscode-editor-background, rgba(0,0,0,0.2));
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 6px;
+      border: 0;
     }
-    .agent-stream-ended .agent-stream {
-      max-height: min(22vh, 180px);
+    .agent-stream-collapsed .agent-stream {
+      display: none;
     }
     .agent-stream-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       font-size: 0.72em;
-      opacity: 0.65;
-      padding: 3px 0 6px;
+      opacity: 0.76;
+      padding: 5px 8px;
+      border-top: 1px solid rgba(127,127,127,0.14);
+      background: color-mix(in srgb, var(--vscode-sideBar-background) 70%, transparent);
     }
     /* Animated status (cooking phrases) */
     .animated-status-bubble {
@@ -809,7 +882,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> for new <code>.planstack/plans/&lt;id&gt;.json</code> files. Use <strong>Send</strong> for freeform editing prompts; it runs Cursor CLI headless and can edit your workspace directly. Agent stdout/stderr can appear in a <strong>live block</strong> below (and in <strong>Output → Planstack</strong>). One run at a time; <strong>Stop agents</strong> sends SIGTERM.</div>
+  <div class="hint">Use <strong>Create plan</strong> for new <code>.planstack/plans/&lt;id&gt;.json</code> files. Use <strong>Send</strong> for freeform edits via headless Cursor CLI. Live output appears below and in <strong>Output → Planstack</strong>. One run at a time; <strong>Stop agents</strong> sends SIGTERM.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>

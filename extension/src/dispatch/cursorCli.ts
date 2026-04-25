@@ -268,8 +268,6 @@ export async function handoffViaAgentCli(
           postAgentStreamStart(runId, {
             label,
             source: "runPhase",
-            initialLine:
-              "Waiting for agent stdout/stderr…\n\nIf this stays empty for a long time, the Cursor CLI may be buffering until the run completes.\n\n",
           });
         }
         const baseHandlers = buildStreamHandlers({
