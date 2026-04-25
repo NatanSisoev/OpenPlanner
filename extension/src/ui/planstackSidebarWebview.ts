@@ -168,6 +168,27 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       if (m.type === "renameTask" && m.planId && m.phaseId && m.taskId) {
         void this.renameTask(m.planId, m.phaseId, m.taskId);
       }
+      if (m.type === "toggleTaskCommit" && m.planId && m.phaseId && m.taskId) {
+        const planIdLocal = m.planId;
+        const phaseIdLocal = m.phaseId;
+        const taskIdLocal = m.taskId;
+        void (async () => {
+          const currentPlan = this.plans.find((p) => p.id === planIdLocal);
+          const currentPhase = currentPlan?.phases?.find((ph) => ph.id === phaseIdLocal);
+          const currentTask = currentPhase?.tasks?.find((t) => t.id === taskIdLocal);
+          if (!currentTask) {
+            return;
+          }
+          const next = !Boolean(currentTask.commit);
+          await this.onUpdateTask(planIdLocal, phaseIdLocal, taskIdLocal, { commit: next });
+          const updatedPlan = this.plans.find((p) => p.id === planIdLocal);
+          const updatedPhase = updatedPlan?.phases?.find((ph) => ph.id === phaseIdLocal);
+          const updatedTask = updatedPhase?.tasks?.find((t) => t.id === taskIdLocal);
+          if (updatedPlan && updatedPhase && updatedTask && this.taskDetailsPanel === panel) {
+            panel.webview.html = getTaskDetailsHtml(updatedPlan, updatedPhase, updatedTask);
+          }
+        })();
+      }
     });
     panel.onDidDispose(() => {
       if (this.taskDetailsPanel === panel) {
@@ -592,12 +613,33 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .phase-status-dot {
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
       box-shadow: 0 0 4px currentColor;
+      cursor: pointer; outline: none;
     }
+    .phase-status-dot:hover { transform: scale(1.4); box-shadow: 0 0 6px currentColor; }
+    .phase-status-dot:focus-visible { outline: 2px solid var(--vscode-focusBorder, #0e70c0); outline-offset: 2px; }
     .dot-completed  { background: var(--c-done);      color: var(--c-done); }
     .dot-in_progress{ background: var(--c-running);  color: var(--c-running); }
     .dot-failed     { background: var(--c-failed);   color: var(--c-failed); }
     .dot-pending    { background: var(--c-pending);  color: var(--c-pending); box-shadow: none; }
-    .dot-cancelled  { background: var(--c-cancelled);color: var(--c-cancelled); box-shadow: none; }
+    .dot-cancelled  {
+      background: transparent;
+      color: var(--c-cancelled);
+      border: 1.5px solid currentColor;
+      box-sizing: border-box;
+      width: 10px; height: 10px;
+      box-shadow: none;
+      position: relative;
+    }
+    .dot-cancelled::after {
+      content: "";
+      position: absolute;
+      top: 50%; left: -1px; right: -1px;
+      height: 1.5px;
+      background: currentColor;
+      border-radius: 1px;
+      transform: translateY(-50%) rotate(-45deg);
+      pointer-events: none;
+    }
 
     .phase-title {
       font-size: 0.86em;
@@ -653,8 +695,11 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
 
     .task-icon {
       font-size: 0.78em; width: 13px; text-align: center; flex-shrink: 0;
-      line-height: 1;
+      line-height: 1; cursor: pointer; border-radius: 3px; padding: 2px;
+      margin: -2px; outline: none; user-select: none;
     }
+    .task-icon:hover { background: rgba(127,127,127,0.2); }
+    .task-icon:focus-visible { box-shadow: 0 0 0 2px var(--vscode-focusBorder, #0e70c0); }
     .icon-completed  { color: var(--c-done); }
     .icon-in_progress{ color: var(--c-running); }
     .icon-failed     { color: var(--c-failed); }
@@ -779,6 +824,20 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
       line-height: 1;
     }
     .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
+    .toggle-btn {
+      font: inherit;
+      border: 1px solid rgba(127,127,127,0.35);
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      padding: 1px 8px;
+      border-radius: 4px;
+      font-family: var(--vscode-editor-font-family);
+      line-height: 1.4;
+    }
+    .toggle-btn:hover { background: rgba(127,127,127,0.18); border-color: rgba(127,127,127,0.55); }
+    .toggle-btn[data-value="true"] { color: var(--vscode-charts-green, #4ec9b0); }
+    .toggle-btn[data-value="false"] { color: var(--vscode-charts-red, #f48771); }
   </style>
 </head>
 <body>
@@ -793,7 +852,7 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     <div class="k">Phase</div><div class="v">${htmlEscape(phase.title)} <span class="subtle">(<code>${htmlEscape(phase.id)}</code>)</span></div>
     <div class="k">Task</div><div class="v"><code>${htmlEscape(task.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(task.state)}</code></div>
-    <div class="k">Commit</div><div class="v"><code>${task.commit ? "true" : "false"}</code></div>
+    <div class="k">Commit</div><div class="v"><button class="toggle-btn" type="button" data-action="toggleCommit" data-value="${task.commit ? "true" : "false"}" title="Click to toggle">${task.commit ? "true" : "false"}</button></div>
   </div>
   ${promptBlock}
   <script>
@@ -804,6 +863,9 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
       const action = btn.dataset.action;
       if (action === "renameTask") {
         vscode.postMessage({ type: "renameTask", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
+      }
+      if (action === "toggleCommit") {
+        vscode.postMessage({ type: "toggleTaskCommit", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
       }
     });
   </script>
@@ -1002,6 +1064,8 @@ function getPlanDetailsHtml(plan: Plan): string {
   const desc = (plan as { description?: unknown }).description;
   const createdAt = (plan as { createdAt?: unknown }).createdAt;
   const createdAtLabel = createdAt ? new Date(String(createdAt)).toISOString() : "";
+  const baseBranch = plan.git?.baseBranch;
+  const planBranch = plan.git?.planBranch;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1111,6 +1175,8 @@ function getPlanDetailsHtml(plan: Plan): string {
     <div class="k">State</div><div class="v"><code>${htmlEscape(plan.state)}</code></div>
     <div class="k">Description</div><div class="v"><span class="row"><span>${desc ? htmlEscape(desc) : `<span class="subtle">—</span>`}</span><button class="edit-btn" type="button" data-action="editPlanDescription" title="Edit">✎</button></span></div>
     <div class="k">CreatedAt</div><div class="v">${createdAtLabel ? `<code>${htmlEscape(createdAtLabel)}</code>` : `<span class="subtle">—</span>`}</div>
+    <div class="k">Base branch</div><div class="v">${baseBranch ? `<code>${htmlEscape(baseBranch)}</code>` : `<span class="subtle">—</span>`}</div>
+    <div class="k">Plan branch</div><div class="v">${planBranch ? `<code>${htmlEscape(planBranch)}</code>` : `<span class="subtle">—</span>`}</div>
     <div class="k">Phases</div><div class="v"><code>${phases.length}</code> · completed <code>${donePhases}</code></div>
     <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code> · completed <code>${doneTasks}</code></div>
   </div>

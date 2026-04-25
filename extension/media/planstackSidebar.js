@@ -23,7 +23,13 @@
       .replace(/"/g, "&quot;");
   }
 
-  function taskIconHtml(state) {
+  const STATE_CYCLE = ["pending", "in_progress", "completed", "failed", "cancelled"];
+  function nextStateInCycle(state) {
+    const i = STATE_CYCLE.indexOf(state);
+    return STATE_CYCLE[(i === -1 ? 0 : i + 1) % STATE_CYCLE.length];
+  }
+
+  function taskIconHtml(state, planId, phaseId, taskId) {
     const cls = "task-icon icon-" + state;
     const icons = {
       completed:   "✓",
@@ -32,7 +38,9 @@
       cancelled:   "⊘",
       pending:     "○",
     };
-    return `<span class="${cls}">${icons[state] || "○"}</span>`;
+    const symbol = icons[state] || "○";
+    const next = nextStateInCycle(state);
+    return `<span class="${cls}" role="button" tabindex="0" data-action="cycleTaskState" data-plan="${planId}" data-phase="${phaseId}" data-task="${taskId}" title="Click to set: ${next.replace("_", " ")}">${symbol}</span>`;
   }
 
   function badgeHtml(state) {
@@ -226,7 +234,9 @@
             ${hasTasks
               ? `<span class="chevron sm${isOpen ? " expanded" : ""}">›</span>`
               : `<span class="chevron-gap"></span>`}
-            <span class="phase-status-dot dot-${phase.state}"></span>
+            <span class="phase-status-dot dot-${phase.state}" role="button" tabindex="0"
+                  data-action="cyclePhaseState" data-plan="${pid}" data-phase="${phid}"
+                  title="Click to set: ${nextStateInCycle(phase.state).replace("_", " ")}"></span>
             <span class="phase-title">${esc(phase.title)}</span>
             ${isBlocked ? `<span class="phase-blocked-hint">· blocked by ${esc(blockers.join(", "))}</span>` : ""}
           </div>
@@ -245,38 +255,21 @@
 
   function renderTask(plan, phase, task) {
     const isCancelled = task.state === "cancelled";
-    const isCompleted = task.state === "completed";
     const isRunning = task.state === "in_progress";
     const pid = esc(plan.id);
     const phid = esc(phase.id);
     const tid = esc(task.id);
 
-    const btns = [];
-    if (!isCompleted && !isCancelled) {
-      btns.push(`<button class="task-btn done-btn" data-action="taskStatus"
-                   data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="completed"
-                   title="Mark done">✓</button>`);
-    }
-    btns.push(`<button class="task-btn run-task" data-action="taskRun"
+    const runBtn = `<button class="task-btn run-task" data-action="taskRun"
                  data-plan="${pid}" data-phase="${phid}" data-task="${tid}"
                  ${isRunning ? "disabled" : ""}
-                 title="${isRunning ? "Already running" : "Run task"}">▶</button>`);
-    if (!isCompleted && !isCancelled) {
-      btns.push(`<button class="task-btn cancel-btn" data-action="taskStatus"
-                   data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="cancelled"
-                   title="Cancel">✗</button>`);
-    }
-    if (isCancelled || task.state === "failed") {
-      btns.push(`<button class="task-btn reset-btn" data-action="taskStatus"
-                   data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="pending"
-                   title="Reset">↺</button>`);
-    }
+                 title="${isRunning ? "Already running" : "Run task"}">▶</button>`;
 
     return `
       <div class="task-row" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
-        ${taskIconHtml(task.state)}
+        ${taskIconHtml(task.state, pid, phid, tid)}
         <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
-        <div class="task-actions">${btns.join("")}</div>
+        <div class="task-actions">${runBtn}</div>
       </div>`;
   }
 
@@ -388,6 +381,34 @@
         task.state = newState;
         render();
       }
+      return;
+    }
+
+    if (action === "cycleTaskState") {
+      e.stopPropagation();
+      const plan = plans.find((p) => p.id === planId);
+      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+      const task = phase?.tasks?.find((t) => t.id === taskId);
+      if (task) {
+        const next = nextStateInCycle(task.state);
+        task.state = next;
+        vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, state: next });
+        render();
+      }
+      return;
+    }
+
+    if (action === "cyclePhaseState") {
+      e.stopPropagation();
+      const plan = plans.find((p) => p.id === planId);
+      const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+      if (phase) {
+        const next = nextStateInCycle(phase.state);
+        phase.state = next;
+        vscode.postMessage({ type: "updatePhase", planId, phaseId, state: next });
+        render();
+      }
+      return;
     }
   });
 
@@ -548,15 +569,6 @@
       {
         label: "Open task details",
         onClick: () => vscode.postMessage({ type: "openTaskDetails", planId, phaseId, taskId }),
-      },
-      {
-        label: task.commit ? "Disable commit requirement" : "Enable commit requirement",
-        onClick: () => {
-          const nextCommit = !Boolean(task.commit);
-          task.commit = nextCommit;
-          vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, commit: nextCommit });
-          render();
-        },
       },
       {
         label: "Set state",

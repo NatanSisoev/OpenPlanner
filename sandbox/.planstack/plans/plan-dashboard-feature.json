@@ -27,13 +27,13 @@
           "id": "task-dash-003",
           "state": "completed",
           "desc": "Seed development database with 90 days of synthetic data",
-          "commit": false
+          "commit": true
         }
       ]
     },
     {
       "id": "phase-dash-002",
-      "state": "completed",
+      "state": "pending",
       "title": "Chart components",
       "description": "Build reusable React chart components backed by the metrics API.",
       "tasks": [
