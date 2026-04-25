@@ -1,0 +1,96 @@
+{
+  "id": "plan-auth-001",
+  "state": "in_progress",
+  "title": "Auth System Refactor",
+  "createdAt": "2026-04-24T08:00:00Z",
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-auth-001"
+  },
+  "phases": [
+    {
+      "id": "phase-auth-001",
+      "state": "completed",
+      "title": "Remove legacy session middleware",
+      "description": "Strip out the old cookie-based session store and all references to it across the codebase.",
+      "tasks": [
+        {
+          "id": "task-auth-001",
+          "state": "completed",
+          "desc": "Delete src/middleware/session.ts and its tests",
+          "commit": true
+        },
+        {
+          "id": "task-auth-002",
+          "state": "completed",
+          "desc": "Remove session imports from app.ts and api/router.ts",
+          "commit": false
+        },
+        {
+          "id": "task-auth-003",
+          "state": "completed",
+          "desc": "Update CHANGELOG and deprecation notice in README",
+          "commit": true
+        }
+      ]
+    },
+    {
+      "id": "phase-auth-002",
+      "state": "in_progress",
+      "title": "Implement JWT authentication",
+      "description": "Add stateless JWT-based auth with refresh token rotation and secure HttpOnly cookie delivery.",
+      "tasks": [
+        {
+          "id": "task-auth-004",
+          "state": "completed",
+          "desc": "Add jsonwebtoken and jose dependencies",
+          "commit": true
+        },
+        {
+          "id": "task-auth-005",
+          "state": "in_progress",
+          "desc": "Implement token signing and verification in src/auth/jwt.ts",
+          "commit": true
+        },
+        {
+          "id": "task-auth-006",
+          "state": "pending",
+          "desc": "Add refresh token rotation logic with Redis backing store",
+          "commit": true
+        },
+        {
+          "id": "task-auth-007",
+          "state": "pending",
+          "desc": "Write integration tests for login, refresh, and logout flows",
+          "commit": true
+        }
+      ]
+    },
+    {
+      "id": "phase-auth-003",
+      "state": "pending",
+      "title": "Migrate existing users",
+      "description": "Run a one-time migration script to invalidate all legacy sessions and force re-authentication.",
+      "tasks": [
+        {
+          "id": "task-auth-008",
+          "state": "pending",
+          "desc": "Write migration script scripts/invalidate-sessions.ts",
+          "commit": true
+        },
+        {
+          "id": "task-auth-009",
+          "state": "pending",
+          "desc": "Test migration in staging against prod-size dataset",
+          "commit": false
+        },
+        {
+          "id": "task-auth-010",
+          "state": "pending",
+          "desc": "Schedule maintenance window and run migration in production",
+          "commit": false
+        }
+      ]
+    }
+  ]
+}

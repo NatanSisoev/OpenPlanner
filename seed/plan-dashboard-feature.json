@@ -1,0 +1,122 @@
+{
+  "id": "plan-dash-001",
+  "state": "in_progress",
+  "title": "Analytics Dashboard v2",
+  "createdAt": "2026-04-25T07:30:00Z",
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-dash-001"
+  },
+  "phases": [
+    {
+      "id": "phase-dash-001",
+      "state": "completed",
+      "title": "Data pipeline setup",
+      "description": "Define and wire up the aggregation queries that feed the dashboard widgets.",
+      "tasks": [
+        {
+          "id": "task-dash-001",
+          "state": "completed",
+          "desc": "Write SQL aggregation views for daily/weekly/monthly metrics",
+          "commit": true
+        },
+        {
+          "id": "task-dash-002",
+          "state": "completed",
+          "desc": "Add /api/metrics endpoint with caching layer",
+          "commit": true
+        },
+        {
+          "id": "task-dash-003",
+          "state": "completed",
+          "desc": "Seed development database with 90 days of synthetic data",
+          "commit": false
+        }
+      ]
+    },
+    {
+      "id": "phase-dash-002",
+      "state": "in_progress",
+      "title": "Chart components",
+      "description": "Build reusable React chart components backed by the metrics API.",
+      "tasks": [
+        {
+          "id": "task-dash-004",
+          "state": "completed",
+          "desc": "Scaffold LineChart, BarChart, and KpiCard components",
+          "commit": true
+        },
+        {
+          "id": "task-dash-005",
+          "state": "in_progress",
+          "desc": "Integrate Recharts and wire components to /api/metrics",
+          "commit": true
+        },
+        {
+          "id": "task-dash-006",
+          "state": "pending",
+          "desc": "Add loading skeletons and error boundary for each widget",
+          "commit": true
+        },
+        {
+          "id": "task-dash-007",
+          "state": "cancelled",
+          "desc": "Prototype D3 custom chart (dropped in favour of Recharts)",
+          "commit": false
+        }
+      ]
+    },
+    {
+      "id": "phase-dash-003",
+      "state": "pending",
+      "title": "Dashboard layout and filters",
+      "description": "Compose the final dashboard page with date-range picker and per-user filter controls.",
+      "tasks": [
+        {
+          "id": "task-dash-008",
+          "state": "pending",
+          "desc": "Build DateRangePicker component with preset shortcuts",
+          "commit": true
+        },
+        {
+          "id": "task-dash-009",
+          "state": "pending",
+          "desc": "Implement URL-synced filter state with React Router",
+          "commit": true
+        },
+        {
+          "id": "task-dash-010",
+          "state": "pending",
+          "desc": "Write Playwright e2e tests for filter interactions",
+          "commit": true
+        }
+      ]
+    },
+    {
+      "id": "phase-dash-004",
+      "state": "pending",
+      "title": "Accessibility and performance audit",
+      "description": "Ensure WCAG AA compliance and Lighthouse performance score above 90.",
+      "tasks": [
+        {
+          "id": "task-dash-011",
+          "state": "pending",
+          "desc": "Run axe-core audit and fix all critical violations",
+          "commit": true
+        },
+        {
+          "id": "task-dash-012",
+          "state": "pending",
+          "desc": "Add keyboard navigation to chart tooltips",
+          "commit": true
+        },
+        {
+          "id": "task-dash-013",
+          "state": "pending",
+          "desc": "Code-split dashboard route and lazy-load chart library",
+          "commit": true
+        }
+      ]
+    }
+  ]
+}
