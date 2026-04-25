@@ -7,6 +7,7 @@ import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
+import { buildPromptWithMentionedFiles, findMentionCandidates } from "./chatFileMentions";
 import {
   postAgentStreamChunk,
   postAgentStreamEnd,
@@ -164,7 +165,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         traceEvent(recvId, "chat.onDidReceiveMessage.ignore", { reason: "not_object" });
         return;
       }
-      const m = msg as { type?: string; text?: string };
+      const m = msg as { type?: string; text?: string; requestId?: string; query?: string };
       if (m.type === "send" && typeof m.text === "string") {
         let text = m.text.trim();
         traceEvent(recvId, "chat.send", {
@@ -181,7 +182,10 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         this.transcript.push({ role: "user", text });
         w.postMessage({ type: "append", role: "user", text });
-        void this.runSendPromptFlow(w, text);
+        void (async () => {
+          const mentionCtx = await this.resolveMentionContext(w, text, "send");
+          await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
+        })();
         traceEvent(recvId, "chat.send.done", { storedChars: text.length, handled: true });
         return;
       }
@@ -193,7 +197,36 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           void vscode.window.showWarningMessage("Planstack: enter a request in the box before Create plan.");
           return;
         }
-        void this.runCreatePlanFlow(w, text);
+        this.transcript.push({ role: "user", text });
+        w.postMessage({ type: "append", role: "user", text });
+        void (async () => {
+          const mentionCtx = await this.resolveMentionContext(w, text, "createPlan");
+          await this.runCreatePlanFlow(w, text, mentionCtx.promptForAgent);
+        })();
+        return;
+      }
+      if (m.type === "mentionSuggest" && typeof m.requestId === "string" && typeof m.query === "string") {
+        const requestId = m.requestId;
+        const query = m.query;
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (!folder) {
+          w.postMessage({ type: "mentionSuggestResult", requestId, candidates: [] });
+          return;
+        }
+        void (async () => {
+          let candidates: string[] = [];
+          try {
+            candidates = await findMentionCandidates(folder.uri, { query, limit: 12 });
+          } catch {
+            candidates = [];
+          }
+          try {
+            w.postMessage({ type: "mentionSuggestResult", requestId, candidates });
+          } catch {
+            // Webview disposed.
+          }
+        })();
+        return;
       }
       if (m.type === "openScm") {
         void vscode.commands.executeCommand("workbench.view.scm");
@@ -212,7 +245,10 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         if (text) {
           this.transcript.push({ role: "user", text });
           w.postMessage({ type: "append", role: "user", text });
-          void this.runSendPromptFlow(w, text);
+          void (async () => {
+            const mentionCtx = await this.resolveMentionContext(w, text, "send");
+            await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
+          })();
         }
         return;
       }
@@ -337,7 +373,41 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     }, 0);
   }
 
-  private async runCreatePlanFlow(w: vscode.Webview, userRequest: string): Promise<void> {
+  private async resolveMentionContext(
+    w: vscode.Webview,
+    userPrompt: string,
+    flowKind: "send" | "createPlan",
+  ): Promise<{ promptForAgent: string }> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      return { promptForAgent: userPrompt };
+    }
+    const ctx = await buildPromptWithMentionedFiles(folder.uri, userPrompt);
+    if (ctx.files.length > 0) {
+      const used = ctx.files.map((f) => f.displayPath).join(", ");
+      this.pushSystem(
+        w,
+        `${flowKind === "createPlan" ? "Create plan" : "Send"}: attached ${ctx.files.length} @file context item(s): ${used}`,
+      );
+    }
+    if (ctx.errors.length > 0) {
+      const detail = ctx.errors
+        .slice(0, 8)
+        .map((e) => `@${e.mention}: ${e.reason}`)
+        .join(" | ");
+      this.pushSystem(
+        w,
+        `${flowKind === "createPlan" ? "Create plan" : "Send"}: skipped some @ mentions - ${detail}`,
+      );
+    }
+    return { promptForAgent: ctx.promptForAgent };
+  }
+
+  private async runCreatePlanFlow(
+    w: vscode.Webview,
+    userRequest: string,
+    promptForAgent: string = userRequest,
+  ): Promise<void> {
     const flowId = newTraceId("createPlanFlow");
     traceEvent(flowId, "createPlanFlow.start", { userRequestChars: userRequest.length });
     traceMultiline(flowId, "createPlanFlow.userRequest", userRequest);
@@ -423,11 +493,12 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         traceEvent(flowId, "createPlanFlow.calling_createPlanFromUserRequest", {
           debugTraceId: flowId,
           workspaceRoot: folder.uri.fsPath,
+          promptForAgentChars: promptForAgent.length,
         });
         const { savedUri } = await createPlanFromUserRequest({
           extensionContext: this.extensionContext,
           workspaceRoot: folder.uri,
-          userRequest,
+          userRequest: promptForAgent,
           debugTraceId: flowId,
           onAgentStdoutChunk:
             streamToOutput || useLiveChat
@@ -535,7 +606,11 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     }
   }
 
-  private async runSendPromptFlow(w: vscode.Webview, userPrompt: string): Promise<void> {
+  private async runSendPromptFlow(
+    w: vscode.Webview,
+    userPrompt: string,
+    promptForAgent: string = userPrompt,
+  ): Promise<void> {
     const flowId = newTraceId("sendPromptFlow");
     traceEvent(flowId, "sendPromptFlow.start", { promptChars: userPrompt.length });
     traceMultiline(flowId, "sendPromptFlow.userPrompt", userPrompt);
@@ -591,7 +666,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       const result = await runAgentPromptEdits({
         extensionContext: this.extensionContext,
         workspaceRoot: folder.uri,
-        prompt: userPrompt,
+        prompt: promptForAgent,
         debugTraceId: flowId,
         onAgentStdoutChunk:
           streamToOutput || useLiveChat
@@ -741,6 +816,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       padding: 8px 10px 10px;
       border-top: 1px solid rgba(127,127,127,0.18);
     }
+    #inputWrap { position: relative; }
     #input {
       width: 100%; min-height: 36px; max-height: 120px; resize: vertical;
       padding: 7px 9px;
@@ -751,6 +827,68 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       border-radius: 5px; outline: none;
     }
     #input:focus { border-color: var(--vscode-focusBorder, #007acc); }
+    #mentionChips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      min-height: 2px;
+    }
+    .mention-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(127,127,127,0.25);
+      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.2));
+      font-size: 0.76em;
+      line-height: 1.5;
+      font-family: var(--vscode-editor-font-family);
+    }
+    .mention-chip-remove {
+      border: none;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      line-height: 1;
+      font-size: 0.95em;
+      opacity: 0.8;
+      padding: 0;
+    }
+    .mention-chip-remove:hover { opacity: 1; }
+    #mentionSuggest {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(100% + 4px);
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--vscode-quickInput-background, var(--vscode-editor-background));
+      z-index: 5;
+      max-height: 180px;
+      overflow-y: auto;
+      display: none;
+    }
+    #mentionSuggest.show { display: block; }
+    .mention-suggest-item {
+      display: block;
+      width: 100%;
+      border: none;
+      border-bottom: 1px solid rgba(127,127,127,0.12);
+      background: transparent;
+      color: var(--vscode-foreground);
+      text-align: left;
+      padding: 6px 8px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.82em;
+      cursor: pointer;
+    }
+    .mention-suggest-item:last-child { border-bottom: none; }
+    .mention-suggest-item:hover,
+    .mention-suggest-item.active {
+      background: var(--vscode-list-activeSelectionBackground, rgba(127,127,127,0.2));
+    }
     #composerActions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
     #send, #createPlan, #stopAgents {
       flex-shrink: 0; padding: 0 12px; height: 28px;
@@ -777,7 +915,10 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       opacity: 0.45; cursor: not-allowed;
     }
     .agent-stream-row {
+      display: flex;
+      flex-direction: column;
       max-width: 98%;
+      width: 100%;
       align-self: stretch;
       border: 1px solid rgba(127,127,127,0.22);
       border-radius: 8px;
@@ -863,12 +1004,31 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       line-height: 1.35;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: min(38vh, 300px);
+      max-height: min(72vh, 760px);
       overflow-y: auto;
       padding: 8px 10px;
       margin: 0;
       background: var(--vscode-editor-background, rgba(0,0,0,0.2));
       border: 0;
+    }
+    .agent-stream strong { font-weight: 700; }
+    .agent-stream code {
+      font-family: var(--vscode-editor-font-family);
+      background: color-mix(in srgb, var(--vscode-editor-background) 65%, rgba(127,127,127,0.25));
+      border: 1px solid rgba(127,127,127,0.18);
+      border-radius: 4px;
+      padding: 0 4px;
+      font-size: 0.95em;
+    }
+    .agent-stream .agent-md-fence {
+      display: block;
+      white-space: pre-wrap;
+      margin: 6px 0;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(127,127,127,0.2);
+      background: color-mix(in srgb, var(--vscode-editor-background) 82%, rgba(0,0,0,0.18));
+      font-family: var(--vscode-editor-font-family);
     }
     .agent-stream-collapsed .agent-stream {
       display: none;
@@ -994,10 +1154,14 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits, and <strong>Stop agents</strong> cancels the active run.</div>
+  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits, and <strong>@file</strong> includes workspace file context.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
-    <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>
+    <div id="inputWrap">
+      <div id="mentionSuggest" aria-label="@file suggestions"></div>
+      <textarea id="input" rows="2" placeholder="Ask Cursor to edit the codebase..." aria-label="Message"></textarea>
+    </div>
+    <div id="mentionChips" aria-label="@file mentions"></div>
     <div id="composerActions">
       <button type="button" id="stopAgents">Stop agents</button>
       <button type="button" id="createPlan">Create plan</button>

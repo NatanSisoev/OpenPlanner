@@ -5,6 +5,8 @@
   const sendBtn = document.getElementById("send");
   const createPlanBtn = document.getElementById("createPlan");
   const stopAgentsBtn = document.getElementById("stopAgents");
+  const mentionChipsEl = document.getElementById("mentionChips");
+  const mentionSuggestEl = document.getElementById("mentionSuggest");
 
   /** Max characters retained per run in the live <pre> (tail kept). */
   const MAX_AGENT_STREAM_CHARS = 400000;
@@ -14,6 +16,18 @@
 
   /** @type {Map<string, { wrap: HTMLElement; intervalId: ReturnType<typeof setInterval> }>} */
   const animatedStatuses = new Map();
+  const MENTION_PATH_RE = /(^|[\s(])@([A-Za-z0-9._\-\/]+)/g;
+  let mentionSuggestState = {
+    requestId: 0,
+    latestHandledRequestId: 0,
+    tokenStart: -1,
+    tokenEnd: -1,
+    tokenQuery: "",
+    candidates: [],
+    activeIndex: 0,
+    open: false,
+  };
+  let mentionSuggestDebounceTimer = undefined;
 
   function appendBubble(role, text) {
     const shouldStick = isNearBottom(messagesEl);
@@ -68,15 +82,76 @@
   }
 
   function capStreamText(pre, state, add) {
-    const combined = pre.textContent + add;
+    const combined = state.raw + add;
     if (combined.length <= MAX_AGENT_STREAM_CHARS) {
-      pre.appendChild(document.createTextNode(add));
-      state.len = combined.length;
+      state.raw = combined;
+      state.len = state.raw.length;
+      pre.innerHTML = renderAgentMarkdown(state.raw);
       return;
     }
     const tail = combined.slice(-MAX_AGENT_STREAM_CHARS);
-    pre.textContent = tail;
+    state.raw = tail;
     state.len = tail.length;
+    pre.innerHTML = renderAgentMarkdown(state.raw);
+  }
+
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderInlineMarkdown(text) {
+    if (!text) {
+      return "";
+    }
+    const codeTokens = [];
+    let out = escapeHtml(text).replace(/`([^`\n]+)`/g, (_m, inner) => {
+      const idx = codeTokens.length;
+      codeTokens.push(`<code>${inner}</code>`);
+      return `@@CODE_TOKEN_${idx}@@`;
+    });
+    out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    out = out.replace(/^### (.+)$/gm, "<strong>$1</strong>");
+    out = out.replace(/^## (.+)$/gm, "<strong>$1</strong>");
+    out = out.replace(/^# (.+)$/gm, "<strong>$1</strong>");
+    out = out.replace(/^[-*] (.+)$/gm, "• $1");
+    out = out.replace(/^> (.+)$/gm, "› $1");
+    out = out.replace(/@@CODE_TOKEN_(\d+)@@/g, (_m, n) => {
+      const idx = Number(n);
+      return codeTokens[idx] || "";
+    });
+    return out;
+  }
+
+  function renderAgentMarkdown(raw) {
+    if (!raw) {
+      return "";
+    }
+    const chunks = [];
+    let i = 0;
+    while (i < raw.length) {
+      const fenceStart = raw.indexOf("```", i);
+      if (fenceStart === -1) {
+        chunks.push(renderInlineMarkdown(raw.slice(i)));
+        break;
+      }
+      if (fenceStart > i) {
+        chunks.push(renderInlineMarkdown(raw.slice(i, fenceStart)));
+      }
+      const fenceEnd = raw.indexOf("```", fenceStart + 3);
+      if (fenceEnd === -1) {
+        chunks.push(`<span class="agent-md-fence">${escapeHtml(raw.slice(fenceStart + 3))}</span>`);
+        break;
+      }
+      const fenced = raw.slice(fenceStart + 3, fenceEnd).replace(/^\w+\n/, "");
+      chunks.push(`<span class="agent-md-fence">${escapeHtml(fenced)}</span>`);
+      i = fenceEnd + 3;
+    }
+    return chunks.join("");
   }
 
   function setBusy(busy, source) {
@@ -89,6 +164,156 @@
     } else {
       createPlanBtn.textContent = "Create plan";
     }
+    if (busy) {
+      closeMentionSuggest();
+    }
+  }
+
+  function extractMentionPaths(text) {
+    const out = [];
+    const seen = new Set();
+    let match;
+    while ((match = MENTION_PATH_RE.exec(text)) !== null) {
+      const p = (match[2] || "").replace(/\\/g, "/").replace(/^\.?\//, "");
+      if (!p || seen.has(p)) {
+        continue;
+      }
+      seen.add(p);
+      out.push(p);
+    }
+    return out;
+  }
+
+  function removeMentionPath(path) {
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|\\s)@${escaped}(?=\\s|$)`);
+    const next = inputEl.value.replace(pattern, " ").replace(/\s{2,}/g, " ").trim();
+    inputEl.value = next;
+    renderMentionChips();
+    requestMentionSuggestForCaret();
+    inputEl.focus();
+  }
+
+  function renderMentionChips() {
+    mentionChipsEl.innerHTML = "";
+    const paths = extractMentionPaths(inputEl.value || "");
+    if (paths.length === 0) {
+      return;
+    }
+    for (const path of paths) {
+      const chip = document.createElement("span");
+      chip.className = "mention-chip";
+      chip.textContent = `@${path}`;
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "mention-chip-remove";
+      removeBtn.title = `Remove @${path}`;
+      removeBtn.textContent = "x";
+      removeBtn.addEventListener("click", () => removeMentionPath(path));
+      chip.appendChild(removeBtn);
+      mentionChipsEl.appendChild(chip);
+    }
+  }
+
+  function closeMentionSuggest() {
+    mentionSuggestState.open = false;
+    mentionSuggestState.candidates = [];
+    mentionSuggestState.activeIndex = 0;
+    mentionSuggestEl.classList.remove("show");
+    mentionSuggestEl.innerHTML = "";
+  }
+
+  function renderMentionSuggest() {
+    mentionSuggestEl.innerHTML = "";
+    if (!mentionSuggestState.open || mentionSuggestState.candidates.length === 0) {
+      mentionSuggestEl.classList.remove("show");
+      return;
+    }
+    mentionSuggestEl.classList.add("show");
+    mentionSuggestState.candidates.forEach((candidate, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `mention-suggest-item${idx === mentionSuggestState.activeIndex ? " active" : ""}`;
+      btn.textContent = candidate;
+      btn.addEventListener("mouseenter", () => {
+        mentionSuggestState.activeIndex = idx;
+        renderMentionSuggest();
+      });
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        applyMentionCandidate(candidate);
+      });
+      mentionSuggestEl.appendChild(btn);
+    });
+  }
+
+  function applyMentionCandidate(candidate) {
+    const start = mentionSuggestState.tokenStart;
+    const end = mentionSuggestState.tokenEnd;
+    if (start < 0 || end < start) {
+      closeMentionSuggest();
+      return;
+    }
+    const text = inputEl.value || "";
+    const insertion = `@${candidate} `;
+    inputEl.value = `${text.slice(0, start)}${insertion}${text.slice(end)}`;
+    const caret = start + insertion.length;
+    inputEl.focus();
+    inputEl.setSelectionRange(caret, caret);
+    closeMentionSuggest();
+    renderMentionChips();
+  }
+
+  function getActiveMentionToken() {
+    const value = inputEl.value || "";
+    const caret = inputEl.selectionStart ?? value.length;
+    const before = value.slice(0, caret);
+    const match = /(^|[\s(])@([A-Za-z0-9._\-\/]*)$/.exec(before);
+    if (!match) {
+      return null;
+    }
+    const query = match[2] || "";
+    const atIndex = caret - query.length - 1;
+    return { query, start: atIndex, end: caret };
+  }
+
+  function requestMentionSuggestForCaret() {
+    if (mentionSuggestDebounceTimer) {
+      clearTimeout(mentionSuggestDebounceTimer);
+    }
+    mentionSuggestDebounceTimer = setTimeout(() => {
+      const token = getActiveMentionToken();
+      if (!token) {
+        closeMentionSuggest();
+        return;
+      }
+      mentionSuggestState.tokenStart = token.start;
+      mentionSuggestState.tokenEnd = token.end;
+      mentionSuggestState.tokenQuery = token.query;
+      mentionSuggestState.requestId += 1;
+      const requestId = String(mentionSuggestState.requestId);
+      vscode.postMessage({
+        type: "mentionSuggest",
+        requestId,
+        query: token.query,
+      });
+    }, 80);
+  }
+
+  function shouldSkipMentionRefreshOnKeyup(e) {
+    if (!e || typeof e.key !== "string") {
+      return false;
+    }
+    return (
+      e.key === "ArrowUp" ||
+      e.key === "ArrowDown" ||
+      e.key === "Enter" ||
+      e.key === "Escape" ||
+      e.key === "Shift" ||
+      e.key === "Control" ||
+      e.key === "Alt" ||
+      e.key === "Meta"
+    );
   }
 
   // ── Animated status (cooking phrases) ───────────────────────────────────────
@@ -324,6 +549,8 @@
       return;
     }
     inputEl.value = "";
+    closeMentionSuggest();
+    renderMentionChips();
     vscode.postMessage({ type: "send", text: t });
   }
 
@@ -333,6 +560,8 @@
       return;
     }
     vscode.postMessage({ type: "createPlan", text: t });
+    closeMentionSuggest();
+    renderMentionChips();
   }
 
   function stopAgents() {
@@ -342,7 +571,55 @@
   sendBtn.addEventListener("click", send);
   createPlanBtn.addEventListener("click", createPlan);
   stopAgentsBtn.addEventListener("click", stopAgents);
+  inputEl.addEventListener("input", () => {
+    renderMentionChips();
+    requestMentionSuggestForCaret();
+  });
+  inputEl.addEventListener("click", requestMentionSuggestForCaret);
+  inputEl.addEventListener("keyup", (e) => {
+    if (shouldSkipMentionRefreshOnKeyup(e)) {
+      return;
+    }
+    requestMentionSuggestForCaret();
+  });
+  inputEl.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (document.activeElement !== mentionSuggestEl) {
+        closeMentionSuggest();
+      }
+    }, 120);
+  });
   inputEl.addEventListener("keydown", (e) => {
+    if (mentionSuggestState.open && mentionSuggestState.candidates.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        mentionSuggestState.activeIndex =
+          (mentionSuggestState.activeIndex + 1) % mentionSuggestState.candidates.length;
+        renderMentionSuggest();
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        mentionSuggestState.activeIndex =
+          (mentionSuggestState.activeIndex - 1 + mentionSuggestState.candidates.length) %
+          mentionSuggestState.candidates.length;
+        renderMentionSuggest();
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const chosen = mentionSuggestState.candidates[mentionSuggestState.activeIndex];
+        if (chosen) {
+          applyMentionCandidate(chosen);
+          return;
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMentionSuggest();
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -381,6 +658,21 @@
     if (msg.type === "append" && typeof msg.text === "string") {
       const role = msg.role === "system" ? "system" : "user";
       appendBubble(role, msg.text);
+      return;
+    }
+
+    if (msg.type === "mentionSuggestResult" && typeof msg.requestId === "string" && Array.isArray(msg.candidates)) {
+      const id = Number(msg.requestId);
+      if (!Number.isFinite(id) || id < mentionSuggestState.latestHandledRequestId) {
+        return;
+      }
+      mentionSuggestState.latestHandledRequestId = id;
+      const prevActive = mentionSuggestState.candidates[mentionSuggestState.activeIndex] || "";
+      mentionSuggestState.candidates = msg.candidates.filter((x) => typeof x === "string").slice(0, 12);
+      const preservedIdx = prevActive ? mentionSuggestState.candidates.indexOf(prevActive) : -1;
+      mentionSuggestState.activeIndex = preservedIdx >= 0 ? preservedIdx : 0;
+      mentionSuggestState.open = mentionSuggestState.candidates.length > 0;
+      renderMentionSuggest();
       return;
     }
 
@@ -459,7 +751,7 @@
           ? msg.initialLine
           : "";
       if (initial.length > 0) {
-        pre.appendChild(document.createTextNode(initial));
+        pre.innerHTML = renderAgentMarkdown(initial);
       }
 
       const footer = document.createElement("div");
@@ -476,6 +768,7 @@
         wrap,
         pre,
         len: initial.length,
+        raw: initial,
         statusEl: status,
         toggleBtn,
         footerTextEl: footerText,
@@ -523,7 +816,7 @@
         setStreamCollapsed(st, false);
       } else {
         setStreamStatus(st, "FINISHED", "finished");
-        st.footerTextEl.textContent = "Finished.";
+        st.footerTextEl.textContent = "";
         setStreamCollapsed(st, true);
       }
       agentStreams.delete(msg.runId);
@@ -532,4 +825,5 @@
       }
     }
   });
+  renderMentionChips();
 })();
