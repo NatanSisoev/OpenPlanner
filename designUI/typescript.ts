@@ -1,21 +1,36 @@
-interface Task {
-  id: string;
-  checkbox?: boolean;
-  state: "pending" | "in_progress" | "completed";
-  desc: string;
-  timestamp: string;
+// Tracks the current execution status.
+type ExecutionState = "pending" | "in_progress" | "completed";
+
+// Git branch information for the plan.
+interface GitInfo {
+  baseBranch: string;
+  planBranch: string;
 }
 
-interface Fase {
+// Defines a single task inside a phase.
+interface Task {
   id: string;
-  checkbox?: boolean;
-  state: "pending" | "in_progress" | "completed";
+  state: ExecutionState;
+  desc: string;
+  commit: boolean;
+  prompt?: string;
+}
+
+// Groups related tasks under one phase.
+interface Phase {
+  id: string;
+  state: ExecutionState;
+  title: string;
+  description: string;
   tasks: Task[];
 }
 
+// Root structure for a full execution plan.
 interface Plan {
   id: string;
-  checkbox?: boolean;
-  state: "pending" | "in_progress" | "completed";
-  fases: Fase[];
+  state: ExecutionState;
+  title: string;
+  createdAt: string;
+  git: GitInfo;
+  phases: Phase[];
 }
