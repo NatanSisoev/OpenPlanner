@@ -1,13 +1,13 @@
 {
   "id": "plan-dash-001",
-  "state": "in_progress",
+  "state": "pending",
   "title": "Analytics Dashboard v2",
   "description": "Deliver the v2 analytics dashboard end-to-end: reliable metrics pipeline, reusable chart widgets, a polished layout with filters, and an accessibility/performance pass before launch.",
   "createdAt": "2026-04-25T07:30:00Z",
   "phases": [
     {
       "id": "phase-dash-001",
-      "state": "in_progress",
+      "state": "completed",
       "title": "Data pipeline setup",
       "description": "Define and wire up the aggregation queries that feed the dashboard widgets.",
       "tasks": [
@@ -65,13 +65,13 @@
     },
     {
       "id": "phase-dash-003",
-      "state": "in_progress",
+      "state": "pending",
       "title": "Dashboard layout and filters",
       "description": "Compose the final dashboard page with date-range picker and per-user filter controls.",
       "tasks": [
         {
           "id": "task-dash-008",
-          "state": "pending",
+          "state": "completed",
           "desc": "Build DateRangePicker component with preset shortcuts",
           "commit": true
         },

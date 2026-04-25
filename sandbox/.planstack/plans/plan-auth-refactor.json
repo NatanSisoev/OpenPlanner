@@ -7,7 +7,7 @@
   "phases": [
     {
       "id": "phase-auth-001",
-      "state": "completed",
+      "state": "in_progress",
       "title": "Remove legacy session middleware",
       "description": "Strip out the old cookie-based session store and all references to it across the codebase.",
       "tasks": [

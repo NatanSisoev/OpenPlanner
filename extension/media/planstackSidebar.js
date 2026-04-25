@@ -550,39 +550,11 @@
         onClick: () => vscode.postMessage({ type: "openTaskDetails", planId, phaseId, taskId }),
       },
       {
-        label: "Rename task",
-        onClick: () => {
-          const nextDesc = prompt("Task description", task.desc || "");
-          if (nextDesc === null) {
-            return;
-          }
-          const trimmed = nextDesc.trim();
-          if (!trimmed) {
-            return;
-          }
-          task.desc = trimmed;
-          vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, desc: trimmed });
-          render();
-        },
-      },
-      {
         label: task.commit ? "Disable commit requirement" : "Enable commit requirement",
         onClick: () => {
           const nextCommit = !Boolean(task.commit);
           task.commit = nextCommit;
           vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, commit: nextCommit });
-          render();
-        },
-      },
-      {
-        label: "Edit task prompt",
-        onClick: () => {
-          const nextPrompt = prompt("Task prompt", task.prompt || "");
-          if (nextPrompt === null) {
-            return;
-          }
-          task.prompt = nextPrompt;
-          vscode.postMessage({ type: "updateTask", planId, phaseId, taskId, prompt: nextPrompt });
           render();
         },
       },

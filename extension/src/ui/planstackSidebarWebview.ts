@@ -10,17 +10,26 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private taskDetailsPanel?: vscode.WebviewPanel;
   private phaseDetailsPanel?: vscode.WebviewPanel;
   private planDetailsPanel?: vscode.WebviewPanel;
+  private readonly promptEditors = new Map<
+    string,
+    { kind: "plan" | "phase"; planId: string; phaseId?: string }
+  >();
 
   constructor(
     private readonly extUri: vscode.Uri,
     private readonly onRunPhase: (planId: string, phaseId: string) => void,
-    private readonly onUpdatePhase: (planId: string, phaseId: string, patch: { state?: ExecutionState }) => Promise<boolean>,
+    private readonly onUpdatePhase: (
+      planId: string,
+      phaseId: string,
+      patch: { state?: ExecutionState; title?: string; description?: string },
+    ) => Promise<boolean>,
     private readonly onUpdateTask: (
       planId: string,
       phaseId: string,
       taskId: string,
       patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
     ) => Promise<boolean>,
+    private readonly onUpdatePlan: (planId: string, patch: { title?: string; description?: string }) => Promise<boolean>,
     private readonly onReorderPlans: (orderedPlanIds: string[]) => Promise<void>,
   ) {}
 
@@ -30,6 +39,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken,
   ): void {
     this.view = webviewView;
+    this.installPromptEditorListeners();
     const w = webviewView.webview;
     w.options = {
       enableScripts: true,
@@ -79,6 +89,21 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "openPlanDetails" && m.planId) {
         void this.openPlanDetails(m.planId);
+      }
+      if (m.type === "renameTask" && m.planId && m.phaseId && m.taskId) {
+        void this.renameTask(m.planId, m.phaseId, m.taskId);
+      }
+      if (m.type === "renamePhase" && m.planId && m.phaseId) {
+        void this.renamePhase(m.planId, m.phaseId);
+      }
+      if (m.type === "renamePlan" && m.planId) {
+        void this.renamePlan(m.planId);
+      }
+      if (m.type === "editPlanPrompt" && m.planId) {
+        void this.editPlanPrompt(m.planId);
+      }
+      if (m.type === "editPhasePrompt" && m.planId && m.phaseId) {
+        void this.editPhasePrompt(m.planId, m.phaseId);
       }
       if (m.type === "updateTask" && m.planId && m.phaseId && m.taskId) {
         void this.onUpdateTask(m.planId, m.phaseId, m.taskId, {
@@ -135,15 +160,165 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       "hackupc.planstack.taskDetails",
       title,
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
-      { enableScripts: false },
+      { enableScripts: true },
     );
     panel.webview.html = getTaskDetailsHtml(plan, phase, task);
+    panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const m = msg as { type?: string; planId?: string; phaseId?: string; taskId?: string };
+      if (m.type === "renameTask" && m.planId && m.phaseId && m.taskId) {
+        void this.renameTask(m.planId, m.phaseId, m.taskId);
+      }
+    });
     panel.onDidDispose(() => {
       if (this.taskDetailsPanel === panel) {
         this.taskDetailsPanel = undefined;
       }
     });
     this.taskDetailsPanel = panel;
+  }
+
+  private async renameTask(planId: string, phaseId: string, taskId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    const task = phase?.tasks?.find((t) => t.id === taskId);
+    if (!plan || !phase || !task) {
+      void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+      return;
+    }
+
+    const next = await vscode.window.showInputBox({
+      title: "Rename task",
+      prompt: "Task title / description",
+      value: task.desc ?? "",
+      ignoreFocusOut: true,
+    });
+    if (next === undefined) {
+      return;
+    }
+    const trimmed = next.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    await this.onUpdateTask(planId, phaseId, taskId, { desc: trimmed });
+  }
+
+  private async renamePhase(planId: string, phaseId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    if (!plan || !phase) {
+      void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+      return;
+    }
+
+    const next = await vscode.window.showInputBox({
+      title: "Rename phase",
+      prompt: "Phase title",
+      value: phase.title ?? "",
+      ignoreFocusOut: true,
+    });
+    if (next === undefined) {
+      return;
+    }
+    const trimmed = next.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    await this.onUpdatePhase(planId, phaseId, { title: trimmed });
+  }
+
+  private async renamePlan(planId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    if (!plan) {
+      void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+      return;
+    }
+
+    const next = await vscode.window.showInputBox({
+      title: "Rename plan",
+      prompt: "Plan title",
+      value: plan.title ?? "",
+      ignoreFocusOut: true,
+    });
+    if (next === undefined) {
+      return;
+    }
+    const trimmed = next.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    await this.onUpdatePlan(planId, { title: trimmed });
+  }
+
+  private installPromptEditorListeners(): void {
+    // Only install once per provider instance.
+    if ((this as { _promptEditorListenersInstalled?: boolean })._promptEditorListenersInstalled) {
+      return;
+    }
+    (this as { _promptEditorListenersInstalled?: boolean })._promptEditorListenersInstalled = true;
+
+    vscode.workspace.onDidSaveTextDocument(
+      (doc) => {
+        const key = doc.uri.toString();
+        const ctx = this.promptEditors.get(key);
+        if (!ctx) {
+          return;
+        }
+        const text = doc.getText().replace(/\s+$/, "");
+        if (ctx.kind === "plan") {
+          void this.onUpdatePlan(ctx.planId, { description: text });
+        } else {
+          void this.onUpdatePhase(ctx.planId, ctx.phaseId ?? "", { description: text });
+        }
+      },
+      undefined,
+      undefined,
+    );
+
+    vscode.workspace.onDidCloseTextDocument(
+      (doc) => {
+        const key = doc.uri.toString();
+        if (this.promptEditors.has(key)) {
+          this.promptEditors.delete(key);
+        }
+      },
+      undefined,
+      undefined,
+    );
+  }
+
+  private async editPlanPrompt(planId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    if (!plan) {
+      void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+      return;
+    }
+    const current = (plan as { description?: unknown }).description;
+    const doc = await vscode.workspace.openTextDocument({
+      content: current ? String(current) : "",
+      language: "markdown",
+    });
+    this.promptEditors.set(doc.uri.toString(), { kind: "plan", planId });
+    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false });
+    void vscode.window.showInformationMessage("Edit the plan description, then save the tab to apply.");
+  }
+
+  private async editPhasePrompt(planId: string, phaseId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    if (!plan || !phase) {
+      void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument({
+      content: phase.description ? String(phase.description) : "",
+      language: "markdown",
+    });
+    this.promptEditors.set(doc.uri.toString(), { kind: "phase", planId, phaseId });
+    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false });
+    void vscode.window.showInformationMessage("Edit the phase description, then save the tab to apply.");
   }
 
   private async openPhaseDetails(planId: string, phaseId: string): Promise<void> {
@@ -167,9 +342,26 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       "hackupc.planstack.phaseDetails",
       title,
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
-      { enableScripts: false },
+      { enableScripts: true },
     );
     panel.webview.html = getPhaseDetailsHtml(plan, phase);
+    panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const m = msg as { type?: string; planId?: string; phaseId?: string; description?: string };
+      if (m.type === "renamePhase" && m.planId && m.phaseId) {
+        void this.renamePhase(m.planId, m.phaseId);
+      }
+      if (m.type === "setPhaseDescription" && m.planId && m.phaseId) {
+        const next = (m.description ?? "").trim();
+        void (async () => {
+          await this.onUpdatePhase(m.planId!, m.phaseId!, { description: next });
+          const updatedPlan = this.plans.find((p) => p.id === m.planId);
+          const updatedPhase = updatedPlan?.phases?.find((ph) => ph.id === m.phaseId);
+          if (updatedPlan && updatedPhase && this.phaseDetailsPanel === panel) {
+            panel.webview.html = getPhaseDetailsHtml(updatedPlan, updatedPhase);
+          }
+        })();
+      }
+    });
     panel.onDidDispose(() => {
       if (this.phaseDetailsPanel === panel) {
         this.phaseDetailsPanel = undefined;
@@ -197,9 +389,25 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       "hackupc.planstack.planDetails",
       title,
       { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
-      { enableScripts: false },
+      { enableScripts: true },
     );
     panel.webview.html = getPlanDetailsHtml(plan);
+    panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const m = msg as { type?: string; planId?: string; description?: string };
+      if (m.type === "renamePlan" && m.planId) {
+        void this.renamePlan(m.planId);
+      }
+      if (m.type === "setPlanDescription" && m.planId) {
+        const next = (m.description ?? "").trim();
+        void (async () => {
+          await this.onUpdatePlan(m.planId!, { description: next });
+          const updatedPlan = this.plans.find((p) => p.id === m.planId);
+          if (updatedPlan && this.planDetailsPanel === panel) {
+            panel.webview.html = getPlanDetailsHtml(updatedPlan);
+          }
+        })();
+      }
+    });
     panel.onDidDispose(() => {
       if (this.planDetailsPanel === panel) {
         this.planDetailsPanel = undefined;
@@ -553,10 +761,33 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     }
     .subtle { opacity: 0.7; }
     code { font-family: var(--vscode-editor-font-family); }
+    .row {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .edit-btn {
+      font: inherit;
+      border: none;
+      background: transparent;
+      color: inherit;
+      opacity: 0.7;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
   </style>
 </head>
 <body>
-  <div class="h1">${htmlEscape(task.desc)}</div>
+  <div class="h1">
+    <span class="row">
+      <span>${htmlEscape(task.desc)}</span>
+      <button class="edit-btn" type="button" data-action="renameTask" title="Edit">✎</button>
+    </span>
+  </div>
   <div class="meta">
     <div class="k">Plan</div><div class="v">${htmlEscape(plan.title)} <span class="subtle">(<code>${htmlEscape(plan.id)}</code>)</span></div>
     <div class="k">Phase</div><div class="v">${htmlEscape(phase.title)} <span class="subtle">(<code>${htmlEscape(phase.id)}</code>)</span></div>
@@ -565,6 +796,17 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     <div class="k">Commit</div><div class="v"><code>${task.commit ? "true" : "false"}</code></div>
   </div>
   ${promptBlock}
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "renameTask") {
+        vscode.postMessage({ type: "renameTask", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
+      }
+    });
+  </script>
 </body>
 </html>`;
 }
@@ -615,21 +857,139 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
     li { margin-bottom: 8px; }
     .subtle { opacity: 0.75; }
     code { font-family: var(--vscode-editor-font-family); }
+    .row { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .edit-btn {
+      font: inherit;
+      border: none;
+      background: transparent;
+      color: inherit;
+      opacity: 0.7;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .modal {
+      width: min(720px, calc(100vw - 28px));
+      border-radius: 10px;
+      border: 1px solid rgba(127,127,127,0.25);
+      background: var(--vscode-editor-background);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      padding: 12px;
+    }
+    .modal-title { font-weight: 700; margin: 0 0 8px; }
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      resize: vertical;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(127,127,127,0.25);
+      background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
+      color: var(--vscode-foreground);
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.9em;
+      line-height: 1.45;
+      outline: none;
+    }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+    .btn {
+      font: inherit;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      border: 1px solid rgba(127,127,127,0.3);
+      background: transparent;
+      color: inherit;
+    }
+    .btn.primary {
+      background: var(--vscode-button-background, #0e70c0);
+      color: var(--vscode-button-foreground, #fff);
+      border-color: transparent;
+    }
+    .btn:hover { background: rgba(127,127,127,0.12); }
+    .btn.primary:hover { background: var(--vscode-button-hoverBackground); }
   </style>
 </head>
 <body>
-  <div class="h1">${htmlEscape(phase.title)}</div>
+  <div class="h1">
+    <span class="row">
+      <span>${htmlEscape(phase.title)}</span>
+      <button class="edit-btn" type="button" data-action="renamePhase" title="Edit">✎</button>
+    </span>
+  </div>
   <div class="meta">
     <div class="k">Plan</div><div class="v">${htmlEscape(plan.title)} <span class="subtle">(<code>${htmlEscape(plan.id)}</code>)</span></div>
     <div class="k">Phase</div><div class="v"><code>${htmlEscape(phase.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(phase.state)}</code></div>
-    <div class="k">Description</div><div class="v">${htmlEscape(phase.description)}</div>
+    <div class="k">Description</div><div class="v"><span class="row"><span>${htmlEscape(phase.description)}</span><button class="edit-btn" type="button" data-action="editPhaseDescription" title="Edit">✎</button></span></div>
     <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code></div>
   </div>
   <div class="section">
     <div><strong>Tasks in this phase</strong></div>
     ${tasksMarkup}
   </div>
+  <div class="overlay" id="overlay">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title">Edit phase description</div>
+      <textarea id="descInput" spellcheck="false"></textarea>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-action="cancelEdit">Cancel</button>
+        <button class="btn primary" type="button" data-action="saveDescription">Save</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    const overlay = document.getElementById("overlay");
+    const descInput = document.getElementById("descInput");
+    function openDescEditor() {
+      overlay.style.display = "flex";
+      descInput.value = ${JSON.stringify(phase.description || "")};
+      setTimeout(() => descInput.focus(), 0);
+    }
+    function closeDescEditor() {
+      overlay.style.display = "none";
+    }
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "renamePhase") {
+        vscode.postMessage({ type: "renamePhase", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)} });
+      }
+      if (action === "editPhaseDescription") {
+        openDescEditor();
+      }
+      if (action === "cancelEdit") {
+        closeDescEditor();
+      }
+      if (action === "saveDescription") {
+        vscode.postMessage({
+          type: "setPhaseDescription",
+          planId: ${JSON.stringify(plan.id)},
+          phaseId: ${JSON.stringify(phase.id)},
+          description: descInput.value,
+        });
+        closeDescEditor();
+      }
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        closeDescEditor();
+      }
+    });
+  </script>
 </body>
 </html>`;
 }
@@ -675,18 +1035,131 @@ function getPlanDetailsHtml(plan: Plan): string {
     li { margin-bottom: 8px; }
     .subtle { opacity: 0.75; }
     code { font-family: var(--vscode-editor-font-family); }
+    .row { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .edit-btn {
+      font: inherit;
+      border: none;
+      background: transparent;
+      color: inherit;
+      opacity: 0.7;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .modal {
+      width: min(720px, calc(100vw - 28px));
+      border-radius: 10px;
+      border: 1px solid rgba(127,127,127,0.25);
+      background: var(--vscode-editor-background);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      padding: 12px;
+    }
+    .modal-title { font-weight: 700; margin: 0 0 8px; }
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      resize: vertical;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(127,127,127,0.25);
+      background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
+      color: var(--vscode-foreground);
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.9em;
+      line-height: 1.45;
+      outline: none;
+    }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+    .btn {
+      font: inherit;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      border: 1px solid rgba(127,127,127,0.3);
+      background: transparent;
+      color: inherit;
+    }
+    .btn.primary {
+      background: var(--vscode-button-background, #0e70c0);
+      color: var(--vscode-button-foreground, #fff);
+      border-color: transparent;
+    }
+    .btn:hover { background: rgba(127,127,127,0.12); }
+    .btn.primary:hover { background: var(--vscode-button-hoverBackground); }
   </style>
 </head>
 <body>
-  <div class="h1">${htmlEscape(plan.title)}</div>
+  <div class="h1">
+    <span class="row">
+      <span>${htmlEscape(plan.title)}</span>
+      <button class="edit-btn" type="button" data-action="renamePlan" title="Edit">✎</button>
+    </span>
+  </div>
   <div class="meta">
     <div class="k">Plan</div><div class="v"><code>${htmlEscape(plan.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(plan.state)}</code></div>
-    <div class="k">Description</div><div class="v">${desc ? htmlEscape(desc) : `<span class="subtle">—</span>`}</div>
+    <div class="k">Description</div><div class="v"><span class="row"><span>${desc ? htmlEscape(desc) : `<span class="subtle">—</span>`}</span><button class="edit-btn" type="button" data-action="editPlanDescription" title="Edit">✎</button></span></div>
     <div class="k">CreatedAt</div><div class="v">${createdAtLabel ? `<code>${htmlEscape(createdAtLabel)}</code>` : `<span class="subtle">—</span>`}</div>
     <div class="k">Phases</div><div class="v"><code>${phases.length}</code> · completed <code>${donePhases}</code></div>
     <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code> · completed <code>${doneTasks}</code></div>
   </div>
+  <div class="overlay" id="overlay">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title">Edit plan description</div>
+      <textarea id="descInput" spellcheck="false"></textarea>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-action="cancelEdit">Cancel</button>
+        <button class="btn primary" type="button" data-action="saveDescription">Save</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    const overlay = document.getElementById("overlay");
+    const descInput = document.getElementById("descInput");
+    function openDescEditor() {
+      overlay.style.display = "flex";
+      descInput.value = ${JSON.stringify(desc ? String(desc) : "")};
+      setTimeout(() => descInput.focus(), 0);
+    }
+    function closeDescEditor() {
+      overlay.style.display = "none";
+    }
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "renamePlan") {
+        vscode.postMessage({ type: "renamePlan", planId: ${JSON.stringify(plan.id)} });
+      }
+      if (action === "editPlanDescription") {
+        openDescEditor();
+      }
+      if (action === "cancelEdit") {
+        closeDescEditor();
+      }
+      if (action === "saveDescription") {
+        vscode.postMessage({ type: "setPlanDescription", planId: ${JSON.stringify(plan.id)}, description: descInput.value });
+        closeDescEditor();
+      }
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        closeDescEditor();
+      }
+    });
+  </script>
 </body>
 </html>`;
 }

@@ -84,6 +84,12 @@ export function activate(context: vscode.ExtensionContext): void {
       if (patch.state) {
         phase.state = patch.state;
       }
+      if (patch.title !== undefined) {
+        phase.title = patch.title;
+      }
+      if (patch.description !== undefined) {
+        phase.description = patch.description;
+      }
       plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
 
       await savePlanPreservingFile(plan, root);
@@ -120,6 +126,28 @@ export function activate(context: vscode.ExtensionContext): void {
       // Keep phase and plan states in sync after task-level edits.
       phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
       plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+      return true;
+    },
+    async (planId, patch) => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) {
+        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+        return false;
+      }
+      const plan = currentPlans.find((p) => p.id === planId);
+      if (!plan) {
+        void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+        return false;
+      }
+      if (patch.title !== undefined) {
+        plan.title = patch.title;
+      }
+      if (patch.description !== undefined) {
+        (plan as { description?: string }).description = patch.description;
+      }
 
       await savePlanPreservingFile(plan, root);
       await refreshPlansOrdered(tree, sidebarUi);
