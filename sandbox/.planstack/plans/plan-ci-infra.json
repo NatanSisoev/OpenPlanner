@@ -6,7 +6,7 @@
   "phases": [
     {
       "id": "phase-ci-001",
-      "state": "completed",
+      "state": "in_progress",
       "title": "Audit existing pipeline",
       "description": "Map all current GitHub Actions workflows and identify bottlenecks and redundant steps.",
       "tasks": [
@@ -58,25 +58,25 @@
     },
     {
       "id": "phase-ci-003",
-      "state": "failed",
+      "state": "in_progress",
       "title": "Migrate to self-hosted runners",
       "description": "Provision and register self-hosted ARM64 runners on the company's Hetzner fleet.",
       "tasks": [
         {
           "id": "task-ci-007",
-          "state": "completed",
+          "state": "in_progress",
           "desc": "Provision two cx21 Hetzner instances with Docker pre-installed",
           "commit": false
         },
         {
           "id": "task-ci-008",
-          "state": "completed",
+          "state": "in_progress",
           "desc": "Register runners via GitHub runner registration token",
           "commit": false
         },
         {
           "id": "task-ci-009",
-          "state": "failed",
+          "state": "in_progress",
           "desc": "Validate runner isolation — failed due to missing seccomp profile on host kernel",
           "commit": false
         },

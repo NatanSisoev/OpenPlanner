@@ -60,6 +60,8 @@ export interface Plan {
   id: string;
   state: WorkState;
   title: string;
+  /** Optional high-level plan summary shown in the UI. */
+  description?: string;
   /** ISO-8601 timestamp; optional. */
   createdAt?: string;
   phases: Phase[];
