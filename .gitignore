@@ -27,6 +27,8 @@ share/python-wheels/
 MANIFEST
 .vscode/*
 !.vscode/launch.json
+!.vscode/tasks.json
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
