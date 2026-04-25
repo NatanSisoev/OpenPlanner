@@ -19,13 +19,6 @@ export interface Task {
   prompt?: string;
 }
 
-export interface Task {
-  id: string;
-  state: TaskState;
-  desc: string;
-  commit: boolean;
-}
-
 export interface Phase {
   id: string;
   state: PhaseState;
@@ -33,7 +26,7 @@ export interface Phase {
   description: string;
   tasks: Task[];
   dependsOn?: string[];
-  git?: PhaseGitMeta;
+  git?: GitInfo;
 }
 
 export interface Plan {
@@ -42,4 +35,5 @@ export interface Plan {
   title: string;
   createdAt?: string;
   phases: Phase[];
+  git?: GitInfo;
 }

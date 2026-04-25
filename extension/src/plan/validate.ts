@@ -1,4 +1,4 @@
-import type { Phase, PhaseState, Plan, PlanState, Task, TaskState } from "./types";
+import type { GitInfo, Phase, PhaseState, Plan, PlanState, Task, TaskState } from "./types";
 
 const PLAN_STATES: ReadonlySet<PlanState> = new Set([
   "pending",
@@ -46,6 +46,19 @@ function asOptionalString(v: unknown): string | undefined {
   return undefined;
 }
 
+function asGitInfo(v: unknown, field: string): GitInfo | undefined {
+  if (v === undefined || v === null) {
+    return undefined;
+  }
+  if (!isRecord(v)) {
+    throw new Error(`Invalid git object: ${field}`);
+  }
+  return {
+    baseBranch: typeof v.baseBranch === "string" ? v.baseBranch.trim() : "",
+    planBranch: typeof v.planBranch === "string" ? v.planBranch.trim() : "",
+  };
+}
+
 function asPlanState(v: unknown, field: string): PlanState {
   if (typeof v === "string" && PLAN_STATES.has(v as PlanState)) {
     return v as PlanState;
@@ -80,22 +93,10 @@ function parseTask(raw: unknown, phaseIndex: number, taskIndex: number): Task {
   }
   return {
     id: asString(raw.id, `phases[${phaseIndex}].tasks[${taskIndex}].id`),
-    state: asState(raw.state, `phases[${phaseIndex}].tasks[${taskIndex}].state`),
-    desc: typeof raw.desc === "string" ? raw.desc.trim() : "",
-    commit: raw.commit === true,
-    prompt: asOptionalString(raw.prompt),
-  };
-}
-
-function parseTask(raw: unknown, phaseIndex: number, taskIndex: number): Task {
-  if (!isRecord(raw)) {
-    throw new Error(`phases[${phaseIndex}].tasks[${taskIndex}] must be an object`);
-  }
-  return {
-    id: asString(raw.id, `phases[${phaseIndex}].tasks[${taskIndex}].id`),
     state: asTaskState(raw.state, `phases[${phaseIndex}].tasks[${taskIndex}].state`),
-    desc: typeof raw.desc === "string" ? raw.desc : "",
+    desc: typeof raw.desc === "string" ? raw.desc.trim() : "",
     commit: asBoolean(raw.commit, `phases[${phaseIndex}].tasks[${taskIndex}].commit`),
+    prompt: asOptionalString(raw.prompt),
   };
 }
 
@@ -122,10 +123,10 @@ function parsePhase(raw: unknown, index: number): Phase {
     id: asString(raw.id, `phases[${index}].id`),
     state: asPhaseState(raw.state, `phases[${index}].state`),
     title: asString(raw.title, `phases[${index}].title`),
-    description: typeof raw.description === "string" ? raw.description : "",
+    description: typeof raw.description === "string" ? raw.description.trim() : "",
     tasks,
     dependsOn: depends,
-    git: parsePhaseGit(raw.git),
+    git: asGitInfo(raw.git, `phases[${index}].git`),
   };
 }
 
@@ -138,12 +139,13 @@ export function validatePlanJson(raw: unknown): Plan {
   if (!Array.isArray(phasesRaw)) {
     throw new Error("Plan must have a phases array");
   }
+  const phases = phasesRaw.map((p, i) => parsePhase(p, i));
   return {
     id: asString(raw.id, "id"),
     state: asPlanState(raw.state, "state"),
     title: asString(raw.title, "title"),
-    createdAt: asOptionalString(raw.createdAt, "createdAt"),
+    createdAt: asOptionalString(raw.createdAt),
     phases,
-    git: parsePlanGit(raw.git),
+    git: asGitInfo(raw.git, "git"),
   };
 }
