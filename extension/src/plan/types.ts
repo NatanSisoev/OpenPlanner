@@ -5,6 +5,8 @@ export type PlanState = "pending" | "in_progress" | "completed" | "failed" | "ca
 export type PhaseState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
 
 export type TaskState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+/** Backward-compatible alias used across UI/extension merge points. */
+export type ExecutionState = TaskState;
 
 export interface GitInfo {
   baseBranch: string;

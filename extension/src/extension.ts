@@ -41,7 +41,9 @@ export function activate(context: vscode.ExtensionContext): void {
         effectiveWorkBranch: eff,
         baseBranch: plan.git?.baseBranch,
       });
-      await dispatchPhaseHandoff(prompt);
+      await dispatchPhaseHandoff(prompt, context, {
+        statusLabel: `${plan.title} › ${phase.title}`,
+      });
     },
     async (planId, phaseId, taskId, patch) => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
