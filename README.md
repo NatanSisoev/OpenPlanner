@@ -13,9 +13,9 @@ The product boundary is firm: PlanStack owns **structured intent → start of ex
 1. Download the latest `.vsix` from the [Releases](../../releases) page.
 2. In VS Code or Cursor: open the Command Palette → **Extensions: Install from VSIX…** and select the file.
 3. Or install from the terminal:
-   ```bash
+  ```bash
    code --install-extension planstack-*.vsix
-   ```
+  ```
 
 ### From source
 
@@ -24,7 +24,7 @@ cd extension
 npm install
 npm run compile
 npm run package        # produces hackupc-planstack-spike-0.0.1.vsix
-code --install-extension hackupc-planstack-spike-0.0.1.vsix
+cursor --install-extension hackupc-planstack-spike-0.0.1.vsix  # code for VSCode
 ```
 
 ---
@@ -34,8 +34,8 @@ code --install-extension hackupc-planstack-spike-0.0.1.vsix
 <<<<<<< HEAD
 Each `.planstack/plans/*.json` file is a single plan. Every level (plan / phase / task) carries a state from the same enum: `pending`, `in_progress`, `completed`, `failed`, `cancelled`. Phases may declare `dependsOn` to reference `phase-id` in the same plan or `plan-id/phase-id` in another plan.
 
-Tasks also carry `dependsOn`, a string array of task dependencies. Use `[]` when there are no blockers. Supported task refs are `task-id` for a unique task in the same plan, `phase-id/task-id` for a task in another phase of the same plan, and `plan-id/phase-id/task-id` for a cross-plan dependency. The validator rejects malformed same-plan task refs, unknown same-plan refs, self-references, duplicate phase ids, and duplicate task ids inside one phase. The full shape lives in [`extension/src/plan/types.ts`](extension/src/plan/types.ts), the parser in [`extension/src/plan/validate.ts`](extension/src/plan/validate.ts).
-=======
+# Tasks also carry `dependsOn`, a string array of task dependencies. Use `[]` when there are no blockers. Supported task refs are `task-id` for a unique task in the same plan, `phase-id/task-id` for a task in another phase of the same plan, and `plan-id/phase-id/task-id` for a cross-plan dependency. The validator rejects malformed same-plan task refs, unknown same-plan refs, self-references, duplicate phase ids, and duplicate task ids inside one phase. The full shape lives in `[extension/src/plan/types.ts](extension/src/plan/types.ts)`, the parser in `[extension/src/plan/validate.ts](extension/src/plan/validate.ts)`.
+
 PlanStack in `cli` mode (the default) requires the **Cursor headless agent CLI**:
 
 - Install the Cursor CLI and confirm `agent --version` works in a terminal.
@@ -49,11 +49,13 @@ PlanStack in `cli` mode (the default) requires the **Cursor headless agent CLI**
 
 Open the **Planstack** icon in the activity bar. The sidebar has three panels (top → bottom):
 
-| Panel | Purpose |
-|---|---|
-| **Overview** | Plan list with run/merge actions, push/pull remote sync |
-| **Plans** | Tree view: plans → phases → tasks, with inline run and state controls |
-| **Chat** | Live agent output stream, system messages, and plan creation via the agent CLI |
+
+| Panel        | Purpose                                                                        |
+| ------------ | ------------------------------------------------------------------------------ |
+| **Overview** | Plan list with run/merge actions, push/pull remote sync                        |
+| **Plans**    | Tree view: plans → phases → tasks, with inline run and state controls          |
+| **Chat**     | Live agent output stream, system messages, and plan creation via the agent CLI |
+
 
 ---
 
@@ -72,6 +74,7 @@ You can also create plans, phases, and tasks manually via the Command Palette (`
 **Plans tree → right-click a phase → Planstack: Run phase**, or use the inline ▶ button, or click **Run** in the Overview panel.
 
 Before execution you choose:
+
 - **Prepare/switch branch, then run** — creates `git.planBranch` from `git.baseBranch` (if missing) and checks it out, then dispatches.
 - **Run on current branch** — skips branch setup and runs immediately.
 
@@ -101,7 +104,7 @@ Merges `git.planBranch` into `git.baseBranch` with `--no-ff` using the built-in 
 
 ## Plan file format
 
-Plans live in `.planstack/plans/*.json`. The schema is defined in [`extension/src/plan/types.ts`](extension/src/plan/types.ts).
+Plans live in `.planstack/plans/*.json`. The schema is defined in `[extension/src/plan/types.ts](extension/src/plan/types.ts)`.
 
 ```jsonc
 {
@@ -139,17 +142,20 @@ State values: `pending` · `in_progress` · `completed` · `failed` · `cancelle
 Phases may declare `dependsOn: string[]` referencing other phase IDs. The validator enforces no duplicate IDs, no self-references, and no references to unknown IDs.
 
 ---
->>>>>>> 785c909d1a40e511663f971abaad66508e449544
+
+> > > > > > > 785c909d1a40e511663f971abaad66508e449544
 
 ## Dispatch modes
 
 Controlled by `planstack.cursor.executionMode`:
 
-| Mode | Behaviour |
-|---|---|
-| `cli` *(default)* | Runs `agent -p --trust --force` headless. Streams stdout/stderr to Output → Planstack and the Chat live stream. Single concurrent run; auto-updates plan JSON on exit. |
-| `native-first` | Copies the prompt to the clipboard and optionally focuses Cursor Composer via `planstack.cursor.openComposerCommand`. |
-| `sdk-local` / `sdk-cloud` | `@cursor/february` headless. Stub-level. |
+
+| Mode                      | Behaviour                                                                                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli` *(default)*         | Runs `agent -p --trust --force` headless. Streams stdout/stderr to Output → Planstack and the Chat live stream. Single concurrent run; auto-updates plan JSON on exit. |
+| `native-first`            | Copies the prompt to the clipboard and optionally focuses Cursor Composer via `planstack.cursor.openComposerCommand`.                                                  |
+| `sdk-local` / `sdk-cloud` | `@cursor/february` headless. Stub-level.                                                                                                                               |
+
 
 ---
 
@@ -163,46 +169,50 @@ Set `planstack.cursor.syncApiBaseUrl` (e.g. `http://localhost:8787`) or export `
 
 ## Settings reference
 
-All settings live under `planstack.cursor.*`. Open **Settings → search "Planstack"** to configure.
+All settings live under `planstack.cursor.`*. Open **Settings → search "Planstack"** to configure.
 
-| Setting | Default | Description |
-|---|---|---|
-| `executionMode` | `cli` | Dispatcher for Run phase: `cli`, `native-first`, `sdk-local`, `sdk-cloud`, or empty (legacy fallback). |
-| `planningMode` | `cli` | How Chat → Create plan generates JSON. Currently only `cli`. |
-| `agentPath` | `agent` | Path to the Cursor headless agent binary. Set to an absolute path if not on `PATH`. |
-| `agentTimeoutMs` | `180000` | Max ms to wait for a single agent run before killing it. |
-| `agentMaxStdoutChars` | `2000000` | Safety cap on stdout characters captured from the agent. |
-| `agentChatLiveStream` | `true` | Show a live scrollable agent output block in the Chat panel during runs. |
-| `cliStreamAgentOutput` | `true` | Stream agent stdout/stderr to Output → Planstack during runs. |
-| `cliStreamProgressThrottleMs` | `2000` | Minimum ms between Run phase notification progress updates. |
-| `cliStreamChatThrottleMs` | `25000` | Minimum ms between Chat system lines when live stream is off. |
-| `showGitSummaryAfterCliRun` | `true` | After a successful CLI run, append `git diff --stat` vs HEAD to Output and Chat. |
-| `cliRunGitSnapshotIntervalMs` | `30000` | Interval (ms) to post git status deltas to Chat during a run. `0` disables. |
-| `cliRunAgentDigestIntervalMs` | `15000` | Interval (ms) to post a short agent output tail to Chat during a run. `0` disables. |
-| `chatMentionsMaxFiles` | `6` | Max `@file` mentions resolved per Chat message. |
-| `chatMentionsMaxFileBytes` | `65536` | Max bytes for a single `@file` mention. |
-| `chatMentionsMaxTotalChars` | `120000` | Max combined characters injected from all `@file` mentions per message. |
-| `syncApiBaseUrl` | `""` | Base URL for the remote sync API (Overview Push/Pull). |
-| `openComposerCommand` | `""` | VS Code command ID to focus Cursor Composer after clipboard handoff (`native-first` mode). |
-| `useWsl` | `false` | **Windows only.** Spawn the agent inside WSL instead of native Windows. |
-| `wslDistro` | `Ubuntu` | WSL distribution name to use when `useWsl` is enabled. |
+
+| Setting                       | Default   | Description                                                                                            |
+| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| `executionMode`               | `cli`     | Dispatcher for Run phase: `cli`, `native-first`, `sdk-local`, `sdk-cloud`, or empty (legacy fallback). |
+| `planningMode`                | `cli`     | How Chat → Create plan generates JSON. Currently only `cli`.                                           |
+| `agentPath`                   | `agent`   | Path to the Cursor headless agent binary. Set to an absolute path if not on `PATH`.                    |
+| `agentTimeoutMs`              | `180000`  | Max ms to wait for a single agent run before killing it.                                               |
+| `agentMaxStdoutChars`         | `2000000` | Safety cap on stdout characters captured from the agent.                                               |
+| `agentChatLiveStream`         | `true`    | Show a live scrollable agent output block in the Chat panel during runs.                               |
+| `cliStreamAgentOutput`        | `true`    | Stream agent stdout/stderr to Output → Planstack during runs.                                          |
+| `cliStreamProgressThrottleMs` | `2000`    | Minimum ms between Run phase notification progress updates.                                            |
+| `cliStreamChatThrottleMs`     | `25000`   | Minimum ms between Chat system lines when live stream is off.                                          |
+| `showGitSummaryAfterCliRun`   | `true`    | After a successful CLI run, append `git diff --stat` vs HEAD to Output and Chat.                       |
+| `cliRunGitSnapshotIntervalMs` | `30000`   | Interval (ms) to post git status deltas to Chat during a run. `0` disables.                            |
+| `cliRunAgentDigestIntervalMs` | `15000`   | Interval (ms) to post a short agent output tail to Chat during a run. `0` disables.                    |
+| `chatMentionsMaxFiles`        | `6`       | Max `@file` mentions resolved per Chat message.                                                        |
+| `chatMentionsMaxFileBytes`    | `65536`   | Max bytes for a single `@file` mention.                                                                |
+| `chatMentionsMaxTotalChars`   | `120000`  | Max combined characters injected from all `@file` mentions per message.                                |
+| `syncApiBaseUrl`              | `""`      | Base URL for the remote sync API (Overview Push/Pull).                                                 |
+| `openComposerCommand`         | `""`      | VS Code command ID to focus Cursor Composer after clipboard handoff (`native-first` mode).             |
+| `useWsl`                      | `false`   | **Windows only.** Spawn the agent inside WSL instead of native Windows.                                |
+| `wslDistro`                   | `Ubuntu`  | WSL distribution name to use when `useWsl` is enabled.                                                 |
+
 
 ---
 
 ## Command palette
 
-| Command | Description |
-|---|---|
-| `Planstack: Add Plan` | Create a new plan interactively |
-| `Planstack: Add Phase` | Add a phase to an existing plan |
-| `Planstack: Add Task` | Add a task to an existing phase |
-| `Planstack: Refresh plans` | Reload plan JSON from disk |
-| `Planstack: Re-sync plan to current codebase` | Regenerate a plan against the current workspace |
-| `Planstack: Run phase (execution)` | Run the selected phase |
+
+| Command                                                   | Description                                      |
+| --------------------------------------------------------- | ------------------------------------------------ |
+| `Planstack: Add Plan`                                     | Create a new plan interactively                  |
+| `Planstack: Add Phase`                                    | Add a phase to an existing plan                  |
+| `Planstack: Add Task`                                     | Add a task to an existing phase                  |
+| `Planstack: Refresh plans`                                | Reload plan JSON from disk                       |
+| `Planstack: Re-sync plan to current codebase`             | Regenerate a plan against the current workspace  |
+| `Planstack: Run phase (execution)`                        | Run the selected phase                           |
 | `Planstack: Merge completed plan branch into base branch` | Merge `planBranch` → `baseBranch` with `--no-ff` |
-| `Planstack: Set Cursor API key` | Store `CURSOR_API_KEY` in VS Code Secret Storage |
-| `Planstack: Debug Cursor CLI connection` | Verify the agent path, API key, and exit code |
-| `Planstack: Stop agent CLI processes` | Send SIGTERM to all running agent processes |
+| `Planstack: Set Cursor API key`                           | Store `CURSOR_API_KEY` in VS Code Secret Storage |
+| `Planstack: Debug Cursor CLI connection`                  | Verify the agent path, API key, and exit code    |
+| `Planstack: Stop agent CLI processes`                     | Send SIGTERM to all running agent processes      |
+
 
 ---
 
@@ -259,3 +269,4 @@ HackUPC/
     media/                          # activity-bar icon, webview JS + CSS
     out/                            # tsc output (gitignored)
 ```
+
