@@ -1,0 +1,122 @@
+{
+  "id": "plan-ci-001",
+  "state": "failed",
+  "title": "CI/CD Pipeline Overhaul",
+  "createdAt": "2026-04-23T14:00:00Z",
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-ci-001"
+  },
+  "phases": [
+    {
+      "id": "phase-ci-001",
+      "state": "completed",
+      "title": "Audit existing pipeline",
+      "description": "Map all current GitHub Actions workflows and identify bottlenecks and redundant steps.",
+      "tasks": [
+        {
+          "id": "task-ci-001",
+          "state": "completed",
+          "desc": "Document all existing .github/workflows/*.yml files and their triggers",
+          "commit": false
+        },
+        {
+          "id": "task-ci-002",
+          "state": "completed",
+          "desc": "Profile average job runtimes over last 30 days using GH Actions API",
+          "commit": false
+        },
+        {
+          "id": "task-ci-003",
+          "state": "completed",
+          "desc": "Identify top 3 slowest steps and propose caching strategy",
+          "commit": false
+        }
+      ]
+    },
+    {
+      "id": "phase-ci-002",
+      "state": "completed",
+      "title": "Parallelise test suites",
+      "description": "Split unit, integration, and e2e tests into parallel matrix jobs to halve overall CI time.",
+      "tasks": [
+        {
+          "id": "task-ci-004",
+          "state": "completed",
+          "desc": "Introduce test-sharding config in jest.config.ts",
+          "commit": true
+        },
+        {
+          "id": "task-ci-005",
+          "state": "completed",
+          "desc": "Rewrite test.yml to use matrix strategy across 4 shards",
+          "commit": true
+        },
+        {
+          "id": "task-ci-006",
+          "state": "completed",
+          "desc": "Add dependency caching for node_modules and Playwright browsers",
+          "commit": true
+        }
+      ]
+    },
+    {
+      "id": "phase-ci-003",
+      "state": "failed",
+      "title": "Migrate to self-hosted runners",
+      "description": "Provision and register self-hosted ARM64 runners on the company's Hetzner fleet.",
+      "tasks": [
+        {
+          "id": "task-ci-007",
+          "state": "completed",
+          "desc": "Provision two cx21 Hetzner instances with Docker pre-installed",
+          "commit": false
+        },
+        {
+          "id": "task-ci-008",
+          "state": "completed",
+          "desc": "Register runners via GitHub runner registration token",
+          "commit": false
+        },
+        {
+          "id": "task-ci-009",
+          "state": "failed",
+          "desc": "Validate runner isolation — failed due to missing seccomp profile on host kernel",
+          "commit": false
+        },
+        {
+          "id": "task-ci-010",
+          "state": "cancelled",
+          "desc": "Migrate production deploy job to self-hosted runner",
+          "commit": true
+        }
+      ]
+    },
+    {
+      "id": "phase-ci-004",
+      "state": "pending",
+      "title": "Deployment gating and notifications",
+      "description": "Add required status checks, Slack notifications, and automatic rollback on health-check failure.",
+      "tasks": [
+        {
+          "id": "task-ci-011",
+          "state": "pending",
+          "desc": "Configure branch protection rules to require passing CI before merge",
+          "commit": false
+        },
+        {
+          "id": "task-ci-012",
+          "state": "pending",
+          "desc": "Add Slack notify step using slackapi/slack-github-action",
+          "commit": true
+        },
+        {
+          "id": "task-ci-013",
+          "state": "pending",
+          "desc": "Implement post-deploy health check with auto-rollback via deploy.yml",
+          "commit": true
+        }
+      ]
+    }
+  ]
+}
