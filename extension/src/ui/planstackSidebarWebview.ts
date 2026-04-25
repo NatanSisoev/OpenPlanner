@@ -41,6 +41,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       commit: boolean;
     }) => Promise<void>,
     private readonly onReorderPlans: (orderedPlanIds: string[]) => Promise<void>,
+    private readonly onDeletePlan: (planId: string) => Promise<void>,
+    private readonly onDeletePhase: (planId: string, phaseId: string) => Promise<void>,
+    private readonly onDeleteTask: (planId: string, phaseId: string, taskId: string) => Promise<void>,
   ) {}
 
   resolveWebviewView(
@@ -184,6 +187,15 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
             commit: Boolean(m.commit),
           });
         }
+      }
+      if (m.type === "deletePlan" && m.planId) {
+        void this.onDeletePlan(m.planId);
+      }
+      if (m.type === "deletePhase" && m.planId && m.phaseId) {
+        void this.onDeletePhase(m.planId, m.phaseId);
+      }
+      if (m.type === "deleteTask" && m.planId && m.phaseId && m.taskId) {
+        void this.onDeleteTask(m.planId, m.phaseId, m.taskId);
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -888,6 +900,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       font-size: 0.83em; flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       line-height: 1.4;
+      cursor: pointer; user-select: none;
     }
     .task-title.strike { text-decoration: line-through; opacity: 0.45; }
 

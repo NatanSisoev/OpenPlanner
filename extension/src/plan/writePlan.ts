@@ -33,6 +33,15 @@ export async function savePlanPreservingFile(plan: Plan, workspaceRoot: vscode.U
   return saveValidatedPlan(plan, workspaceRoot);
 }
 
+export async function deletePlanFile(planId: string, workspaceRoot: vscode.Uri): Promise<boolean> {
+  const existing = await findPlanFileById(planId, workspaceRoot);
+  if (!existing) {
+    return false;
+  }
+  await vscode.workspace.fs.delete(existing, { useTrash: true });
+  return true;
+}
+
 async function findPlanFileById(planId: string, workspaceRoot: vscode.Uri): Promise<vscode.Uri | undefined> {
   const pattern = new vscode.RelativePattern(workspaceRoot, ".planstack/plans/*.json");
   const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200, undefined);

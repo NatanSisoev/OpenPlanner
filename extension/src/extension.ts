@@ -12,7 +12,7 @@ import { CURSOR_API_KEY_SECRET } from "./plan/createPlanFromCli";
 import { debugCliConnection } from "./plan/debugCliConnection";
 import { killAllAgentCliProcesses } from "./plan/agentCliRunner";
 import { logLine } from "./log";
-import { savePlanPreservingFile } from "./plan/writePlan";
+import { savePlanPreservingFile, deletePlanFile } from "./plan/writePlan";
 import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
 import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem, TaskTreeItem } from "./ui/planTreeProvider";
@@ -122,6 +122,10 @@ export function activate(context: vscode.ExtensionContext): void {
       description: input.description?.trim() || undefined,
       createdAt: new Date().toISOString(),
       phases: [],
+      git: {
+        baseBranch: "main",
+        planBranch: `planstack/${planId}`,
+      },
     };
     await savePlanPreservingFile(plan, root);
     await refreshPlansOrdered(tree, sidebarUi);
@@ -359,6 +363,88 @@ export function activate(context: vscode.ExtensionContext): void {
       const loadedIds = new Set(currentPlans.map((p) => p.id));
       const cleaned = orderedPlanIds.filter((id) => loadedIds.has(id));
       await context.workspaceState.update(PLAN_ORDER_KEY, cleaned);
+      await refreshPlansOrdered(tree, sidebarUi);
+    },
+    async (planId) => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) {
+        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+        return;
+      }
+      const plan = currentPlans.find((p) => p.id === planId);
+      if (!plan) {
+        void vscode.window.showWarningMessage("Planstack: plan not found — refresh and try again.");
+        return;
+      }
+      const choice = await vscode.window.showWarningMessage(
+        `Delete plan "${plan.title}"? This removes the plan file and all its phases and tasks. This cannot be undone.`,
+        { modal: true },
+        "Delete",
+      );
+      if (choice !== "Delete") {
+        return;
+      }
+      const removed = await deletePlanFile(planId, root);
+      if (!removed) {
+        void vscode.window.showWarningMessage("Planstack: plan file not found on disk.");
+      }
+      const savedOrder = context.workspaceState.get<string[]>(PLAN_ORDER_KEY) ?? [];
+      if (savedOrder.includes(planId)) {
+        await context.workspaceState.update(
+          PLAN_ORDER_KEY,
+          savedOrder.filter((id) => id !== planId),
+        );
+      }
+      await refreshPlansOrdered(tree, sidebarUi);
+    },
+    async (planId, phaseId) => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) {
+        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+        return;
+      }
+      const plan = currentPlans.find((p) => p.id === planId);
+      const phase = plan?.phases.find((ph) => ph.id === phaseId);
+      if (!plan || !phase) {
+        void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+        return;
+      }
+      const taskCount = phase.tasks?.length ?? 0;
+      const choice = await vscode.window.showWarningMessage(
+        `Delete phase "${phase.title}" and its ${taskCount} task${taskCount === 1 ? "" : "s"}? This cannot be undone.`,
+        { modal: true },
+        "Delete",
+      );
+      if (choice !== "Delete") {
+        return;
+      }
+      plan.phases = plan.phases.filter((ph) => ph.id !== phaseId);
+      // Remove dangling dependsOn references that pointed at the deleted phase.
+      for (const remaining of plan.phases) {
+        if (Array.isArray(remaining.dependsOn) && remaining.dependsOn.includes(phaseId)) {
+          remaining.dependsOn = remaining.dependsOn.filter((id) => id !== phaseId);
+        }
+      }
+      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+      await savePlanPreservingFile(plan, root);
+      await refreshPlansOrdered(tree, sidebarUi);
+    },
+    async (planId, phaseId, taskId) => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) {
+        void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+        return;
+      }
+      const plan = currentPlans.find((p) => p.id === planId);
+      const phase = plan?.phases.find((ph) => ph.id === phaseId);
+      if (!plan || !phase) {
+        void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+        return;
+      }
+      phase.tasks = phase.tasks.filter((t) => t.id !== taskId);
+      phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
+      plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
+      await savePlanPreservingFile(plan, root);
       await refreshPlansOrdered(tree, sidebarUi);
     },
   );
