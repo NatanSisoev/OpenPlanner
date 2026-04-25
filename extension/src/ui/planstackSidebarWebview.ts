@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { Plan } from "../plan/types";
+import type { ExecutionState } from "../plan/types";
 
 export const SIDEBAR_WEBVIEW_ID = "hackupc.planstack.ui";
 
@@ -7,10 +8,17 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private plans: Plan[] = [];
   private taskDetailsPanel?: vscode.WebviewPanel;
+  private phaseDetailsPanel?: vscode.WebviewPanel;
 
   constructor(
     private readonly extUri: vscode.Uri,
     private readonly onRunPhase: (planId: string, phaseId: string) => void,
+    private readonly onUpdateTask: (
+      planId: string,
+      phaseId: string,
+      taskId: string,
+      patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
+    ) => Promise<boolean>,
   ) {}
 
   resolveWebviewView(
@@ -40,12 +48,32 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       if (!msg || typeof msg !== "object") {
         return;
       }
-      const m = msg as { type?: string; planId?: string; phaseId?: string; taskId?: string; status?: string };
+      const m = msg as {
+        type?: string;
+        planId?: string;
+        phaseId?: string;
+        taskId?: string;
+        state?: ExecutionState;
+        desc?: string;
+        prompt?: string;
+        commit?: boolean;
+      };
       if (m.type === "runPhase" && m.planId && m.phaseId) {
         this.onRunPhase(m.planId, m.phaseId);
       }
       if (m.type === "openTaskDetails" && m.planId && m.phaseId && m.taskId) {
         void this.openTaskDetails(m.planId, m.phaseId, m.taskId);
+      }
+      if (m.type === "openPhaseDetails" && m.planId && m.phaseId) {
+        void this.openPhaseDetails(m.planId, m.phaseId);
+      }
+      if (m.type === "updateTask" && m.planId && m.phaseId && m.taskId) {
+        void this.onUpdateTask(m.planId, m.phaseId, m.taskId, {
+          state: m.state,
+          desc: m.desc,
+          prompt: m.prompt,
+          commit: m.commit,
+        });
       }
     });
     webviewView.onDidDispose(() => sub.dispose());
@@ -103,6 +131,38 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       }
     });
     this.taskDetailsPanel = panel;
+  }
+
+  private async openPhaseDetails(planId: string, phaseId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+
+    if (!plan || !phase) {
+      void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+      return;
+    }
+
+    const title = `Phase: ${phase.title}`;
+    if (this.phaseDetailsPanel) {
+      this.phaseDetailsPanel.title = title;
+      this.phaseDetailsPanel.webview.html = getPhaseDetailsHtml(plan, phase);
+      this.phaseDetailsPanel.reveal(vscode.ViewColumn.Active, true);
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "hackupc.planstack.phaseDetails",
+      title,
+      { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
+      { enableScripts: false },
+    );
+    panel.webview.html = getPhaseDetailsHtml(plan, phase);
+    panel.onDidDispose(() => {
+      if (this.phaseDetailsPanel === panel) {
+        this.phaseDetailsPanel = undefined;
+      }
+    });
+    this.phaseDetailsPanel = panel;
   }
 }
 
@@ -397,6 +457,71 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     <div class="k">Commit</div><div class="v"><code>${task.commit ? "true" : "false"}</code></div>
   </div>
   ${promptBlock}
+</body>
+</html>`;
+}
+
+function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string {
+  const tasks = phase.tasks ?? [];
+  const tasksMarkup = tasks.length
+    ? `<ul>${tasks
+        .map(
+          (task) =>
+            `<li>
+              <div><strong>${htmlEscape(task.desc)}</strong></div>
+              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code></div>
+            </li>`,
+        )
+        .join("")}</ul>`
+    : `<div class="subtle">This phase has no tasks.</div>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      margin: 0;
+      padding: 14px 16px 18px;
+    }
+    .h1 { font-size: 1.1em; font-weight: 700; margin: 0 0 10px; }
+    .meta {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 6px 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(127,127,127,0.25);
+      border-radius: 8px;
+      background: rgba(127,127,127,0.08);
+    }
+    .k { opacity: 0.7; }
+    .v { word-break: break-word; }
+    .section { margin-top: 12px; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li { margin-bottom: 8px; }
+    .subtle { opacity: 0.75; }
+    code { font-family: var(--vscode-editor-font-family); }
+  </style>
+</head>
+<body>
+  <div class="h1">${htmlEscape(phase.title)}</div>
+  <div class="meta">
+    <div class="k">Plan</div><div class="v">${htmlEscape(plan.title)} <span class="subtle">(<code>${htmlEscape(plan.id)}</code>)</span></div>
+    <div class="k">Phase</div><div class="v"><code>${htmlEscape(phase.id)}</code></div>
+    <div class="k">State</div><div class="v"><code>${htmlEscape(phase.state)}</code></div>
+    <div class="k">Description</div><div class="v">${htmlEscape(phase.description)}</div>
+    <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code></div>
+  </div>
+  <div class="section">
+    <div><strong>Tasks in this phase</strong></div>
+    ${tasksMarkup}
+  </div>
 </body>
 </html>`;
 }
