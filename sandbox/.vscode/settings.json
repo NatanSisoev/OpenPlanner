@@ -1,0 +1,4 @@
+{
+    "planstack.cursor.useWsl": true,
+    "planstack.cursor.agentPath": "/home/natan/.local/bin/agent"
+}
