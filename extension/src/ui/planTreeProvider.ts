@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { summarizeGitForPlan } from "../git/resolver";
-import type { Phase, Plan } from "../plan/types";
+import type { ExecutionState, Phase, Plan } from "../plan/types";
 
 export const PLAN_TREE_VIEW_ID = "hackupc.planstackPlans";
 
@@ -16,9 +16,9 @@ export class PhaseTreeItem extends vscode.TreeItem {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.contextValue = PHASE_CONTEXT;
     this.description = description;
-    const preview = phase.body.length > 400 ? `${phase.body.slice(0, 400)}…` : phase.body;
+    const preview = phase.description.length > 400 ? `${phase.description.slice(0, 400)}…` : phase.description;
     this.tooltip = `${phase.title}\n\n${preview}`;
-    this.iconPath = statusIcon(phase.status);
+    this.iconPath = stateIcon(phase.state);
   }
 }
 
@@ -36,14 +36,16 @@ export class PlanTreeItem extends vscode.TreeItem {
   }
 }
 
-function statusIcon(status: Phase["status"]): vscode.ThemeIcon {
-  switch (status) {
-    case "done":
+function stateIcon(state: ExecutionState): vscode.ThemeIcon {
+  switch (state) {
+    case "completed":
       return new vscode.ThemeIcon("pass", new vscode.ThemeColor("testing.iconPassed"));
     case "in_progress":
       return new vscode.ThemeIcon("sync~spin");
-    case "blocked":
+    case "failed":
       return new vscode.ThemeIcon("error", new vscode.ThemeColor("errorForeground"));
+    case "cancelled":
+      return new vscode.ThemeIcon("circle-slash");
     default:
       return new vscode.ThemeIcon("circle-large-outline");
   }
@@ -82,11 +84,11 @@ export class PlanTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
       const items: PhaseTreeItem[] = [];
       for (const ph of element.plan.phases) {
-        let desc: string = ph.status;
+        let desc: string = ph.state;
         if (root) {
           const g = await summarizeGitForPlan(root, ph, element.plan);
           if (g.effectiveBranch) {
-            desc = `${ph.status} · ${g.effectiveBranch}`;
+            desc = `${ph.state} · ${g.effectiveBranch}`;
           }
           if (g.currentBranchLabel) {
             desc = `${desc} · HEAD ${g.currentBranchLabel}`;

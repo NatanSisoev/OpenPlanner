@@ -17,28 +17,27 @@
       .replace(/"/g, "&quot;");
   }
 
-  function statusDotClass(s) {
-    return "phase-status-dot dot-" + s;
-  }
-
-  function taskIconHtml(s) {
-    const cls = "task-icon icon-" + s;
+  function taskIconHtml(state) {
+    const cls = "task-icon icon-" + state;
     const icons = {
-      done: "✓",
+      completed:   "✓",
       in_progress: "⟳",
-      failed: "✗",
-      blocked: "⊘",
-      cancelled: "⊘",
-      skipped: "↷",
-      pending: "○",
+      failed:      "✗",
+      cancelled:   "⊘",
+      pending:     "○",
     };
-    return `<span class="${cls}">${icons[s] || "○"}</span>`;
+    return `<span class="${cls}">${icons[state] || "○"}</span>`;
   }
 
-  function badgeHtml(s) {
-    const labels = { in_progress: "running", pending: "pending", done: "done",
-                     blocked: "blocked", failed: "failed", cancelled: "cancelled", skipped: "skipped" };
-    return `<span class="badge badge-${s}">${labels[s] || s}</span>`;
+  function badgeHtml(state) {
+    const labels = {
+      completed:   "done",
+      in_progress: "running",
+      pending:     "pending",
+      failed:      "failed",
+      cancelled:   "cancelled",
+    };
+    return `<span class="badge badge-${state}">${labels[state] || state}</span>`;
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -58,8 +57,9 @@
 
   function renderPlan(plan) {
     const isOpen = expandedPlans.has(plan.id);
-    const done = (plan.phases || []).filter((p) => p.status === "done").length;
-    const total = (plan.phases || []).length;
+    const phases = plan.phases || [];
+    const done = phases.filter((p) => p.state === "completed").length;
+    const total = phases.length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     const pid = esc(plan.id);
 
@@ -75,14 +75,15 @@
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
           </div>
         </div>
-        ${isOpen ? `<div class="plan-phases">${(plan.phases || []).map((ph) => renderPhase(plan, ph)).join("")}</div>` : ""}
+        ${isOpen ? `<div class="plan-phases">${phases.map((ph) => renderPhase(plan, ph)).join("")}</div>` : ""}
       </div>`;
   }
 
   function renderPhase(plan, phase) {
     const key = plan.id + "::" + phase.id;
     const isOpen = expandedPhases.has(key);
-    const hasTasks = Array.isArray(phase.tasks) && phase.tasks.length > 0;
+    const tasks = phase.tasks || [];
+    const hasTasks = tasks.length > 0;
     const pid = esc(plan.id);
     const phid = esc(phase.id);
 
@@ -94,47 +95,46 @@
             ${hasTasks
               ? `<span class="chevron sm${isOpen ? " expanded" : ""}">›</span>`
               : `<span class="chevron-gap"></span>`}
-            <span class="${statusDotClass(phase.status)}"></span>
+            <span class="phase-status-dot dot-${phase.state}"></span>
             <span class="phase-title">${esc(phase.title)}</span>
           </div>
           <div class="phase-header-right">
-            ${badgeHtml(phase.status)}
+            ${badgeHtml(phase.state)}
             <button class="run-btn"
                     data-action="runPhase" data-plan="${pid}" data-phase="${phid}"
                     title="Run this phase">▶ Run</button>
           </div>
         </div>
         ${hasTasks && isOpen
-          ? `<div class="phase-tasks">${phase.tasks.map((t) => renderTask(plan, phase, t)).join("")}</div>`
+          ? `<div class="phase-tasks">${tasks.map((t) => renderTask(plan, phase, t)).join("")}</div>`
           : ""}
       </div>`;
   }
 
   function renderTask(plan, phase, task) {
-    const isCancelled = task.status === "cancelled" || task.status === "skipped";
-    const isDone = task.status === "done";
-    const isRunning = task.status === "in_progress";
+    const isCancelled = task.state === "cancelled";
+    const isCompleted = task.state === "completed";
     const pid = esc(plan.id);
     const phid = esc(phase.id);
     const tid = esc(task.id);
 
     const btns = [];
-    if (!isDone && !isCancelled) {
+    if (!isCompleted && !isCancelled) {
       btns.push(`<button class="task-btn done-btn" data-action="taskStatus"
-                   data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="done"
+                   data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="completed"
                    title="Mark done">✓</button>`);
     }
-    if (task.status === "pending") {
+    if (task.state === "pending") {
       btns.push(`<button class="task-btn run-task" data-action="taskStatus"
                    data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="in_progress"
                    title="Start">▶</button>`);
     }
-    if (!isDone && !isCancelled) {
+    if (!isCompleted && !isCancelled) {
       btns.push(`<button class="task-btn cancel-btn" data-action="taskStatus"
                    data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="cancelled"
                    title="Cancel">✗</button>`);
     }
-    if (isCancelled || task.status === "failed") {
+    if (isCancelled || task.state === "failed") {
       btns.push(`<button class="task-btn reset-btn" data-action="taskStatus"
                    data-plan="${pid}" data-phase="${phid}" data-task="${tid}" data-status="pending"
                    title="Reset">↺</button>`);
@@ -142,8 +142,8 @@
 
     return `
       <div class="task-row">
-        ${taskIconHtml(task.status)}
-        <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.title)}</span>
+        ${taskIconHtml(task.state)}
+        <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
         <div class="task-actions">${btns.join("")}</div>
       </div>`;
   }
@@ -189,13 +189,14 @@
 
     if (action === "taskStatus") {
       e.stopPropagation();
-      vscode.postMessage({ type: "updateTaskStatus", planId, phaseId, taskId, status: el.dataset.status });
+      const newState = el.dataset.status;
+      vscode.postMessage({ type: "updateTaskStatus", planId, phaseId, taskId, state: newState });
       // Optimistic local update
       const plan = plans.find((p) => p.id === planId);
       const phase = plan?.phases?.find((ph) => ph.id === phaseId);
       const task = phase?.tasks?.find((t) => t.id === taskId);
       if (task) {
-        task.status = el.dataset.status;
+        task.state = newState;
         render();
       }
     }
@@ -210,7 +211,6 @@
     }
     if (msg.type === "setPlans") {
       plans = msg.plans || [];
-      // Auto-expand all plans on first load
       plans.forEach((p) => expandedPlans.add(p.id));
       render();
     }

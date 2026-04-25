@@ -10,9 +10,9 @@ export function buildPhaseHandoffPrompt(
     `# Plan: ${plan.title}`,
     `## Phase (run only this): ${phase.title}`,
     "",
-    "Execute only the work described in this phase body; do not expand scope to other phases unless blocked.",
+    "Execute only the work described in this phase; do not expand scope to other phases unless blocked.",
     "",
-    phase.body,
+    phase.description,
   ];
   if (extras?.effectiveWorkBranch || extras?.baseBranch || extras?.currentHead) {
     lines.push("", "## Version control context");

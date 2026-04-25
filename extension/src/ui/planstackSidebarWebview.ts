@@ -180,13 +180,11 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
       box-shadow: 0 0 4px currentColor;
     }
-    .dot-done      { background: var(--c-done);      color: var(--c-done); }
+    .dot-completed  { background: var(--c-done);      color: var(--c-done); }
     .dot-in_progress{ background: var(--c-running);  color: var(--c-running); }
-    .dot-blocked,
-    .dot-failed    { background: var(--c-failed);    color: var(--c-failed); }
-    .dot-pending   { background: var(--c-pending);   color: var(--c-pending); box-shadow: none; }
-    .dot-cancelled,
-    .dot-skipped   { background: var(--c-cancelled); color: var(--c-cancelled); box-shadow: none; }
+    .dot-failed     { background: var(--c-failed);   color: var(--c-failed); }
+    .dot-pending    { background: var(--c-pending);  color: var(--c-pending); box-shadow: none; }
+    .dot-cancelled  { background: var(--c-cancelled);color: var(--c-cancelled); box-shadow: none; }
 
     .phase-title {
       font-size: 0.86em;
@@ -202,14 +200,12 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
       white-space: nowrap;
     }
-    .badge-done       { background: rgba(78,201,176,0.13);  color: var(--c-done); }
+    .badge-completed  { background: rgba(78,201,176,0.13);  color: var(--c-done); }
     .badge-in_progress{ background: rgba(86,156,214,0.13);  color: var(--c-running);
                         animation: pulse-badge 2s infinite; }
-    .badge-blocked,
     .badge-failed     { background: rgba(244,71,71,0.13);   color: var(--c-failed); }
     .badge-pending    { background: rgba(110,110,110,0.13); color: var(--c-pending); }
-    .badge-cancelled,
-    .badge-skipped    { background: rgba(133,133,133,0.1);  color: var(--c-cancelled); }
+    .badge-cancelled  { background: rgba(133,133,133,0.1);  color: var(--c-cancelled); }
 
     @keyframes pulse-badge {
       0%, 100% { opacity: 1; }
@@ -246,13 +242,11 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       font-size: 0.78em; width: 13px; text-align: center; flex-shrink: 0;
       line-height: 1;
     }
-    .icon-done      { color: var(--c-done); }
+    .icon-completed  { color: var(--c-done); }
     .icon-in_progress{ color: var(--c-running); }
-    .icon-failed,
-    .icon-blocked   { color: var(--c-failed); }
-    .icon-cancelled,
-    .icon-skipped   { color: var(--c-cancelled); }
-    .icon-pending   { color: var(--c-pending); }
+    .icon-failed     { color: var(--c-failed); }
+    .icon-cancelled  { color: var(--c-cancelled); }
+    .icon-pending    { color: var(--c-pending); }
 
     .task-title {
       font-size: 0.83em; flex: 1; min-width: 0;
