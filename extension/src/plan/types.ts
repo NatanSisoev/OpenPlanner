@@ -1,6 +1,10 @@
-/** Plan JSON on disk (see docs/ide_plan_execution_1.plan.md). */
+/** Plan JSON on disk — aligned with `seed/*.json` (see repo seed/). */
 
-export type PhaseStatus = "pending" | "in_progress" | "done" | "blocked";
+export type PlanState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+
+export type PhaseState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+
+export type TaskState = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
 
 export interface PhaseGitMeta {
   phaseBranch?: string;
@@ -11,18 +15,28 @@ export interface PlanGitMeta {
   planBranch?: string;
 }
 
+export interface Task {
+  id: string;
+  state: TaskState;
+  desc: string;
+  commit: boolean;
+}
+
 export interface Phase {
   id: string;
+  state: PhaseState;
   title: string;
-  body: string;
-  status: PhaseStatus;
+  description: string;
+  tasks: Task[];
   dependsOn?: string[];
   git?: PhaseGitMeta;
 }
 
 export interface Plan {
   id: string;
+  state: PlanState;
   title: string;
+  createdAt?: string;
   phases: Phase[];
   git?: PlanGitMeta;
 }

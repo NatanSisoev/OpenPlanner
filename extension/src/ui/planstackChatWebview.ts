@@ -223,7 +223,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint">Use <strong>Create plan</strong> to run the Cursor CLI and write <code>.planstack/plans/*.json</code>. Ordinary Send stays local.</div>
+  <div class="hint">Use <strong>Create plan</strong> to run the Cursor CLI and write <code>.planstack/plans/&lt;id&gt;.json</code> (same schema as <code>seed/</code>). Ordinary Send stays local.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <textarea id="input" rows="2" placeholder="Describe the plan you want…" aria-label="Message"></textarea>

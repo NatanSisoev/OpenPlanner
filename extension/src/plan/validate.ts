@@ -1,10 +1,27 @@
-import type { Phase, PhaseStatus, Plan } from "./types";
+import type { Phase, PhaseState, Plan, PlanState, Task, TaskState } from "./types";
 
-const PHASE_STATUSES: ReadonlySet<PhaseStatus> = new Set([
+const PLAN_STATES: ReadonlySet<PlanState> = new Set([
   "pending",
   "in_progress",
-  "done",
-  "blocked",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+const PHASE_STATES: ReadonlySet<PhaseState> = new Set([
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+const TASK_STATES: ReadonlySet<TaskState> = new Set([
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+  "cancelled",
 ]);
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -29,11 +46,32 @@ function asOptionalString(v: unknown, field: string): string | undefined {
   throw new Error(`Invalid optional string: ${field}`);
 }
 
-function asPhaseStatus(v: unknown, field: string): PhaseStatus {
-  if (typeof v === "string" && PHASE_STATUSES.has(v as PhaseStatus)) {
-    return v as PhaseStatus;
+function asPlanState(v: unknown, field: string): PlanState {
+  if (typeof v === "string" && PLAN_STATES.has(v as PlanState)) {
+    return v as PlanState;
   }
-  throw new Error(`Invalid phase status: ${field}`);
+  throw new Error(`Invalid plan state: ${field}`);
+}
+
+function asPhaseState(v: unknown, field: string): PhaseState {
+  if (typeof v === "string" && PHASE_STATES.has(v as PhaseState)) {
+    return v as PhaseState;
+  }
+  throw new Error(`Invalid phase state: ${field}`);
+}
+
+function asTaskState(v: unknown, field: string): TaskState {
+  if (typeof v === "string" && TASK_STATES.has(v as TaskState)) {
+    return v as TaskState;
+  }
+  throw new Error(`Invalid task state: ${field}`);
+}
+
+function asBoolean(v: unknown, field: string): boolean {
+  if (typeof v === "boolean") {
+    return v;
+  }
+  throw new Error(`Invalid boolean: ${field}`);
 }
 
 function parsePhaseGit(raw: unknown): Phase["git"] {
@@ -61,6 +99,18 @@ function parsePlanGit(raw: unknown): Plan["git"] {
   };
 }
 
+function parseTask(raw: unknown, phaseIndex: number, taskIndex: number): Task {
+  if (!isRecord(raw)) {
+    throw new Error(`phases[${phaseIndex}].tasks[${taskIndex}] must be an object`);
+  }
+  return {
+    id: asString(raw.id, `phases[${phaseIndex}].tasks[${taskIndex}].id`),
+    state: asTaskState(raw.state, `phases[${phaseIndex}].tasks[${taskIndex}].state`),
+    desc: typeof raw.desc === "string" ? raw.desc : "",
+    commit: asBoolean(raw.commit, `phases[${phaseIndex}].tasks[${taskIndex}].commit`),
+  };
+}
+
 function parsePhase(raw: unknown, index: number): Phase {
   if (!isRecord(raw)) {
     throw new Error(`phases[${index}] must be an object`);
@@ -73,17 +123,25 @@ function parsePhase(raw: unknown, index: number): Phase {
     }
     depends = dependsOn as string[];
   }
+
+  const tasksRaw = raw.tasks;
+  if (!Array.isArray(tasksRaw)) {
+    throw new Error(`phases[${index}].tasks must be an array`);
+  }
+  const tasks = tasksRaw.map((t, j) => parseTask(t, index, j));
+
   return {
     id: asString(raw.id, `phases[${index}].id`),
+    state: asPhaseState(raw.state, `phases[${index}].state`),
     title: asString(raw.title, `phases[${index}].title`),
-    body: typeof raw.body === "string" ? raw.body : "",
-    status: asPhaseStatus(raw.status, `phases[${index}].status`),
+    description: typeof raw.description === "string" ? raw.description : "",
+    tasks,
     dependsOn: depends,
     git: parsePhaseGit(raw.git),
   };
 }
 
-/** Parse and validate workspace plan JSON. */
+/** Parse and validate workspace plan JSON (seed-aligned schema). */
 export function validatePlanJson(raw: unknown): Plan {
   if (!isRecord(raw)) {
     throw new Error("Plan root must be an object");
@@ -95,7 +153,9 @@ export function validatePlanJson(raw: unknown): Plan {
   const phases = phasesRaw.map((p, i) => parsePhase(p, i));
   return {
     id: asString(raw.id, "id"),
+    state: asPlanState(raw.state, "state"),
     title: asString(raw.title, "title"),
+    createdAt: asOptionalString(raw.createdAt, "createdAt"),
     phases,
     git: parsePlanGit(raw.git),
   };

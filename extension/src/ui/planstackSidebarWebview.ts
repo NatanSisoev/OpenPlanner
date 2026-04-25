@@ -39,8 +39,8 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
 function getHtml(planCount: number): string {
   const plansLine =
     planCount === 0
-      ? "No plan files loaded yet. Add <code>.planstack/plans/*.json</code> to the workspace."
-      : `${planCount} plan file(s) in <code>.planstack/plans/</code>.`;
+      ? "No plan files loaded yet. Add <code>.planstack/plans/*.json</code> or <code>seed/*.json</code> to the workspace."
+      : `${planCount} plan(s) loaded from <code>.planstack/plans/</code> and <code>seed/</code> (deduped by id).`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

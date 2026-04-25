@@ -78,8 +78,8 @@ The SDK can run a real agent against `local.cwd`, but streaming into an **Output
 
 ## Data model (align with product docs)
 
-- **Plan file** (e.g. `.planstack/plans/<id>.json`): `id`, `title`, `phases[]` with `id`, `title`, `body`, `status`, optional `dependsOn`.
-- **Run phase** builds one prompt: plan title + phase `body` + explicit “only this phase” instruction—**payload for the native agent**, not a second execution engine by default.
+- **On-disk plan JSON (v2, seed-aligned):** `.planstack/plans/<id>.json` and optional `seed/*.json` examples in-repo — see [`seed/`](../seed/). Top level: `id`, `state`, `title`, optional `createdAt`, optional `git`, `phases[]`. Each phase: `id`, `state`, `title`, `description`, `tasks[]` (each task: `id`, `state`, `desc`, `commit`), optional `dependsOn`, optional `git`. States are string enums (`pending`, `in_progress`, `completed`, `failed`, `cancelled`) at plan, phase, and task level.
+- **Run phase** builds one prompt: plan title + phase `description` + listed tasks + explicit “only this phase” instruction—**payload for the native agent**, not a second execution engine by default.
 
 ### Git and version control (plans ↔ branches ↔ overview)
 

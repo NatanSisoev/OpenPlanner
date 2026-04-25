@@ -1,6 +1,8 @@
 {
   "id": "demo-plan",
+  "state": "in_progress",
   "title": "Demo plan (Planstack UI)",
+  "createdAt": "2026-04-25T12:00:00Z",
   "git": {
     "baseBranch": "main",
     "planBranch": "planstack/demo-plan"
@@ -8,22 +10,45 @@
   "phases": [
     {
       "id": "p1",
+      "state": "completed",
       "title": "Scaffold",
-      "body": "Confirm `.planstack/plans/*.json` appears under the Planstack sidebar and refresh works.",
-      "status": "done"
+      "description": "Confirm `.planstack/plans/*.json` and `seed/*.json` appear under the Planstack sidebar; refresh works.",
+      "tasks": [
+        {
+          "id": "t-demo-1",
+          "state": "completed",
+          "desc": "Open Planstack → Plans and verify plans load",
+          "commit": false
+        }
+      ]
     },
     {
       "id": "p2",
+      "state": "in_progress",
       "title": "Run phase handoff",
-      "body": "Right-click this phase → Run phase. You should get the native handoff (clipboard + optional Composer command).",
-      "status": "in_progress",
+      "description": "Right-click this phase → Run phase for native handoff (clipboard + optional Composer command).",
+      "tasks": [
+        {
+          "id": "t-demo-2",
+          "state": "in_progress",
+          "desc": "Configure planstack.cursor.openComposerCommand if desired",
+          "commit": false
+        },
+        {
+          "id": "t-demo-3",
+          "state": "pending",
+          "desc": "Try Chat → Create plan with the Cursor CLI when agent is installed",
+          "commit": false
+        }
+      ],
       "dependsOn": ["p1"]
     },
     {
       "id": "p3",
+      "state": "pending",
       "title": "Optional per-phase branch",
-      "body": "This phase overrides the plan branch in metadata (example only).",
-      "status": "pending",
+      "description": "Example phase-level git override.",
+      "tasks": [],
       "git": {
         "phaseBranch": "planstack/demo-plan-phase-p3"
       }

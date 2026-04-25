@@ -10,10 +10,18 @@ export function buildPhaseHandoffPrompt(
     `# Plan: ${plan.title}`,
     `## Phase (run only this): ${phase.title}`,
     "",
-    "Execute only the work described in this phase body; do not expand scope to other phases unless blocked.",
+    "Execute only the work described in this phase description and its tasks; do not expand scope to other phases unless blocked.",
     "",
-    phase.body,
+    phase.description,
   ];
+
+  if (phase.tasks.length > 0) {
+    lines.push("", "### Tasks");
+    for (const t of phase.tasks) {
+      lines.push(`- **${t.id}** [${t.state}]${t.commit ? " (commit)" : ""}: ${t.desc}`);
+    }
+  }
+
   if (extras?.effectiveWorkBranch || extras?.baseBranch || extras?.currentHead) {
     lines.push("", "## Version control context");
     if (extras.currentHead) {

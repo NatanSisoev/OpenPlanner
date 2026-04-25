@@ -37,9 +37,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  function resolvePhaseTreeItem(arg: unknown): PhaseTreeItem | undefined {
+    if (arg instanceof PhaseTreeItem) {
+      return arg;
+    }
+    if (Array.isArray(arg)) {
+      const first = arg[0];
+      if (first instanceof PhaseTreeItem) {
+        return first;
+      }
+    }
+    return undefined;
+  }
+
   context.subscriptions.push(
-    vscode.commands.registerCommand("hackupc.planstack.runPhase", async (item: PhaseTreeItem | vscode.TreeItem) => {
-      if (!(item instanceof PhaseTreeItem)) {
+    vscode.commands.registerCommand("hackupc.planstack.runPhase", async (item: unknown) => {
+      const phaseItem = resolvePhaseTreeItem(item);
+      if (!phaseItem) {
         await vscode.window.showInformationMessage(
           "Run phase from the Planstack sidebar: expand a plan, then use Run on a phase.",
         );
@@ -47,13 +61,13 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
       const git = root
-        ? await summarizeGitForPlan(root, item.phase, item.plan)
+        ? await summarizeGitForPlan(root, phaseItem.phase, phaseItem.plan)
         : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
-      const eff = effectiveWorkBranch(item.phase, item.plan);
-      const prompt = buildPhaseHandoffPrompt(item.plan, item.phase, {
+      const eff = effectiveWorkBranch(phaseItem.phase, phaseItem.plan);
+      const prompt = buildPhaseHandoffPrompt(phaseItem.plan, phaseItem.phase, {
         currentHead: git.currentBranchLabel,
         effectiveWorkBranch: eff,
-        baseBranch: item.plan.git?.baseBranch,
+        baseBranch: phaseItem.plan.git?.baseBranch,
       });
       await dispatchPhaseHandoff(prompt);
     }),
