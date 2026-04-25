@@ -31,7 +31,6 @@ cursor --install-extension hackupc-planstack-spike-0.0.1.vsix  # code for VSCode
 
 ## Prerequisites
 
-<<<<<<< HEAD
 Each `.planstack/plans/*.json` file is a single plan. Every level (plan / phase / task) carries a state from the same enum: `pending`, `in_progress`, `completed`, `failed`, `cancelled`. Phases may declare `dependsOn` to reference `phase-id` in the same plan or `plan-id/phase-id` in another plan.
 
 # Tasks also carry `dependsOn`, a string array of task dependencies. Use `[]` when there are no blockers. Supported task refs are `task-id` for a unique task in the same plan, `phase-id/task-id` for a task in another phase of the same plan, and `plan-id/phase-id/task-id` for a cross-plan dependency. The validator rejects malformed same-plan task refs, unknown same-plan refs, self-references, duplicate phase ids, and duplicate task ids inside one phase. The full shape lives in `[extension/src/plan/types.ts](extension/src/plan/types.ts)`, the parser in `[extension/src/plan/validate.ts](extension/src/plan/validate.ts)`.
@@ -142,8 +141,6 @@ State values: `pending` · `in_progress` · `completed` · `failed` · `cancelle
 Phases may declare `dependsOn: string[]` referencing other phase IDs. The validator enforces no duplicate IDs, no self-references, and no references to unknown IDs.
 
 ---
-
-> > > > > > > 785c909d1a40e511663f971abaad66508e449544
 
 ## Dispatch modes
 

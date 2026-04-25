@@ -1,4 +1,4 @@
-import type { GitInfo, Phase, PhaseState, Plan, PlanState, Task, TaskState } from "./types";
+import type { GitInfo, Phase, PhaseState, Plan, PlanState, PlanSyncMeta, Task, TaskState } from "./types";
 import { parsePhaseDependencyRef } from "./dependencies";
 
 const PLAN_STATES: ReadonlySet<PlanState> = new Set([
@@ -147,6 +147,24 @@ function parsePhase(raw: unknown, index: number): Phase {
 
 /** Parse and validate workspace plan JSON (seed-aligned schema). */
 /** Cross-phase checks that need every phase parsed before they can run. */
+function asSyncMeta(raw: unknown): PlanSyncMeta | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!isRecord(raw)) {
+    throw new Error("sync must be an object");
+  }
+  const updatedAt = asOptionalString(raw.updatedAt);
+  if (updatedAt === undefined) {
+    return undefined;
+  }
+  const rev = raw.revision;
+  if (typeof rev !== "number" || !Number.isFinite(rev)) {
+    throw new Error("sync.revision must be a finite number when sync.updatedAt is set");
+  }
+  return { updatedAt, revision: Math.trunc(rev) };
+}
+
 function checkPhaseInvariants(plan: Plan): void {
   // 1. No duplicate phase ids
   const seen = new Set<string>();
@@ -201,7 +219,8 @@ export function validatePlanJson(raw: unknown): Plan {
     throw new Error("Plan must have a phases array");
   }
   const phases = phasesRaw.map((p, i) => parsePhase(p, i));
-  const plan = {
+  const sync = asSyncMeta(raw.sync);
+  const plan: Plan = {
     id: asString(raw.id, "id"),
     state: asPlanState(raw.state, "state"),
     title: asString(raw.title, "title"),
@@ -210,6 +229,9 @@ export function validatePlanJson(raw: unknown): Plan {
     phases,
     git: asGitInfo(raw.git, "git"),
   };
+  if (sync) {
+    plan.sync = sync;
+  }
   checkPhaseInvariants(plan);
   checkTaskInvariants(plan);
   return plan;

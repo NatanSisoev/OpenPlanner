@@ -1,0 +1,13 @@
+{
+  "name": "mongodb-ensure-plan",
+  "private": true,
+  "type": "module",
+  "description": "One-shot: ensure Atlas has the plan collection (uses repo root .env).",
+  "scripts": {
+    "ensure-plan": "node ensure-plan.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mongodb": "^6.12.0"
+  }
+}

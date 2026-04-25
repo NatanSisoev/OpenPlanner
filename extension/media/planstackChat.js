@@ -16,26 +16,50 @@
 
   /** @type {Map<string, { wrap: HTMLElement; intervalId: ReturnType<typeof setInterval> }>} */
   const animatedStatuses = new Map();
-  const MENTION_PATH_RE = /(^|[\s(])@([A-Za-z0-9._\-\/]+)/g;
+  const MENTION_RE =
+    /(^|[\s(])@(?:symbol:([A-Za-z0-9_$.]+)(?:@([A-Za-z0-9._\-\/]+))?(?::(\d+))?|(phase|task|folder|plan):([A-Za-z0-9._\-\/]+)|([A-Za-z0-9._\-\/]+))/g;
+  const ACTIVE_MENTION_RE = /(^|[\s(])@((?:phase:|task:|plan:|symbol:|folder:)?[A-Za-z0-9._\-\/@:$]*)$/;
   let mentionSuggestState = {
     requestId: 0,
     latestHandledRequestId: 0,
     tokenStart: -1,
     tokenEnd: -1,
     tokenQuery: "",
+    /** @type {{ kind: "file"|"folder"|"plan"|"phase"|"task"|"symbol"; insertText: string; label: string; detail?: string }[]} */
     candidates: [],
     activeIndex: 0,
     open: false,
   };
   let mentionSuggestDebounceTimer = undefined;
 
-  function appendBubble(role, text) {
+  function formatTimestamp(timestampIso) {
+    if (!timestampIso || typeof timestampIso !== "string") {
+      return "";
+    }
+    const d = new Date(timestampIso);
+    if (Number.isNaN(d.getTime())) {
+      return "";
+    }
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function appendBubble(role, text, timestampIso) {
     const shouldStick = isNearBottom(messagesEl);
     const wrap = document.createElement("div");
     wrap.className = role === "system" ? "row system" : "row user";
     const bubble = document.createElement("div");
     bubble.className = role === "system" ? "bubble system" : "bubble user";
-    bubble.textContent = text;
+    const body = document.createElement("div");
+    body.className = "bubble-text";
+    body.textContent = text;
+    bubble.appendChild(body);
+    const ts = formatTimestamp(timestampIso);
+    if (ts) {
+      const meta = document.createElement("div");
+      meta.className = "bubble-meta";
+      meta.textContent = ts;
+      bubble.appendChild(meta);
+    }
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
     if (shouldStick) {
@@ -169,23 +193,79 @@
     }
   }
 
-  function extractMentionPaths(text) {
+  function extractMentions(text) {
     const out = [];
     const seen = new Set();
     let match;
-    while ((match = MENTION_PATH_RE.exec(text)) !== null) {
-      const p = (match[2] || "").replace(/\\/g, "/").replace(/^\.?\//, "");
-      if (!p || seen.has(p)) {
+    const re = new RegExp(MENTION_RE.source, MENTION_RE.flags);
+    while ((match = re.exec(text)) !== null) {
+      const symbolName = match[2];
+      const symbolFile = match[3];
+      const symbolLine = match[4];
+      const entityKind = match[5];
+      const entityBody = match[6];
+      const fileBody = match[7];
+
+      if (symbolName) {
+        let raw = `symbol:${symbolName}`;
+        if (symbolFile) {
+          const cleanFile = symbolFile.replace(/\\/g, "/").replace(/^\.?\//, "");
+          if (cleanFile) {
+            raw += `@${cleanFile}`;
+            if (symbolLine) {
+              raw += `:${symbolLine}`;
+            }
+          }
+        }
+        if (seen.has(raw)) {
+          continue;
+        }
+        seen.add(raw);
+        out.push({ kind: "symbol", raw });
         continue;
       }
-      seen.add(p);
-      out.push(p);
+
+      if (entityKind && entityBody) {
+        const body = entityBody.replace(/\\/g, "/").replace(/^\.?\//, "");
+        if (!body) {
+          continue;
+        }
+        const parts = body.split("/").filter(Boolean);
+        if (entityKind === "phase" && parts.length !== 2) {
+          continue;
+        }
+        if (entityKind === "task" && parts.length !== 3) {
+          continue;
+        }
+        if (entityKind === "plan" && parts.length < 1) {
+          continue;
+        }
+        if (entityKind === "folder" && parts.length < 1) {
+          continue;
+        }
+        const raw = `${entityKind}:${body}`;
+        if (seen.has(raw)) {
+          continue;
+        }
+        seen.add(raw);
+        out.push({ kind: entityKind, raw });
+        continue;
+      }
+
+      if (fileBody) {
+        const body = fileBody.replace(/\\/g, "/").replace(/^\.?\//, "");
+        if (!body || seen.has(body)) {
+          continue;
+        }
+        seen.add(body);
+        out.push({ kind: "file", raw: body });
+      }
     }
     return out;
   }
 
-  function removeMentionPath(path) {
-    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  function removeMention(raw) {
+    const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(`(^|\\s)@${escaped}(?=\\s|$)`);
     const next = inputEl.value.replace(pattern, " ").replace(/\s{2,}/g, " ").trim();
     inputEl.value = next;
@@ -196,20 +276,27 @@
 
   function renderMentionChips() {
     mentionChipsEl.innerHTML = "";
-    const paths = extractMentionPaths(inputEl.value || "");
-    if (paths.length === 0) {
+    const mentions = extractMentions(inputEl.value || "");
+    if (mentions.length === 0) {
       return;
     }
-    for (const path of paths) {
+    for (const m of mentions) {
       const chip = document.createElement("span");
-      chip.className = "mention-chip";
-      chip.textContent = `@${path}`;
+      chip.className = `mention-chip mention-chip-${m.kind}`;
+      const kindEl = document.createElement("span");
+      kindEl.className = "mention-chip-kind";
+      kindEl.textContent = m.kind;
+      const labelEl = document.createElement("span");
+      labelEl.className = "mention-chip-label";
+      labelEl.textContent = `@${m.raw}`;
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "mention-chip-remove";
-      removeBtn.title = `Remove @${path}`;
+      removeBtn.title = `Remove @${m.raw}`;
       removeBtn.textContent = "x";
-      removeBtn.addEventListener("click", () => removeMentionPath(path));
+      removeBtn.addEventListener("click", () => removeMention(m.raw));
+      chip.appendChild(kindEl);
+      chip.appendChild(labelEl);
       chip.appendChild(removeBtn);
       mentionChipsEl.appendChild(chip);
     }
@@ -233,8 +320,23 @@
     mentionSuggestState.candidates.forEach((candidate, idx) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `mention-suggest-item${idx === mentionSuggestState.activeIndex ? " active" : ""}`;
-      btn.textContent = candidate;
+      btn.className = `mention-suggest-item mention-suggest-${candidate.kind}${
+        idx === mentionSuggestState.activeIndex ? " active" : ""
+      }`;
+      const kindEl = document.createElement("span");
+      kindEl.className = "mention-suggest-kind";
+      kindEl.textContent = candidate.kind;
+      const labelEl = document.createElement("span");
+      labelEl.className = "mention-suggest-label";
+      labelEl.textContent = candidate.label;
+      btn.appendChild(kindEl);
+      btn.appendChild(labelEl);
+      if (candidate.detail) {
+        const detailEl = document.createElement("span");
+        detailEl.className = "mention-suggest-detail";
+        detailEl.textContent = candidate.detail;
+        btn.appendChild(detailEl);
+      }
       btn.addEventListener("mouseenter", () => {
         mentionSuggestState.activeIndex = idx;
         renderMentionSuggest();
@@ -254,8 +356,9 @@
       closeMentionSuggest();
       return;
     }
+    const insert = typeof candidate === "string" ? candidate : candidate.insertText;
     const text = inputEl.value || "";
-    const insertion = `@${candidate} `;
+    const insertion = `@${insert} `;
     inputEl.value = `${text.slice(0, start)}${insertion}${text.slice(end)}`;
     const caret = start + insertion.length;
     inputEl.focus();
@@ -268,7 +371,7 @@
     const value = inputEl.value || "";
     const caret = inputEl.selectionStart ?? value.length;
     const before = value.slice(0, caret);
-    const match = /(^|[\s(])@([A-Za-z0-9._\-\/]*)$/.exec(before);
+    const match = ACTIVE_MENTION_RE.exec(before);
     if (!match) {
       return null;
     }
@@ -394,11 +497,29 @@
     header.textContent = `${icon} ${summary.phaseLabel} · ${dur}`;
     card.appendChild(header);
 
-    // Stats line
+    // Stats line (same + / − colors as per-file rows below)
     const stats = document.createElement("div");
     stats.className = "run-summary-stats";
     const fc = summary.files.length;
-    stats.textContent = `${fc} file${fc !== 1 ? "s" : ""} · +${summary.totalAdditions} / -${summary.totalDeletions}`;
+    const prefix = document.createElement("span");
+    prefix.className = "run-summary-stats-prefix";
+    prefix.textContent = `${fc} file${fc !== 1 ? "s" : ""} · `;
+    const diffWrap = document.createElement("span");
+    diffWrap.className = "run-summary-file-diff";
+    const addTot = document.createElement("span");
+    addTot.className = "run-summary-file-diff-add";
+    addTot.textContent = `+${summary.totalAdditions}`;
+    const sepTot = document.createElement("span");
+    sepTot.className = "run-summary-file-diff-sep";
+    sepTot.textContent = " / ";
+    const delTot = document.createElement("span");
+    delTot.className = "run-summary-file-diff-del";
+    delTot.textContent = `-${summary.totalDeletions}`;
+    diffWrap.appendChild(addTot);
+    diffWrap.appendChild(sepTot);
+    diffWrap.appendChild(delTot);
+    stats.appendChild(prefix);
+    stats.appendChild(diffWrap);
     card.appendChild(stats);
 
     // Per-file rows
@@ -648,7 +769,7 @@
       animatedStatuses.clear();
       (msg.messages || []).forEach((m) => {
         if (m && (m.role === "user" || m.role === "system") && typeof m.text === "string") {
-          appendBubble(m.role, m.text);
+          appendBubble(m.role, m.text, typeof m.timestampIso === "string" ? m.timestampIso : "");
         }
       });
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -657,21 +778,45 @@
 
     if (msg.type === "append" && typeof msg.text === "string") {
       const role = msg.role === "system" ? "system" : "user";
-      appendBubble(role, msg.text);
+      appendBubble(role, msg.text, typeof msg.timestampIso === "string" ? msg.timestampIso : "");
       return;
     }
 
-    if (msg.type === "mentionSuggestResult" && typeof msg.requestId === "string" && Array.isArray(msg.candidates)) {
+    if (msg.type === "mentionSuggestResult" && typeof msg.requestId === "string") {
       const id = Number(msg.requestId);
       if (!Number.isFinite(id) || id < mentionSuggestState.latestHandledRequestId) {
         return;
       }
       mentionSuggestState.latestHandledRequestId = id;
-      const prevActive = mentionSuggestState.candidates[mentionSuggestState.activeIndex] || "";
-      mentionSuggestState.candidates = msg.candidates.filter((x) => typeof x === "string").slice(0, 12);
-      const preservedIdx = prevActive ? mentionSuggestState.candidates.indexOf(prevActive) : -1;
+      const incoming = Array.isArray(msg.suggestions)
+        ? msg.suggestions
+        : Array.isArray(msg.candidates)
+        ? msg.candidates.map((c) => (typeof c === "string" ? { kind: "file", insertText: c, label: c } : c))
+        : [];
+      const cleaned = incoming
+        .filter((c) => c && typeof c === "object" && typeof c.insertText === "string" && typeof c.label === "string")
+        .map((c) => ({
+          kind:
+            c.kind === "phase" ||
+            c.kind === "task" ||
+            c.kind === "plan" ||
+            c.kind === "symbol" ||
+            c.kind === "folder"
+              ? c.kind
+              : "file",
+          insertText: c.insertText,
+          label: c.label,
+          detail: typeof c.detail === "string" ? c.detail : undefined,
+        }))
+        .slice(0, 12);
+      const prevActive = mentionSuggestState.candidates[mentionSuggestState.activeIndex];
+      const prevKey = prevActive ? `${prevActive.kind}|${prevActive.insertText}` : "";
+      mentionSuggestState.candidates = cleaned;
+      const preservedIdx = prevKey
+        ? cleaned.findIndex((c) => `${c.kind}|${c.insertText}` === prevKey)
+        : -1;
       mentionSuggestState.activeIndex = preservedIdx >= 0 ? preservedIdx : 0;
-      mentionSuggestState.open = mentionSuggestState.candidates.length > 0;
+      mentionSuggestState.open = cleaned.length > 0;
       renderMentionSuggest();
       return;
     }

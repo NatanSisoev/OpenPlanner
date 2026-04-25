@@ -7,7 +7,7 @@ import { getOutput, logLine } from "../log";
 import { AgentCliError, AgentRunBusyError, killAllAgentCliProcesses } from "../plan/agentCliRunner";
 import { createPlanFromUserRequest, runAgentPromptEdits } from "../plan/createPlanFromCli";
 import { getPlanningMode } from "../plan/modes";
-import { buildPromptWithMentionedFiles, findMentionCandidates } from "./chatFileMentions";
+import { buildPromptWithMentions, findChatMentionSuggestions } from "./chatFileMentions";
 import {
   postAgentStreamChunk,
   postAgentStreamEnd,
@@ -66,7 +66,11 @@ async function getHeadFileContent(cwd: string, relPath: string): Promise<string 
 
 type ChatRole = "user" | "system";
 
-type ChatTurn = { role: ChatRole; text: string };
+type ChatTurn = { role: ChatRole; text: string; timestampIso: string };
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
 
 export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -102,17 +106,19 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     w.html = getChatHtml(csp, scriptUri);
 
     const pushSystem = (text: string): void => {
-      this.transcript.push({ role: "system", text });
+      const timestampIso = nowIso();
+      this.transcript.push({ role: "system", text, timestampIso });
       try {
-        w.postMessage({ type: "append", role: "system", text });
+        w.postMessage({ type: "append", role: "system", text, timestampIso });
       } catch {
         // Webview disposed.
       }
     };
     const pushUser = (text: string): void => {
-      this.transcript.push({ role: "user", text });
+      const timestampIso = nowIso();
+      this.transcript.push({ role: "user", text, timestampIso });
       try {
-        w.postMessage({ type: "append", role: "user", text });
+        w.postMessage({ type: "append", role: "user", text, timestampIso });
       } catch {
         // Webview disposed.
       }
@@ -180,8 +186,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         if (text.length > MAX_MESSAGE_CHARS) {
           text = text.slice(0, MAX_MESSAGE_CHARS);
         }
-        this.transcript.push({ role: "user", text });
-        w.postMessage({ type: "append", role: "user", text });
+        pushUser(text);
         void (async () => {
           const mentionCtx = await this.resolveMentionContext(w, text, "send");
           await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
@@ -197,8 +202,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           void vscode.window.showWarningMessage("Planstack: enter a request in the box before Create plan.");
           return;
         }
-        this.transcript.push({ role: "user", text });
-        w.postMessage({ type: "append", role: "user", text });
+        pushUser(text);
         void (async () => {
           const mentionCtx = await this.resolveMentionContext(w, text, "createPlan");
           await this.runCreatePlanFlow(w, text, mentionCtx.promptForAgent);
@@ -207,21 +211,21 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
       if (m.type === "mentionSuggest" && typeof m.requestId === "string" && typeof m.query === "string") {
         const requestId = m.requestId;
-        const query = m.query;
+        const rawQuery = m.query;
         const folder = vscode.workspace.workspaceFolders?.[0];
         if (!folder) {
-          w.postMessage({ type: "mentionSuggestResult", requestId, candidates: [] });
+          w.postMessage({ type: "mentionSuggestResult", requestId, suggestions: [] });
           return;
         }
         void (async () => {
-          let candidates: string[] = [];
+          let suggestions: Awaited<ReturnType<typeof findChatMentionSuggestions>> = [];
           try {
-            candidates = await findMentionCandidates(folder.uri, { query, limit: 12 });
+            suggestions = await findChatMentionSuggestions(folder.uri, { rawQuery, limit: 12 });
           } catch {
-            candidates = [];
+            suggestions = [];
           }
           try {
-            w.postMessage({ type: "mentionSuggestResult", requestId, candidates });
+            w.postMessage({ type: "mentionSuggestResult", requestId, suggestions });
           } catch {
             // Webview disposed.
           }
@@ -243,8 +247,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (m.type === "retryPrompt" && typeof (m as { prompt?: unknown }).prompt === "string") {
         const text = (m as { prompt: string }).prompt.trim();
         if (text) {
-          this.transcript.push({ role: "user", text });
-          w.postMessage({ type: "append", role: "user", text });
+          pushUser(text);
           void (async () => {
             const mentionCtx = await this.resolveMentionContext(w, text, "send");
             await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
@@ -343,12 +346,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
           n > 0
             ? `Stop agents: sent SIGTERM to ${n} process(es). In-flight runs will abort.`
             : "Stop agents: no Planstack agent process was running.";
-        this.transcript.push({ role: "system", text: line });
-        try {
-          w.postMessage({ type: "append", role: "system", text: line });
-        } catch {
-          // Webview disposed.
-        }
+        pushSystem(line);
         void vscode.window.showInformationMessage(`Planstack: ${line}`);
         return;
       }
@@ -382,23 +380,50 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     if (!folder) {
       return { promptForAgent: userPrompt };
     }
-    const ctx = await buildPromptWithMentionedFiles(folder.uri, userPrompt);
+    const flowLabel = flowKind === "createPlan" ? "Create plan" : "Send";
+    const ctx = await buildPromptWithMentions(folder.uri, userPrompt);
+    const attachedParts: string[] = [];
     if (ctx.files.length > 0) {
-      const used = ctx.files.map((f) => f.displayPath).join(", ");
-      this.pushSystem(
-        w,
-        `${flowKind === "createPlan" ? "Create plan" : "Send"}: attached ${ctx.files.length} @file context item(s): ${used}`,
+      attachedParts.push(
+        `${ctx.files.length} file(s): ${ctx.files.map((f) => f.displayPath).join(", ")}`,
       );
+    }
+    if (ctx.folders.length > 0) {
+      attachedParts.push(
+        `${ctx.folders.length} folder(s): ${ctx.folders.map((f) => `${f.displayPath}/`).join(", ")}`,
+      );
+    }
+    if (ctx.plans.length > 0) {
+      attachedParts.push(
+        `${ctx.plans.length} plan(s): ${ctx.plans.map((p) => p.title).join(", ")}`,
+      );
+    }
+    if (ctx.phases.length > 0) {
+      attachedParts.push(
+        `${ctx.phases.length} phase(s): ${ctx.phases.map((p) => `@${p.raw}`).join(", ")}`,
+      );
+    }
+    if (ctx.tasks.length > 0) {
+      attachedParts.push(
+        `${ctx.tasks.length} task(s): ${ctx.tasks.map((t) => `@${t.raw}`).join(", ")}`,
+      );
+    }
+    if (ctx.symbols.length > 0) {
+      attachedParts.push(
+        `${ctx.symbols.length} symbol(s): ${ctx.symbols
+          .map((s) => `${s.name} [${s.kindLabel}] @ ${s.filePath}:${s.startLine}`)
+          .join(", ")}`,
+      );
+    }
+    if (attachedParts.length > 0) {
+      this.pushSystem(w, `${flowLabel}: attached ${attachedParts.join("; ")}`);
     }
     if (ctx.errors.length > 0) {
       const detail = ctx.errors
         .slice(0, 8)
         .map((e) => `@${e.mention}: ${e.reason}`)
         .join(" | ");
-      this.pushSystem(
-        w,
-        `${flowKind === "createPlan" ? "Create plan" : "Send"}: skipped some @ mentions - ${detail}`,
-      );
+      this.pushSystem(w, `${flowLabel}: skipped some @ mentions - ${detail}`);
     }
     return { promptForAgent: ctx.promptForAgent };
   }
@@ -439,8 +464,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         return;
       }
       const startLine = "Create plan: starting Cursor CLI run (agent -p --trust)…";
-      this.transcript.push({ role: "system", text: startLine });
-      w.postMessage({ type: "append", role: "system", text: startLine });
+      this.pushSystem(w, startLine);
 
       const cfg = vscode.workspace.getConfiguration("planstack.cursor");
       const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
@@ -474,12 +498,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         lastChatAt = now;
         const line = `${prefix}${t.slice(-200)}`;
-        this.transcript.push({ role: "system", text: line });
-        try {
-          w.postMessage({ type: "append", role: "system", text: line });
-        } catch {
-          // Webview disposed.
-        }
+        this.pushSystem(w, line);
       };
 
       try {
@@ -538,8 +557,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         const rel = vscode.workspace.asRelativePath(savedUri);
         traceEvent(flowId, "createPlanFlow.success", { savedUri: savedUri.fsPath, rel });
         const line = `Saved plan file: ${rel}`;
-        this.transcript.push({ role: "system", text: line });
-        w.postMessage({ type: "append", role: "system", text: line });
+        this.pushSystem(w, line);
         await this.onPlanSaved();
         void vscode.window.showInformationMessage(`Planstack: wrote ${rel}`);
         await vscode.window.showTextDocument(savedUri, { preview: true });
@@ -556,8 +574,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       if (e instanceof AgentRunBusyError) {
         traceEvent(flowId, "createPlanFlow.error", { kind: "AgentRunBusyError", message: e.message });
         const line = `Create plan skipped: ${e.message}`;
-        this.transcript.push({ role: "system", text: line });
-        w.postMessage({ type: "append", role: "system", text: line });
+        this.pushSystem(w, line);
         void vscode.window.showWarningMessage(e.message);
         return;
       }
@@ -580,8 +597,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         details: detail.slice(0, 2000),
         retryPrompt: userRequest,
       });
-      this.transcript.push({ role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
-      w.postMessage({ type: "append", role: "system", text: `Create plan failed: ${detail.slice(0, 500)}` });
+      this.pushSystem(w, `Create plan failed: ${detail.slice(0, 500)}`);
       if (stopped) {
         void vscode.window.showWarningMessage(`Planstack: ${detail.slice(0, 2000)}`);
       } else {
@@ -598,9 +614,10 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   }
 
   private pushSystem(w: vscode.Webview, text: string): void {
-    this.transcript.push({ role: "system", text });
+    const timestampIso = nowIso();
+    this.transcript.push({ role: "system", text, timestampIso });
     try {
-      w.postMessage({ type: "append", role: "system", text });
+      w.postMessage({ type: "append", role: "system", text, timestampIso });
     } catch {
       // Webview disposed.
     }
@@ -798,6 +815,19 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       white-space: pre-wrap; word-break: break-word;
       line-height: 1.4; font-size: 0.9em;
     }
+    .bubble-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble-meta {
+      margin-top: 4px;
+      font-size: 0.75em;
+      opacity: 0.62;
+      text-align: right;
+    }
+    .row.system .bubble-meta {
+      text-align: left;
+    }
     .bubble.user {
       background: color-mix(
         in srgb,
@@ -861,6 +891,20 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       line-height: 1.5;
       font-family: var(--vscode-editor-font-family);
     }
+    .mention-chip-kind {
+      font-size: 0.78em;
+      padding: 0 5px;
+      border-radius: 8px;
+      background: rgba(127,127,127,0.25);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .mention-chip-plan .mention-chip-kind { background: rgba(120, 200, 255, 0.38); }
+    .mention-chip-phase .mention-chip-kind { background: rgba(99, 132, 255, 0.35); }
+    .mention-chip-task .mention-chip-kind { background: rgba(110, 200, 130, 0.35); }
+    .mention-chip-symbol .mention-chip-kind { background: rgba(220, 130, 230, 0.35); }
+    .mention-chip-folder .mention-chip-kind { background: rgba(200, 170, 90, 0.38); }
+    .mention-chip-label { white-space: nowrap; }
     .mention-chip-remove {
       border: none;
       background: transparent;
@@ -888,7 +932,9 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     #mentionSuggest.show { display: block; }
     .mention-suggest-item {
-      display: block;
+      display: flex;
+      align-items: center;
+      gap: 6px;
       width: 100%;
       border: none;
       border-bottom: 1px solid rgba(127,127,127,0.12);
@@ -904,6 +950,33 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
     .mention-suggest-item:hover,
     .mention-suggest-item.active {
       background: var(--vscode-list-activeSelectionBackground, rgba(127,127,127,0.2));
+    }
+    .mention-suggest-kind {
+      flex-shrink: 0;
+      font-size: 0.74em;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: rgba(127,127,127,0.25);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .mention-suggest-plan .mention-suggest-kind { background: rgba(120, 200, 255, 0.38); }
+    .mention-suggest-phase .mention-suggest-kind { background: rgba(99, 132, 255, 0.35); }
+    .mention-suggest-task .mention-suggest-kind { background: rgba(110, 200, 130, 0.35); }
+    .mention-suggest-symbol .mention-suggest-kind { background: rgba(220, 130, 230, 0.35); }
+    .mention-suggest-folder .mention-suggest-kind { background: rgba(200, 170, 90, 0.38); }
+    .mention-suggest-label {
+      flex-shrink: 0;
+      font-family: var(--vscode-editor-font-family);
+    }
+    .mention-suggest-detail {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0.7;
+      font-size: 0.92em;
     }
     #composerActions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
     #send, #createPlan, #stopAgents {
@@ -1079,7 +1152,11 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       width: 100%;
     }
     .run-summary-header { font-weight: 600; margin-bottom: 3px; }
-    .run-summary-stats { opacity: 0.7; font-size: 0.9em; margin-bottom: 8px; }
+    .run-summary-stats {
+      display: flex; align-items: baseline; flex-wrap: wrap; gap: 0;
+      font-size: 0.9em; margin-bottom: 8px;
+    }
+    .run-summary-stats-prefix { opacity: 0.7; }
     .run-summary-files {
       display: flex; flex-direction: column; gap: 3px;
       border-top: 1px solid rgba(127,127,127,0.15);
@@ -1170,7 +1247,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
   </style>
 </head>
 <body>
-  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits, and <strong>@file</strong> includes workspace file context.</div>
+  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits. Tag with <strong>@file</strong>, <strong>@folder:path/to/dir</strong>, <strong>@plan:planId</strong>, <strong>@phase:planId/phaseId</strong>, <strong>@task:planId/phaseId/taskId</strong>, or <strong>@symbol:Name</strong>.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <div id="inputWrap">
