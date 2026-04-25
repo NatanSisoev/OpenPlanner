@@ -30,6 +30,16 @@
   let mutationSeq = 0;
   const pendingMutations = new Map();
 
+  const R = globalThis.__PS_RUN_UI || {
+    glyph: "\u25b6",
+    runPlanButton: "Run plan",
+    runPhaseButton: "Run phase",
+    runTaskButton: "Run task",
+    runPlanTooltip: "Runs phases in order from the next runnable phase.",
+    runPhaseTooltip: "Runs this phase with the configured executor (CLI, etc.).",
+    runTaskTooltip: "Runs this task with the configured executor.",
+  };
+
   // Red-button UX spec: Overview webview only — place a destructive-styled control labeled "Stop agents"
   // (title: abort in-flight headless agent runs) in the top toolbar’s right group beside Sync; the webview
   // will post to the host to run hackupc.planstack.confirmStopHeadlessAgents, which must show a modal
@@ -114,7 +124,9 @@
   // ── Render ───────────────────────────────────────────────────────────────
 
   function render() {
+    root.classList.remove("view-empty", "view-list", "view-nodes");
     if (!plans.length) {
+      root.classList.add("view-empty");
       root.innerHTML = `
         ${renderToolbar(true)}
         <div class="empty-state">
@@ -124,6 +136,7 @@
         </div>`;
       return;
     }
+    root.classList.add(viewMode === "nodes" ? "view-nodes" : "view-list");
     const controls = renderToolbar(false);
     const body = viewMode === "nodes"
       ? renderNodesView()
@@ -239,20 +252,20 @@
              style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
           <span class="graph-node-stripe tone-${node.tone}" aria-hidden="true"></span>
           <div class="graph-plan-body">
-            <div class="graph-plan-row">
+            <div class="graph-plan-top">
               <span class="graph-plan-kicker">PLAN</span>
-              <div class="graph-node-actions">
-                <button type="button" class="add-btn graph-add-btn"
-                        data-action="quickCreatePhase" data-plan="${pid}"
-                        title="Add phase to this plan">+ Phase</button>
-                <button class="run-btn graph-run-btn graph-plan-run-btn"
-                        data-action="runPlanFromGraph"
-                        data-plan="${pid}"
-                        title="Run all phases in order">▶ Run</button>
-              </div>
             </div>
             <span class="graph-plan-title">${esc(node.title)}</span>
             <code class="graph-node-id">${pid}</code>
+            <div class="graph-plan-actions graph-node-actions">
+              <button type="button" class="add-btn graph-add-btn"
+                      data-action="quickCreatePhase" data-plan="${pid}"
+                      title="Add phase to this plan">+ Phase</button>
+              <button class="run-btn graph-run-btn graph-plan-run-btn"
+                      data-action="runPlanFromGraph"
+                      data-plan="${pid}"
+                      title="${esc(R.runPlanTooltip)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span> ${esc(R.runPlanButton)}</button>
+            </div>
           </div>
         </div>
       `;
@@ -263,6 +276,10 @@
     const isSelected = selectedPhaseKey === key;
     const depSummary = phaseDependencySummary(node.plan, node.phase);
     const state = node.phase.state;
+    const phaseDesc = (node.phase.description && String(node.phase.description).trim()) || "";
+    const phaseDescHtml = phaseDesc
+      ? `<div class="graph-phase-desc">${esc(phaseDesc)}</div>`
+      : "";
     return `
       <div class="graph-phase-node tone-${state} ${isSelected ? "selected" : ""}"
            style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;">
@@ -277,6 +294,7 @@
             ${badgeHtml(state)}
           </header>
           <div class="graph-phase-title">${esc(node.phase.title)}</div>
+          ${phaseDescHtml}
           ${depSummary.short
             ? `<div class="graph-phase-deps-chip" title="${esc(depSummary.title)}"><span class="chip-glyph">⇠</span>${esc(depSummary.short)}</div>`
             : ""}
@@ -291,7 +309,7 @@
                     data-action="runPhaseFromGraph"
                     data-plan="${pid}"
                     data-phase="${phid}"
-                    title="Run this phase">▶ Run</button>
+                    title="${esc(R.runPhaseTooltip)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span> ${esc(R.runPhaseButton)}</button>
           </div>
         </footer>
       </div>
@@ -393,8 +411,8 @@
     // phase from plan B can never sit directly across from plan A's node.
     const padding = 30;
     const nodeWidth = 232;
-    const planNodeHeight = 96;
-    const phaseNodeHeight = 124;
+    const planNodeHeight = 104;
+    const phaseNodeHeight = 152;
     const colGap = 76;
     const rowGap = 144;
     const bandGap = 58;
@@ -582,8 +600,10 @@
     const availH = Math.max(80, viewport.clientHeight - margin * 2);
     // Minimum readable scale — below this the run buttons get unusably small.
     // Users can still pan/zoom past it, but the initial fit stays legible.
-    const minReadableScale = 0.65;
     const fitScale = Math.min(availW / sceneW, availH / sceneH, 1.5);
+    // Cap how much we zoom past "fit" so short sidebars still show the whole
+    // graph (run controls stay reachable); avoid a hard 0.65 floor on tiny viewports.
+    const minReadableScale = Math.min(0.65, fitScale * 1.08);
     const scale = Math.max(fitScale, minReadableScale);
     const state = ensureGraphState(graphId);
     state.scale = scale;
@@ -626,13 +646,17 @@
       <div class="node-phase-block">
         <div class="phase-header node-phase-header" data-plan="${pid}" data-phase="${phid}">
           <div class="phase-header-left">
-            <span class="phase-status-dot dot-${phase.state}"></span>
-            <span class="phase-title">${esc(phase.title)}</span>
+            <div class="phase-header-lead">
+              <span class="phase-status-dot dot-${phase.state}"></span>
+            </div>
+            <div class="phase-header-text">
+              <span class="phase-title">${esc(phase.title)}</span>
+            </div>
           </div>
           <div class="phase-header-right">
             ${badgeHtml(phase.state)}
             <button type="button" class="add-btn" data-action="quickCreateTask" data-plan="${pid}" data-phase="${phid}" title="Add task to this phase">+ Task</button>
-            <button class="run-btn" data-action="runPhase" data-plan="${pid}" data-phase="${phid}" title="Run this phase">▶ Run</button>
+            <button class="run-btn" data-action="runPhase" data-plan="${pid}" data-phase="${phid}" title="${esc(R.runPhaseTooltip)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span> ${esc(R.runPhaseButton)}</button>
           </div>
         </div>
         ${depSummary.short ? `<div class="node-phase-deps"><strong>Depends on</strong>: ${esc(depSummary.title).replace(/\n/g, "<br>")}</div>` : ""}
@@ -688,7 +712,7 @@
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
             ${mergeButton}
             <button type="button" class="add-btn" data-action="quickCreatePhase" data-plan="${pid}" title="Add phase to this plan">+ Phase</button>
-            <button class="run-btn" data-action="runPlan" data-plan="${pid}" title="Run next phase">▶ Run</button>
+            <button class="run-btn" data-action="runPlan" data-plan="${pid}" title="${esc(R.runPlanTooltip)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span> ${esc(R.runPlanButton)}</button>
           </div>
         </div>
         ${isOpen ? `<div class="plan-phases">${phases.map((ph) => renderPhase(plan, ph)).join("")}</div>` : ""}
@@ -722,28 +746,32 @@
 
     const blockers = blockingDeps(plan, phase);
     const isBlocked = blockers.length > 0;
-    const blockedTitle = isBlocked ? `Blocked by: ${blockers.join(", ")}` : "Run this phase";
+    const blockedTitle = isBlocked ? `Blocked by: ${blockers.join(", ")}` : R.runPhaseTooltip;
 
     return `
       <div class="phase-row">
         <div class="phase-header${isBlocked ? " blocked" : ""}" data-plan="${pid}" data-phase="${phid}">
           <div class="phase-header-left"
                ${hasTasks ? `data-action="togglePhase" data-plan="${pid}" data-phase="${phid}"` : ""}>
-            ${hasTasks
-              ? `<span class="chevron sm${isOpen ? " expanded" : ""}">›</span>`
-              : `<span class="chevron-gap"></span>`}
-            <span class="phase-status-dot dot-${phase.state}" role="button" tabindex="0"
-                  data-action="cyclePhaseState" data-plan="${pid}" data-phase="${phid}"
-                  title="Click to set: ${nextStateInCycle(phase.state).replace("_", " ")}"></span>
-            <span class="phase-title">${esc(phase.title)}</span>
-            ${isBlocked ? `<span class="phase-blocked-hint">· blocked by ${esc(blockers.join(", "))}</span>` : ""}
+            <div class="phase-header-lead">
+              ${hasTasks
+                ? `<span class="chevron sm${isOpen ? " expanded" : ""}">›</span>`
+                : `<span class="chevron-gap"></span>`}
+              <span class="phase-status-dot dot-${phase.state}" role="button" tabindex="0"
+                    data-action="cyclePhaseState" data-plan="${pid}" data-phase="${phid}"
+                    title="Click to set: ${nextStateInCycle(phase.state).replace("_", " ")}"></span>
+            </div>
+            <div class="phase-header-text">
+              <span class="phase-title">${esc(phase.title)}</span>
+              ${isBlocked ? `<span class="phase-blocked-hint">blocked by ${esc(blockers.join(", "))}</span>` : ""}
+            </div>
           </div>
           <div class="phase-header-right">
             ${badgeHtml(phase.state)}
             <button type="button" class="add-btn" data-action="quickCreateTask" data-plan="${pid}" data-phase="${phid}" title="Add task to this phase">+ Task</button>
             <button class="run-btn"
                     data-action="runPhase" data-plan="${pid}" data-phase="${phid}"
-                    title="${esc(blockedTitle)}">▶ Run</button>
+                    title="${esc(blockedTitle)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span> ${esc(R.runPhaseButton)}</button>
           </div>
         </div>
         ${hasTasks && isOpen
@@ -767,12 +795,13 @@
       ? "Already running"
       : isBlocked
         ? `Phase blocked by: ${phaseBlockers.join(", ")}`
-        : "Run task";
+        : R.runTaskTooltip;
 
     const runBtn = `<button class="task-btn run-task" data-action="taskRun"
                  data-plan="${pid}" data-phase="${phid}" data-task="${tid}"
                  ${isRunning ? "disabled" : ""}
-                 title="${esc(runTitle)}">▶</button>`;
+                 aria-label="${esc(R.runTaskButton)}"
+                 title="${esc(runTitle)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span><span class="run-task-label">${esc(R.runTaskButton)}</span></button>`;
 
     return `
       <div class="task-row${isBlocked ? " blocked" : ""}" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
@@ -1766,6 +1795,22 @@
       menu.appendChild(line);
     });
     return menu;
+  }
+
+  let graphResizeRaf = 0;
+  function scheduleSyncGraphScenes() {
+    if (graphResizeRaf) {
+      cancelAnimationFrame(graphResizeRaf);
+    }
+    graphResizeRaf = requestAnimationFrame(() => {
+      graphResizeRaf = 0;
+      if (viewMode === "nodes" && plans.length) {
+        syncGraphScenes();
+      }
+    });
+  }
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => scheduleSyncGraphScenes()).observe(root);
   }
 
   // ── Message handler ──────────────────────────────────────────────────────

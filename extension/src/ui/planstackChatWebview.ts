@@ -17,6 +17,7 @@ import {
 } from "./agentChatStreamBridge";
 import { registerChatSystemSink, registerChatUserSink } from "./chatStatusBridge";
 import { postAnimatedStatus, postRunFailure, registerRichChatSink } from "./richChatBridge";
+import { PS_RUN_UI } from "./runUiStrings";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
@@ -96,6 +97,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extUri],
     };
 
+    const labelsUri = w.asWebviewUri(vscode.Uri.joinPath(this.extUri, "media", "planstackRunLabels.js"));
     const scriptUri = w.asWebviewUri(vscode.Uri.joinPath(this.extUri, "media", "planstackChat.js"));
     const csp = [
       "default-src 'none'",
@@ -103,7 +105,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       `script-src ${w.cspSource}`,
     ].join("; ");
 
-    w.html = getChatHtml(csp, scriptUri);
+    w.html = getChatHtml(csp, labelsUri, scriptUri);
 
     const pushSystem = (text: string): void => {
       const timestampIso = nowIso();
@@ -380,7 +382,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     if (!folder) {
       return { promptForAgent: userPrompt };
     }
-    const flowLabel = flowKind === "createPlan" ? "Create plan" : "Send";
+    const flowLabel = flowKind === "createPlan" ? PS_RUN_UI.chatStreamCreatePlan : PS_RUN_UI.chatStreamSendPrompt;
     const ctx = await buildPromptWithMentions(folder.uri, userPrompt);
     const attachedParts: string[] = [];
     if (ctx.files.length > 0) {
@@ -463,7 +465,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         );
         return;
       }
-      const startLine = "Create plan: starting Cursor CLI run (agent -p --trust)…";
+      const startLine = `${PS_RUN_UI.chatStreamCreatePlan}: starting Cursor CLI run (agent -p --trust)…`;
       this.pushSystem(w, startLine);
 
       const cfg = vscode.workspace.getConfiguration("planstack.cursor");
@@ -477,7 +479,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       });
       const out = getOutput();
       out.show(true);
-      out.appendLine(`\n=== Create plan: agent run ${new Date().toISOString()} ===\n`);
+      out.appendLine(`\n=== ${PS_RUN_UI.chatStreamCreatePlan}: agent run ${new Date().toISOString()} ===\n`);
 
       const runId = randomUUID();
       traceEvent(flowId, "createPlanFlow.run_context", { runId, streamToOutput, useLiveChat });
@@ -505,7 +507,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         if (useLiveChat) {
           streamActive = true;
           postAgentStreamStart(runId, {
-            label: "Create plan",
+            label: PS_RUN_UI.chatStreamCreatePlan,
             source: "createPlan",
           });
         }
@@ -531,7 +533,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
                   if (useLiveChat) {
                     postAgentStreamChunk(runId, "stdout", text);
                   } else if (streamToOutput) {
-                    pushStreamChat("Create plan: ", text);
+                    pushStreamChat(`${PS_RUN_UI.chatStreamCreatePlan}: `, text);
                   }
                 }
               : undefined,
@@ -549,7 +551,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
                   } else if (streamToOutput) {
                     const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
                     const last = lines.length > 0 ? lines[lines.length - 1]! : text;
-                    pushStreamChat("Create plan (stderr): ", last);
+                    pushStreamChat(`${PS_RUN_UI.chatStreamCreatePlan} (stderr): `, last);
                   }
                 }
               : undefined,
@@ -573,7 +575,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     } catch (e) {
       if (e instanceof AgentRunBusyError) {
         traceEvent(flowId, "createPlanFlow.error", { kind: "AgentRunBusyError", message: e.message });
-        const line = `Create plan skipped: ${e.message}`;
+        const line = `${PS_RUN_UI.chatStreamCreatePlan} skipped: ${e.message}`;
         this.pushSystem(w, line);
         void vscode.window.showWarningMessage(e.message);
         return;
@@ -591,13 +593,13 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       }
       const stopped = e instanceof AgentCliError && detail.includes("stopped");
       postRunFailure(runIdFromFlow(flowId), {
-        phaseLabel: "Create plan",
+        phaseLabel: PS_RUN_UI.chatStreamCreatePlan,
         durationSec: 0,
-        summary: stopped ? "Run stopped by user" : "Create plan failed",
+        summary: stopped ? "Run stopped by user" : `${PS_RUN_UI.chatStreamCreatePlan} failed`,
         details: detail.slice(0, 2000),
         retryPrompt: userRequest,
       });
-      this.pushSystem(w, `Create plan failed: ${detail.slice(0, 500)}`);
+      this.pushSystem(w, `${PS_RUN_UI.chatStreamCreatePlan} failed: ${detail.slice(0, 500)}`);
       if (stopped) {
         void vscode.window.showWarningMessage(`Planstack: ${detail.slice(0, 2000)}`);
       } else {
@@ -632,12 +634,12 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     traceEvent(flowId, "sendPromptFlow.start", { promptChars: userPrompt.length });
     traceMultiline(flowId, "sendPromptFlow.userPrompt", userPrompt);
     if (this.activeFlowCount > 0) {
-      this.pushSystem(w, "Send is busy with another request. Please wait.");
+      this.pushSystem(w, `${PS_RUN_UI.chatStreamSendPrompt} is busy with another request. Please wait.`);
       return;
     }
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
-      this.pushSystem(w, "Send failed: open a workspace folder first.");
+      this.pushSystem(w, `${PS_RUN_UI.chatStreamSendPrompt} failed: open a workspace folder first.`);
       return;
     }
 
@@ -671,11 +673,11 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     };
 
     try {
-      this.pushSystem(w, "Send: starting Cursor CLI run (agent -p --trust --force)…");
+      this.pushSystem(w, `${PS_RUN_UI.chatStreamSendPrompt}: starting Cursor CLI run (agent -p --trust --force)…`);
       if (useLiveChat) {
         streamActive = true;
         postAgentStreamStart(runId, {
-          label: "Send prompt",
+          label: PS_RUN_UI.chatStreamSendPrompt,
           source: "sendPrompt",
         });
       }
@@ -697,7 +699,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
                 if (useLiveChat) {
                   postAgentStreamChunk(runId, "stdout", text);
                 } else if (streamToOutput) {
-                  pushStreamChat("Send: ", text);
+                  pushStreamChat(`${PS_RUN_UI.chatStreamSendPrompt}: `, text);
                 }
               }
             : undefined,
@@ -715,7 +717,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
                 } else if (streamToOutput) {
                   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
                   const last = lines.length > 0 ? lines[lines.length - 1]! : text;
-                  pushStreamChat("Send (stderr): ", last);
+                  pushStreamChat(`${PS_RUN_UI.chatStreamSendPrompt} (stderr): `, last);
                 }
               }
             : undefined,
@@ -748,7 +750,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       const stopped = e instanceof AgentCliError && detail.includes("stopped");
       endReason = stopped ? "stopped" : "error";
       postRunFailure(runId, {
-        phaseLabel: "Send prompt",
+        phaseLabel: PS_RUN_UI.chatStreamSendPrompt,
         durationSec: 0,
         summary: stopped ? "Run stopped by user" : "Send failed",
         details: detail.slice(0, 2000),
@@ -779,7 +781,7 @@ function runIdFromFlow(flowId: string): string {
   return `flow-${flowId}`;
 }
 
-function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
+function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1261,6 +1263,7 @@ function getChatHtml(csp: string, scriptUri: vscode.Uri): string {
       <button type="button" id="send">Send</button>
     </div>
   </div>
+  <script src="${labelsUri}"></script>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

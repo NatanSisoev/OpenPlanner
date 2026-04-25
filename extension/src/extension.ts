@@ -31,9 +31,9 @@ import { postChatSystemMessage, postChatUserMessage } from "./ui/chatStatusBridg
 import { postAgentStreamChunk, postAgentStreamEnd, postAgentStreamStart, type AgentStreamEndReason } from "./ui/agentChatStreamBridge";
 import { postAnimatedStatus, postRunFailure } from "./ui/richChatBridge";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
-import { PlanTreeProvider, PLAN_TREE_VIEW_ID, PhaseTreeItem, TaskTreeItem } from "./ui/planTreeProvider";
+import { PS_RUN_UI } from "./ui/runUiStrings";
 import { WORK_STATES, type ExecutionState } from "./plan/types";
-import type { Plan } from "./plan/types";
+import type { Plan, Task } from "./plan/types";
 
 let currentPlans: import("./plan/types").Plan[] = [];
 
@@ -42,24 +42,6 @@ const PLAN_ORDER_KEY = "hackupc.planstack.planOrder";
 function summarizeCommandArg(arg: unknown): unknown {
   if (arg === undefined) {
     return undefined;
-  }
-  if (arg instanceof PhaseTreeItem) {
-    return {
-      kind: "PhaseTreeItem",
-      planId: arg.plan.id,
-      phaseId: arg.phase.id,
-      planTitle: arg.plan.title,
-      phaseTitle: arg.phase.title,
-    };
-  }
-  if (arg instanceof TaskTreeItem) {
-    return {
-      kind: "TaskTreeItem",
-      planId: arg.plan.id,
-      phaseId: arg.phase.id,
-      taskId: arg.task.id,
-      taskDesc: arg.task.desc,
-    };
   }
   if (Array.isArray(arg)) {
     return { kind: "array", length: arg.length, first: summarizeCommandArg(arg[0]) };
@@ -123,7 +105,7 @@ function normalizeStaleInProgressToPending(plan: Plan): void {
 
 export function activate(context: vscode.ExtensionContext): void {
   const extUri = context.extensionUri;
-  type RunEntrySource = "sidebar_webview" | "tree_command";
+  type RunEntrySource = "sidebar_webview" | "command_palette";
   type BranchDecision = "prepare_branch" | "current_branch" | "cancel";
 
   const phaseRunHooks: {
@@ -132,7 +114,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let refreshGeneration = 0;
   const planMutationQueues = new Map<string, Promise<unknown>>();
 
-  async function refreshPlansOrdered(provider: PlanTreeProvider, sidebar: PlanstackSidebarWebview): Promise<void> {
+  async function refreshPlans(sidebar: PlanstackSidebarWebview): Promise<void> {
     const generation = ++refreshGeneration;
     const loaded = await loadPlansFromWorkspace();
     if (generation !== refreshGeneration) {
@@ -140,8 +122,100 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const savedOrder = context.workspaceState.get<string[]>(PLAN_ORDER_KEY);
     currentPlans = orderPlans(loaded, savedOrder);
-    provider.setPlans(currentPlans);
     sidebar.setPlans(currentPlans);
+  }
+
+  async function pickPhaseInteractively(): Promise<{ plan: Plan; phase: Plan["phases"][number] } | undefined> {
+    if (!currentPlans.length) {
+      void vscode.window.showWarningMessage("Planstack: no plans found.");
+      return undefined;
+    }
+    const planPick = await vscode.window.showQuickPick(
+      currentPlans.map((plan) => ({
+        label: plan.title,
+        description: plan.id,
+        plan,
+      })),
+      { title: "Planstack: Run phase", placeHolder: "Select plan", ignoreFocusOut: true },
+    );
+    if (!planPick) {
+      return undefined;
+    }
+    const plan = planPick.plan;
+    const phases = plan.phases ?? [];
+    if (!phases.length) {
+      void vscode.window.showWarningMessage("Planstack: this plan has no phases.");
+      return undefined;
+    }
+    const phasePick = await vscode.window.showQuickPick(
+      phases.map((ph) => ({
+        label: ph.title,
+        description: ph.id,
+        phase: ph,
+      })),
+      { title: "Planstack: Run phase", placeHolder: "Select phase", ignoreFocusOut: true },
+    );
+    if (!phasePick) {
+      return undefined;
+    }
+    return { plan, phase: phasePick.phase };
+  }
+
+  async function pickTaskInteractively(): Promise<{
+    plan: Plan;
+    phase: Plan["phases"][number];
+    task: Task;
+  } | undefined> {
+    if (!currentPlans.length) {
+      void vscode.window.showWarningMessage("Planstack: no plans found.");
+      return undefined;
+    }
+    const planPick = await vscode.window.showQuickPick(
+      currentPlans.map((plan) => ({
+        label: plan.title,
+        description: plan.id,
+        plan,
+      })),
+      { title: "Planstack: Set task state", placeHolder: "Select plan", ignoreFocusOut: true },
+    );
+    if (!planPick) {
+      return undefined;
+    }
+    const plan = planPick.plan;
+    const phases = plan.phases ?? [];
+    if (!phases.length) {
+      void vscode.window.showWarningMessage("Planstack: this plan has no phases.");
+      return undefined;
+    }
+    const phasePick = await vscode.window.showQuickPick(
+      phases.map((ph) => ({
+        label: ph.title,
+        description: ph.id,
+        phase: ph,
+      })),
+      { title: "Planstack: Set task state", placeHolder: "Select phase", ignoreFocusOut: true },
+    );
+    if (!phasePick) {
+      return undefined;
+    }
+    const phase = phasePick.phase;
+    const tasks = phase.tasks ?? [];
+    if (!tasks.length) {
+      void vscode.window.showWarningMessage("Planstack: this phase has no tasks.");
+      return undefined;
+    }
+    const taskPick = await vscode.window.showQuickPick(
+      tasks.map((t) => ({
+        label: t.desc.trim().length > 0 ? t.desc.trim() : t.id,
+        description: t.id,
+        task: t,
+      })),
+      { title: "Planstack: Set task state", placeHolder: "Select task", ignoreFocusOut: true },
+    );
+    if (!taskPick) {
+      return undefined;
+    }
+    return { plan, phase, task: taskPick.task };
   }
 
   function enqueuePlanMutation<T>(planId: string, op: () => Promise<T>): Promise<T> {
@@ -184,7 +258,7 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     };
     await savePlanPreservingFile(plan, root);
-    await refreshPlansOrdered(tree, sidebarUi);
+    await refreshPlans(sidebarUi);
     return true;
   }
 
@@ -215,7 +289,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
     await savePlanPreservingFile(plan, root);
-    await refreshPlansOrdered(tree, sidebarUi);
+    await refreshPlans(sidebarUi);
     return true;
   }
 
@@ -254,7 +328,7 @@ export function activate(context: vscode.ExtensionContext): void {
     phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
     plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
     await savePlanPreservingFile(plan, root);
-    await refreshPlansOrdered(tree, sidebarUi);
+    await refreshPlans(sidebarUi);
     return true;
   }
 
@@ -264,8 +338,8 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function emitRunRequestMessage(plan: Plan, phase: Plan["phases"][number], source: RunEntrySource): void {
-    const sourceLabel = source === "tree_command" ? "tree" : "sidebar";
-    postChatUserMessage(`Run phase request: ${plan.title} › ${phase.title} (${sourceLabel})`);
+    const sourceLabel = source === "command_palette" ? "command palette" : "sidebar";
+    postChatUserMessage(`${PS_RUN_UI.runPhaseRequestPrefix} ${plan.title} › ${phase.title} (${sourceLabel})`);
   }
 
   function emitTaskRunRequestMessage(
@@ -274,8 +348,8 @@ export function activate(context: vscode.ExtensionContext): void {
     task: Plan["phases"][number]["tasks"][number],
     source: RunEntrySource,
   ): void {
-    const sourceLabel = source === "tree_command" ? "tree" : "sidebar";
-    postChatUserMessage(`Run task request: ${plan.title} › ${phase.title} › ${task.desc} (${sourceLabel})`);
+    const sourceLabel = source === "command_palette" ? "command palette" : "sidebar";
+    postChatUserMessage(`${PS_RUN_UI.runTaskRequestPrefix} ${plan.title} › ${phase.title} › ${task.desc} (${sourceLabel})`);
   }
 
   async function runTaskWithPrompt(
@@ -346,7 +420,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     emitTaskRunRequestMessage(plan, phase, task, source);
-    postChatSystemMessage(`${planChatLabel(plan)}: running task "${task.desc}".`);
+    postChatSystemMessage(`${planChatLabel(plan)}: ${PS_RUN_UI.runTaskChatStarting} "${task.desc}".`);
 
     const marked = await mutatePlan(plan.id, (latest) => {
       const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
@@ -363,7 +437,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const output = getOutput();
     output.show(true);
-    output.appendLine(`\n=== ${statusLabel}: task run started ${new Date().toISOString()} ===\n`);
+    output.appendLine(`\n=== ${statusLabel}: ${PS_RUN_UI.runTaskLogStarted} ${new Date().toISOString()} ===\n`);
 
     const cfg = vscode.workspace.getConfiguration("planstack.cursor");
     const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
@@ -412,7 +486,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 if (useLiveChat) {
                   postAgentStreamChunk(runId, "stdout", text);
                 } else {
-                  maybeChat("Task run: ", text);
+                  maybeChat(PS_RUN_UI.runTaskThrottleStdoutPrefix, text);
                 }
               }
             : undefined,
@@ -430,7 +504,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 } else {
                   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
                   const last = lines.length > 0 ? lines[lines.length - 1]! : text;
-                  maybeChat("Task run (stderr): ", last);
+                  maybeChat(PS_RUN_UI.runTaskThrottleStderrPrefix, last);
                 }
               }
             : undefined,
@@ -454,7 +528,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         latestTask.state = "completed";
       });
-      postChatSystemMessage(`${statusLabel}: task run completed.`);
+      postChatSystemMessage(`${statusLabel}: ${PS_RUN_UI.runTaskChatCompleted}.`);
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -483,11 +557,13 @@ export function activate(context: vscode.ExtensionContext): void {
         postRunFailure(runId, {
           phaseLabel: statusLabel,
           durationSec: Math.floor((Date.now() - startedAt) / 1000),
-          summary: stopped ? "Task run stopped by user" : "Task run failed",
+          summary: stopped ? PS_RUN_UI.runTaskFailureSummaryStopped : PS_RUN_UI.runTaskFailureSummaryFailed,
           details: msg.slice(0, 2000),
           retryPrompt: prompt,
         });
-        postChatSystemMessage(`${statusLabel}: ${stopped ? "task run stopped." : `task run failed — ${msg.slice(0, 400)}`}`);
+        postChatSystemMessage(
+          `${statusLabel}: ${stopped ? `${PS_RUN_UI.runTaskChatStopped}.` : `${PS_RUN_UI.runTaskChatFailed} — ${msg.slice(0, 400)}`}`,
+        );
         if (stopped) {
           void vscode.window.showWarningMessage(`Planstack: ${msg.slice(0, 2000)}`);
         } else {
@@ -513,7 +589,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const planBranch = plan.git?.planBranch?.trim();
     const baseBranch = plan.git?.baseBranch?.trim() || "main";
     const currentBranch = git.currentBranchLabel ?? "unknown";
-    const sourceLabel = source === "tree_command" ? "Plans tree" : "Overview";
+    const sourceLabel = source === "command_palette" ? "Command palette" : "Overview";
 
     const prepareDetail = planBranch
       ? `planBranch=${planBranch} · baseBranch=${baseBranch}`
@@ -530,7 +606,7 @@ export function activate(context: vscode.ExtensionContext): void {
           decision: "prepare_branch",
         },
         {
-          label: "$(play) Run on current branch",
+          label: `$(play) ${PS_RUN_UI.runPhaseButton} on current branch`,
           description: `Skip branch setup and run now`,
           detail: `Current branch: ${currentBranch}`,
           decision: "current_branch",
@@ -872,7 +948,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       recomputeAggregates(plan);
       await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
+      await refreshPlans(sidebarUi);
       return true;
     });
   }
@@ -955,7 +1031,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    await refreshPlansOrdered(tree, sidebarUi);
+    await refreshPlans(sidebarUi);
     showMongoSyncOutcome(reconciled, failed, syncSummary, dbName, collName);
   }
 
@@ -1013,7 +1089,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    await refreshPlansOrdered(tree, sidebarUi);
+    await refreshPlans(sidebarUi);
     showMongoSyncOutcome(reconciled, failed, lastSummary, dbName, collName);
   }
 
@@ -1139,7 +1215,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       await savePlanPreservingFile(plan, root);
-      await refreshPlansOrdered(tree, sidebarUi);
+      await refreshPlans(sidebarUi);
       return true;
     },
     onCreatePlan: async ({ title, description }) => {
@@ -1167,7 +1243,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const loadedIds = new Set(currentPlans.map((p) => p.id));
       const cleaned = orderedPlanIds.filter((id) => loadedIds.has(id));
       await context.workspaceState.update(PLAN_ORDER_KEY, cleaned);
-      await refreshPlansOrdered(tree, sidebarUi);
+      await refreshPlans(sidebarUi);
     },
     onDeletePlan: async (planId) => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -1199,7 +1275,7 @@ export function activate(context: vscode.ExtensionContext): void {
           savedOrder.filter((id) => id !== planId),
         );
       }
-      await refreshPlansOrdered(tree, sidebarUi);
+      await refreshPlans(sidebarUi);
     },
     onDeletePhase: async (planId, phaseId) => {
       const plan = currentPlans.find((p) => p.id === planId);
@@ -1274,13 +1350,6 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
   );
-
-  const tree = new PlanTreeProvider();
-  const view = vscode.window.createTreeView(PLAN_TREE_VIEW_ID, {
-    treeDataProvider: tree,
-    showCollapseAll: true,
-  });
-  context.subscriptions.push(view);
 
   phaseRunHooks.applyOutcome = async (
     planId: string,
@@ -1369,7 +1438,7 @@ export function activate(context: vscode.ExtensionContext): void {
     extUri,
     context,
     async () => {
-      await refreshPlansOrdered(tree, sidebarUi);
+      await refreshPlans(sidebarUi);
     },
   );
   context.subscriptions.push(
@@ -1548,7 +1617,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const tid = newTraceId("cmd-refresh");
       traceEvent(tid, "command.enter", { command: "hackupc.planstack.refresh" });
       try {
-        await refreshPlansOrdered(tree, sidebarUi);
+        await refreshPlans(sidebarUi);
         traceEvent(tid, "command.exit", { command: "hackupc.planstack.refresh", ok: true });
       } catch (e) {
         traceEvent(tid, "command.exit", {
@@ -1560,44 +1629,6 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
   );
-
-  function resolvePhaseTreeItem(arg: unknown): PhaseTreeItem | undefined {
-    if (arg instanceof PhaseTreeItem) {
-      return arg;
-    }
-    if (Array.isArray(arg)) {
-      const first = arg[0];
-      if (first instanceof PhaseTreeItem) {
-        return first;
-      }
-    }
-    return undefined;
-  }
-
-  function resolveTaskTreeItem(arg: unknown): TaskTreeItem | undefined {
-    if (arg instanceof TaskTreeItem) {
-      return arg;
-    }
-    if (Array.isArray(arg)) {
-      const first = arg[0];
-      if (first instanceof TaskTreeItem) {
-        return first;
-      }
-    }
-    return undefined;
-  }
-
-  function resolvePlanFromArg(arg: unknown): Plan | undefined {
-    const phase = resolvePhaseTreeItem(arg);
-    if (phase) {
-      return phase.plan;
-    }
-    const task = resolveTaskTreeItem(arg);
-    if (task) {
-      return task.plan;
-    }
-    return undefined;
-  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.resyncPlan", async (item: unknown) => {
@@ -1617,8 +1648,8 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const fromArg = resolvePlanFromArg(item);
-      let selectedPlanId = fromArg?.id;
+      const fromArg = typeof item === "string" && item.trim() ? item.trim() : undefined;
+      let selectedPlanId = fromArg;
       if (!selectedPlanId) {
         if (currentPlans.length === 0) {
           traceEvent(tid, "command.exit", {
@@ -1692,7 +1723,7 @@ export function activate(context: vscode.ExtensionContext): void {
             await savePlanPreservingFile(merged, root);
           },
         );
-        await refreshPlansOrdered(tree, sidebarUi);
+        await refreshPlans(sidebarUi);
         void vscode.window.showInformationMessage(
           `Planstack: re-synced "${existingPlan.title}" to the current codebase and reset stale in-progress work to pending.`,
         );
@@ -1734,7 +1765,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const fromArg = typeof item === "string" ? item : resolvePlanFromArg(item)?.id;
+      const fromArg = typeof item === "string" && item.trim() ? item.trim() : undefined;
       let selectedPlanId = fromArg;
       if (!selectedPlanId) {
         const mergeCandidates = currentPlans.filter((p) => p.state === "completed" && !!p.git?.planBranch);
@@ -1800,7 +1831,7 @@ export function activate(context: vscode.ExtensionContext): void {
           },
           async () => mergePlanBranchNoFf(plan),
         );
-        await refreshPlansOrdered(tree, sidebarUi);
+        await refreshPlans(sidebarUi);
         if (result.status === "already_merged") {
           void vscode.window.showInformationMessage(
             `Planstack: "${label}" is already merged (${result.planBranch} -> ${result.baseBranch}).`,
@@ -1833,34 +1864,31 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("hackupc.planstack.runPhase", async (item: unknown) => {
-      const tid = newTraceId("runphase-tree");
+      const tid = newTraceId("runphase-cmd");
       traceEvent(tid, "command.enter", {
         command: "hackupc.planstack.runPhase",
         arg: summarizeCommandArg(item),
       });
       try {
-        const phaseItem = resolvePhaseTreeItem(item);
-        if (!phaseItem) {
-          traceEvent(tid, "runphase.tree.abort", { reason: "no_phase_tree_item" });
+        const picked = await pickPhaseInteractively();
+        if (!picked) {
+          traceEvent(tid, "runphase.cmd.abort", { reason: "cancelled_or_no_selection" });
           traceEvent(tid, "command.exit", {
             command: "hackupc.planstack.runPhase",
             ok: true,
-            skipped: "no_phase_tree_item",
+            skipped: "cancelled_or_no_selection",
           });
-          await vscode.window.showInformationMessage(
-            "Run phase from the Planstack sidebar: expand a plan, then use Run on a phase.",
-          );
           return;
         }
-        traceEvent(tid, "runphase.tree.resolved", {
-          planId: phaseItem.plan.id,
-          phaseId: phaseItem.phase.id,
-          planTitle: phaseItem.plan.title,
-          phaseTitle: phaseItem.phase.title,
+        traceEvent(tid, "runphase.cmd.resolved", {
+          planId: picked.plan.id,
+          phaseId: picked.phase.id,
+          planTitle: picked.plan.title,
+          phaseTitle: picked.phase.title,
         });
-        const started = await runPhaseWithBranchDecision(phaseItem.plan, phaseItem.phase, tid, "tree_command");
+        const started = await runPhaseWithBranchDecision(picked.plan, picked.phase, tid, "command_palette");
         if (!started) {
-          traceEvent(tid, "runphase.tree.abort", { reason: "user_cancelled_or_branch_prep_failed" });
+          traceEvent(tid, "runphase.cmd.abort", { reason: "user_cancelled_or_branch_prep_failed" });
           traceEvent(tid, "command.exit", {
             command: "hackupc.planstack.runPhase",
             ok: true,
@@ -1876,7 +1904,7 @@ export function activate(context: vscode.ExtensionContext): void {
           error: e instanceof Error ? e.message : String(e),
         });
         if (e instanceof Error && e.stack) {
-          traceMultiline(tid, "runphase.tree.error.stack", e.stack);
+          traceMultiline(tid, "runphase.cmd.error.stack", e.stack);
         }
         throw e;
       }
@@ -2037,16 +2065,13 @@ export function activate(context: vscode.ExtensionContext): void {
           command: `hackupc.planstack.taskSetState.${state}`,
           arg: summarizeCommandArg(item),
         });
-        const taskItem = resolveTaskTreeItem(item);
-        if (!taskItem) {
+        const picked = await pickTaskInteractively();
+        if (!picked) {
           traceEvent(tid, "command.exit", {
             command: `hackupc.planstack.taskSetState.${state}`,
             ok: true,
-            skipped: "no_task_item",
+            skipped: "cancelled_or_no_selection",
           });
-          await vscode.window.showInformationMessage(
-            "Set task state from the Planstack sidebar: right-click a task, then pick Set state.",
-          );
           return;
         }
         const root = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -2060,9 +2085,9 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
 
-        const ok = await mutatePlan(taskItem.plan.id, (plan) => {
-          const phase = plan.phases.find((ph) => ph.id === taskItem.phase.id);
-          const task = phase?.tasks.find((t) => t.id === taskItem.task.id);
+        const ok = await mutatePlan(picked.plan.id, (plan) => {
+          const phase = plan.phases.find((ph) => ph.id === picked.phase.id);
+          const task = phase?.tasks.find((t) => t.id === picked.task.id);
           if (!phase || !task) {
             return false;
           }
@@ -2072,24 +2097,25 @@ export function activate(context: vscode.ExtensionContext): void {
           void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
           return;
         }
+        await refreshPlans(sidebarUi);
         traceEvent(tid, "command.exit", {
           command: `hackupc.planstack.taskSetState.${state}`,
           ok: true,
-          planId: taskItem.plan.id,
-          phaseId: taskItem.phase.id,
-          taskId: taskItem.task.id,
+          planId: picked.plan.id,
+          phaseId: picked.phase.id,
+          taskId: picked.task.id,
         });
       }),
     );
   }
 
-  void refreshPlansOrdered(tree, sidebarUi);
+  void refreshPlans(sidebarUi);
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      void refreshPlansOrdered(tree, sidebarUi);
+      void refreshPlans(sidebarUi);
     }),
     watchPlans(() => {
-      void refreshPlansOrdered(tree, sidebarUi);
+      void refreshPlans(sidebarUi);
     }),
   );
 }

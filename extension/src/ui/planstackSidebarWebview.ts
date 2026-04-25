@@ -102,6 +102,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extUri],
     };
 
+    const labelsUri = w.asWebviewUri(vscode.Uri.joinPath(this.extUri, "media", "planstackRunLabels.js"));
     const scriptUri = w.asWebviewUri(
       vscode.Uri.joinPath(this.extUri, "media", "planstackSidebar.js"),
     );
@@ -111,7 +112,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       `script-src ${w.cspSource}`,
     ].join("; ");
 
-    w.html = getSidebarHtml(csp, scriptUri);
+    w.html = getSidebarHtml(csp, labelsUri, scriptUri);
 
     const sub = w.onDidReceiveMessage((msg: unknown) => {
       const recvId = newTraceId("sidebarRecv");
@@ -602,7 +603,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   }
 }
 
-function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
+function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -637,7 +638,25 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       --graph-node-border: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
     }
 
-    #root { padding: 6px 0 16px; }
+    #root { padding: 6px 0 16px; box-sizing: border-box; }
+    #root.view-nodes {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    #root.view-nodes > .top-toolbar {
+      flex-shrink: 0;
+    }
+    #root.view-nodes > .graph-legend,
+    #root.view-nodes > .graph-filter-row {
+      flex-shrink: 0;
+    }
+    #root.view-nodes > .plan-graph-card {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
 
     .top-toolbar {
       display: flex;
@@ -962,6 +981,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       gap: 10px;
       padding: 9px 12px;
       border-bottom: 1px solid var(--c-border);
+      flex-shrink: 0;
       background:
         linear-gradient(180deg,
           color-mix(in srgb, var(--vscode-sideBarSectionHeader-background) 100%, transparent) 0%,
@@ -998,7 +1018,8 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     .graph-viewport {
       position: relative;
-      height: clamp(420px, 64vh, 720px);
+      min-height: 100px;
+      height: clamp(100px, 32vh, 720px);
       overflow: hidden;
       border-bottom: 1px solid var(--c-border);
       /* Subtle dot grid (à la Figma/Excalidraw) so the canvas has a
@@ -1009,8 +1030,20 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
         color-mix(in srgb, var(--vscode-sideBar-background) 78%, transparent);
       cursor: grab;
     }
+    #root.view-nodes .graph-viewport {
+      height: auto;
+      flex: 1 1 auto;
+      min-height: 96px;
+    }
     .plan-graph-card.expanded .graph-viewport {
-      height: clamp(620px, 86vh, 1080px);
+      min-height: 120px;
+      height: clamp(120px, 42vh, 1080px);
+    }
+    #root.view-nodes .plan-graph-card.expanded .graph-viewport {
+      flex: 2 1 auto;
+      min-height: 120px;
+      height: auto;
+      max-height: min(1080px, 92vh);
     }
     .graph-viewport.is-panning { cursor: grabbing; }
     .graph-scene {
@@ -1096,7 +1129,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
         0 4px 14px rgba(0,0,0,0.22),
         inset 0 1px 0 rgba(255,255,255,0.05);
       display: grid;
-      grid-template-columns: 4px 1fr;
+      grid-template-columns: 4px minmax(0, 1fr);
       overflow: hidden;
       transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
     }
@@ -1116,13 +1149,25 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       flex-direction: column;
       gap: 4px;
       min-width: 0;
-      justify-content: center;
+      min-height: 0;
+      flex: 1 1 auto;
+      align-self: stretch;
+      justify-content: flex-start;
     }
-    .graph-plan-row {
+    .graph-plan-top {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 8px;
+      justify-content: flex-start;
+    }
+    .graph-plan-actions {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex-wrap: wrap;
+      width: 100%;
+      padding-top: 2px;
     }
     .graph-plan-run-btn { flex-shrink: 0; }
     .graph-node-actions {
@@ -1164,8 +1209,8 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
         0 4px 12px rgba(0,0,0,0.22),
         inset 0 1px 0 rgba(255,255,255,0.04);
       display: grid;
-      grid-template-columns: 4px 1fr;
-      grid-template-rows: 1fr auto;
+      grid-template-columns: 4px minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
       overflow: hidden;
       transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
     }
@@ -1235,6 +1280,8 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       text-align: left;
       width: 100%;
       height: 100%;
+      min-height: 0;
+      overflow: hidden;
       padding: 8px 10px 6px;
       display: flex;
       flex-direction: column;
@@ -1264,8 +1311,18 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       overflow: hidden;
       min-width: 0;
     }
+    .graph-phase-desc {
+      font-size: 0.72em;
+      line-height: 1.35;
+      color: var(--vscode-descriptionForeground, rgba(180, 180, 180, 0.92));
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-width: 0;
+      flex-shrink: 0;
+    }
     .graph-phase-deps-chip {
-      margin-top: auto;
       align-self: flex-start;
       font-family: var(--vscode-editor-font-family);
       font-size: 0.64em;
@@ -1306,6 +1363,9 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       padding: 6px 10px;
       border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
       background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
     }
     .graph-phase-plan {
       font-family: var(--vscode-editor-font-family);
@@ -1334,6 +1394,31 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       box-shadow: 0 2px 6px rgba(0,0,0,0.30);
       flex-shrink: 0;
     }
+    .ps-run-glyph {
+      display: inline-block;
+      margin-right: 2px;
+      font-size: 0.85em;
+      line-height: 1;
+      color: var(--vscode-button-foreground, #fff);
+      text-shadow: 0 0 1px rgba(0,0,0,0.35);
+    }
+    .plan-header .run-btn .ps-run-glyph,
+    .phase-header .run-btn .ps-run-glyph,
+    .node-phase-header .run-btn .ps-run-glyph {
+      color: var(--vscode-button-foreground, #fff);
+    }
+    .task-btn.run-task .ps-run-glyph {
+      color: inherit;
+      text-shadow: none;
+      margin-right: 1px;
+      font-size: 0.72em;
+    }
+    .task-btn.run-task .run-task-label {
+      font-size: 0.62em;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
     .graph-phase-node .graph-run-btn:hover,
     .graph-plan-node .graph-run-btn:hover {
       background: var(--vscode-button-hoverBackground, var(--vscode-button-background, #0e70c0));
@@ -1353,6 +1438,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       gap: 4px;
       padding: 6px 8px;
       border-bottom: 1px solid var(--c-border);
+      flex-shrink: 0;
       background: color-mix(in srgb, var(--vscode-editor-background) 42%, transparent);
       backdrop-filter: blur(4px);
     }
@@ -1380,6 +1466,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
 
     .graph-expanded-details {
       padding: 0 8px 8px;
+      flex-shrink: 0;
     }
     .graph-expanded-details.empty {
       padding-top: 8px;
@@ -1484,7 +1571,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .phase-row { margin: 1px 5px; border-radius: 4px; }
 
     .phase-header {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: flex-start; justify-content: space-between;
       padding: 4px 7px; gap: 5px; border-radius: 4px;
     }
     .phase-header:hover { background: var(--c-hover); }
@@ -1492,8 +1579,30 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     .phase-header:hover .add-btn { opacity: 1; }
 
     .phase-header-left {
-      display: flex; align-items: center; gap: 5px;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      column-gap: 8px;
+      row-gap: 0;
+      align-items: start;
       flex: 1; min-width: 0; cursor: pointer; user-select: none;
+    }
+    .phase-header-lead {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+      padding-top: 0.18em;
+    }
+    .phase-header-text {
+      display: flex; flex-direction: column; gap: 2px;
+      flex: 1; min-width: 0;
+    }
+    .phase-blocked-hint {
+      font-size: 0.72em;
+      line-height: 1.35;
+      color: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.95));
+      white-space: normal;
+      word-break: break-word;
     }
     .phase-status-dot {
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
@@ -1532,6 +1641,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
     }
     .phase-header-right {
       display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+      align-self: center;
     }
 
     /* ── Status badge ── */
@@ -1623,6 +1733,14 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       border-radius: 3px; font-size: 0.75em; border: none;
       background: transparent; line-height: 1;
     }
+    .task-btn.run-task {
+      width: auto;
+      min-width: 18px;
+      height: auto;
+      min-height: 18px;
+      padding: 2px 5px 2px 3px;
+      gap: 3px;
+    }
     .task-btn.done-btn  { color: var(--c-done); }
     .task-btn.done-btn:hover   { background: rgba(78,201,176,0.15); }
     .task-btn.run-task  { color: var(--c-running); }
@@ -1652,6 +1770,7 @@ function getSidebarHtml(csp: string, scriptUri: vscode.Uri): string {
       </div>
     </div>
   </div>
+  <script src="${labelsUri}"></script>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

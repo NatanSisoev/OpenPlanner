@@ -2,6 +2,9 @@ import * as vscode from "vscode";
 import type { Phase, Plan, Task, WorkState } from "../plan/types";
 import { validatePlanJson } from "../plan/validate";
 
+/** Build / vendor dirs excluded from workspace-wide @ file discovery; plan JSON under `.planstack/plans/` is always merged in separately. */
+const MENTION_FIND_FILES_EXCLUDE = "**/{node_modules,.git,dist,out,.next,build}/**";
+
 export type MentionKind = "file" | "folder" | "plan" | "phase" | "task" | "symbol";
 
 export interface ChatMentionSettings {
@@ -443,7 +446,7 @@ async function loadMentionPlansFromWorkspace(): Promise<Plan[]> {
   for (const folder of folders) {
     const uris = await vscode.workspace.findFiles(
       new vscode.RelativePattern(folder, "**/.planstack/plans/*.json"),
-      "**/{node_modules,.git,dist,out,.next,build}/**",
+      MENTION_FIND_FILES_EXCLUDE,
       600,
     );
     for (const uri of uris) {
@@ -646,7 +649,6 @@ const FOLDER_TREE_SKIP_NAMES = new Set([
   "out",
   ".next",
   "build",
-  ".planstack",
 ]);
 
 const FOLDER_TREE_MAX_DEPTH = 5;
@@ -1270,14 +1272,29 @@ function folderSuggestion(relPath: string): MentionSuggestion {
 }
 
 async function listWorkspaceMentionFilePaths(workspaceRoot: vscode.Uri): Promise<string[]> {
-  const files = await vscode.workspace.findFiles(
-    new vscode.RelativePattern(workspaceRoot, "**/*"),
-    "**/{node_modules,.git,dist,out,.next,build,.planstack}/**",
-    3000,
-  );
-  return files
-    .map((uri) => normalizeRelPath(vscode.workspace.asRelativePath(uri, false)))
-    .filter((p) => p.length > 0 && !isLikelySecret(p.toLowerCase()));
+  const [general, planJson] = await Promise.all([
+    vscode.workspace.findFiles(
+      new vscode.RelativePattern(workspaceRoot, "**/*"),
+      MENTION_FIND_FILES_EXCLUDE,
+      3000,
+    ),
+    vscode.workspace.findFiles(
+      new vscode.RelativePattern(workspaceRoot, ".planstack/plans/*.json"),
+      MENTION_FIND_FILES_EXCLUDE,
+      600,
+    ),
+  ]);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const uri of [...general, ...planJson]) {
+    const p = normalizeRelPath(vscode.workspace.asRelativePath(uri, false));
+    if (p.length === 0 || isLikelySecret(p.toLowerCase()) || seen.has(p)) {
+      continue;
+    }
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
 }
 
 function folderPathsFromFilePaths(relPaths: string[]): string[] {

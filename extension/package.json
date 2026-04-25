@@ -15,7 +15,6 @@
   "activationEvents": [
     "onView:hackupc.planstack.ui",
     "onView:hackupc.planstack.chat",
-    "onView:hackupc.planstackPlans",
     "onCommand:hackupc.planstack.refresh",
     "onCommand:hackupc.planstack.createPlan",
     "onCommand:hackupc.planstack.createPhase",
@@ -52,10 +51,6 @@
           "id": "hackupc.planstack.ui",
           "name": "Overview",
           "type": "webview"
-        },
-        {
-          "id": "hackupc.planstackPlans",
-          "name": "Plans"
         },
         {
           "id": "hackupc.planstack.chat",
@@ -140,62 +135,17 @@
         "title": "HackUPC: Native handoff demo (clipboard + Composer)"
       }
     ],
-    "submenus": [
-      {
-        "id": "hackupc.planstack.taskSetState",
-        "label": "Set state"
-      }
-    ],
     "menus": {
       "view/title": [
         {
           "command": "hackupc.planstack.refresh",
-          "when": "view == hackupc.planstackPlans",
+          "when": "view == hackupc.planstack.ui",
           "group": "navigation"
         },
         {
           "command": "hackupc.planstack.resyncPlan",
-          "when": "view == hackupc.planstackPlans",
+          "when": "view == hackupc.planstack.ui",
           "group": "navigation@1"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "hackupc.planstack.runPhase",
-          "when": "view == hackupc.planstackPlans && viewItem == hackupcPhase",
-          "group": "inline@0"
-        },
-        {
-          "command": "hackupc.planstack.resyncPlan",
-          "when": "view == hackupc.planstackPlans && viewItem == hackupcPhase",
-          "group": "inline@2"
-        },
-        {
-          "submenu": "hackupc.planstack.taskSetState",
-          "when": "view == hackupc.planstackPlans && viewItem == hackupcTask",
-          "group": "inline@1"
-        }
-      ],
-      "submenu/hackupc.planstack.taskSetState": [
-        {
-          "command": "hackupc.planstack.taskSetState.pending",
-          "group": "0_state"
-        },
-        {
-          "command": "hackupc.planstack.taskSetState.in_progress",
-          "group": "1_state"
-        },
-        {
-          "command": "hackupc.planstack.taskSetState.completed",
-          "group": "2_state"
-        },
-        {
-          "command": "hackupc.planstack.taskSetState.failed",
-          "group": "3_state"
-        },
-        {
-          "command": "hackupc.planstack.taskSetState.cancelled",
-          "group": "4_state"
         }
       ]
     },
@@ -220,7 +170,7 @@
             "sdk-cloud",
             "cli"
           ],
-          "markdownDescription": "How **Run phase** runs (Plans tree). Default **`cli`** runs the Cursor agent in the workspace with `--force`. Leave **empty** to use legacy `planstack.cursor.handoff`. Set **`native-first`** for clipboard + optional Composer command instead.",
+          "markdownDescription": "How **Run phase** runs (Overview or command palette). Default **`cli`** runs the Cursor agent in the workspace with `--force`. Leave **empty** to use legacy `planstack.cursor.handoff`. Set **`native-first`** for clipboard + optional Composer command instead.",
           "enumDescriptions": [
             "Use legacy `planstack.cursor.handoff` when valid; otherwise cli.",
             "Clipboard + optional Composer command (paste handoff).",

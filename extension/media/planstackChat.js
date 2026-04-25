@@ -8,6 +8,16 @@
   const mentionChipsEl = document.getElementById("mentionChips");
   const mentionSuggestEl = document.getElementById("mentionSuggest");
 
+  const R = globalThis.__PS_RUN_UI || {
+    glyph: "\u25b6",
+    chatStreamRunPhase: "Run phase",
+    chatStreamRunTask: "Run task",
+    chatStreamCreatePlan: "Create plan",
+    chatStreamSendPrompt: "Send prompt",
+    cliPhaseDefaultStreamLabel: "Run phase",
+    streamStartedSuffix: "started",
+  };
+
   /** Max characters retained per run in the live <pre> (tail kept). */
   const MAX_AGENT_STREAM_CHARS = 400000;
 
@@ -67,7 +77,20 @@
     }
   }
 
-  function appendRunSeparator(label) {
+  function streamHeadForSource(source) {
+    if (source === "createPlan") {
+      return R.chatStreamCreatePlan;
+    }
+    if (source === "sendPrompt") {
+      return R.chatStreamSendPrompt;
+    }
+    if (source === "runTask") {
+      return R.chatStreamRunTask;
+    }
+    return R.chatStreamRunPhase;
+  }
+
+  function appendRunSeparator(label, source) {
     const shouldStick = isNearBottom(messagesEl);
     const row = document.createElement("div");
     row.className = "row system run-separator-row";
@@ -77,7 +100,8 @@
     lineA.className = "run-separator-line";
     const title = document.createElement("span");
     title.className = "run-separator-label";
-    title.textContent = `${label || "Run"} started`;
+    const head = typeof label === "string" && label.trim() ? label.trim() : streamHeadForSource(source);
+    title.textContent = `${head} ${R.streamStartedSuffix}`;
     const lineB = document.createElement("span");
     lineB.className = "run-separator-line";
     sep.appendChild(lineA);
@@ -844,7 +868,7 @@
       if (agentStreams.has(runId)) {
         return;
       }
-      appendRunSeparator(typeof msg.label === "string" ? msg.label : "Run");
+      appendRunSeparator(typeof msg.label === "string" ? msg.label : "", msg.source);
       const shouldStick = isNearBottom(messagesEl);
       const wrap = document.createElement("div");
       wrap.className = "row system agent-stream-row";
@@ -858,12 +882,12 @@
       const label = typeof msg.label === "string" ? msg.label : "Agent";
       const src =
         msg.source === "createPlan"
-          ? "Create plan"
+          ? R.chatStreamCreatePlan
           : msg.source === "sendPrompt"
-            ? "Send"
+            ? R.chatStreamSendPrompt
             : msg.source === "runTask"
-              ? "Run task"
-            : "Run phase";
+              ? R.chatStreamRunTask
+              : R.chatStreamRunPhase;
       const title = document.createElement("span");
       title.className = "agent-stream-title";
       title.textContent = label;
@@ -962,7 +986,7 @@
       } else {
         setStreamStatus(st, "FINISHED", "finished");
         st.footerTextEl.textContent = "";
-        setStreamCollapsed(st, true);
+        setStreamCollapsed(st, false);
       }
       agentStreams.delete(msg.runId);
       if (isNearBottom(messagesEl)) {

@@ -25,7 +25,7 @@ Shared: `planstack.cursor.agentPath`, `agentTimeoutMs`, `agentMaxStdoutChars`, a
 2. Press **F5** (launch config in [../.vscode](../.vscode)) to open an **Extension Development Host**.
 3. In the host window, open the **Planstack** icon in the **activity bar** (left).
 4. Sidebar order (top → bottom): **Overview**, **Plans** (tree: plans → phases → tasks from `.planstack/plans/*.json` and `seed/*.json`, e.g. [demo](../.planstack/plans/demo.json)), then **Chat**. Use the **Plans** view title **refresh** if needed.
-5. **Chat → Create plan:** type what you want in the box, then **Create plan** (not Send). The extension runs `agent -p --trust` in the workspace, parses a single JSON plan from stdout, validates it, and writes **`.planstack/plans/<id>.json`** (pretty-printed). **Send** stays local-only. You need **`CURSOR_API_KEY`** in the environment that launches Cursor, or run **Command Palette → “Planstack: Set Cursor API key”** (stored in VS Code Secret Storage). The Cursor CLI must be on `PATH` (or set **`planstack.cursor.agentPath`**).
+5. **Chat → Create plan:** type what you want in the box, then **Create plan** (not Send). The extension runs `agent -p --trust` in the workspace, parses a single JSON plan from stdout, validates it, and writes **`.planstack/plans/<id>.json`** (pretty-printed). **Send** stays local-only. You need **`CURSOR_API_KEY`** in the environment that launches Cursor, or run **Command Palette → “Planstack: Set Cursor API key”** (stored in VS Code Secret Storage). The Cursor CLI must be on `PATH` (or set **`planstack.cursor.agentPath`**). In **Chat**, `@` suggestions include **`.planstack/plans/*.json`** paths (and `plan:` / `phase:` / `task:`) so plan files are easy to attach.
 6. Expand the demo plan, **right‑click a phase → Planstack: Run phase** (default: **CLI** in the repo with **`--force`**; needs **`CURSOR_API_KEY`** + `agent` like Create plan). For **Composer paste handoff** instead, set **`planstack.cursor.executionMode`** to **`native-first`** and optionally **`planstack.cursor.openComposerCommand`**.
 
 ### Git branch on first Run phase (per plan)
@@ -61,9 +61,9 @@ Matches [extension_and_repo_structure.plan.md](../docs/extension_and_repo_struct
 
 | Path | Role |
 |------|------|
-| `src/extension.ts` | Activation, tree view, commands |
+| `src/extension.ts` | Activation, commands, Overview webview wiring |
 | `src/plan/*` | Types, validation, loader, CLI plan creation (`agentCliRunner`, `createPlanFromCli`, `writePlan`, …) |
-| `src/ui/planTreeProvider.ts` | Sidebar tree (plans → phases → tasks) |
+| `src/ui/planstackSidebarWebview.ts` | Overview webview (plans → phases → tasks) |
 | `src/dispatch/router.ts` | Phase execution dispatch (`getExecutionMode` / legacy handoff) |
 | `src/plan/modes.ts` | `planningMode` + `executionMode` resolution |
 | `src/ui/chatStatusBridge.ts` | Run phase CLI → Chat system lines when the Chat view is open |

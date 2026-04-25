@@ -50,6 +50,8 @@ Phases may declare `dependsOn: string[]` referencing other phase ids in the same
 
 A working seed plan ships at [`.planstack/plans/demo-onboarding.json`](.planstack/plans/demo-onboarding.json) — model new plans on it.
 
+**AI context:** Planstack Chat `@` suggestions include paths under `.planstack/plans/` (see [`extension/src/ui/chatFileMentions.ts`](extension/src/ui/chatFileMentions.ts)). The repo [`.cursorignore`](.cursorignore) is committed so `.planstack` is not excluded from Cursor indexing rules here. Cursor’s **built-in** Composer `@` picker may still omit some dot-directories depending on Cursor version ([forum discussion](https://forum.cursor.com/t/cursor-ignores-folders-starting-with-dot/77744)); use Planstack Chat, `plan:` mentions, or open the JSON from the file explorer when that happens.
+
 ## Dispatch model
 
 `Run phase` is routed by [`extension/src/dispatch/router.ts`](extension/src/dispatch/router.ts) per `planstack.cursor.executionMode`:

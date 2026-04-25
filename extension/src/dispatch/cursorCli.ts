@@ -20,6 +20,7 @@ import {
   type AgentStreamEndReason,
 } from "../ui/agentChatStreamBridge";
 import { postChatSystemMessage } from "../ui/chatStatusBridge";
+import { PS_RUN_UI } from "../ui/runUiStrings";
 
 /** Reported after the CLI agent process finishes (or fails after spawn). */
 export type CliPhaseRunFinishedKind = "success" | "error" | "stopped";
@@ -119,7 +120,7 @@ export async function handoffViaAgentCli(
       logLine(`handoffViaAgentCli: onCliRunFinished(${kind}) failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  const label = (statusLabel?.trim() || "Run phase").slice(0, 200);
+  const label = (statusLabel?.trim() || PS_RUN_UI.cliPhaseDefaultStreamLabel).slice(0, 200);
   traceEvent(tid, "handoffViaAgentCli.enter", { label, statusLabel, promptLength: prompt.length });
   traceMultiline(tid, "handoffViaAgentCli.prompt", prompt);
 
@@ -127,7 +128,7 @@ export async function handoffViaAgentCli(
   if (!folder) {
     traceEvent(tid, "handoffViaAgentCli.skip", { reason: "no_workspace_folder" });
     postChatSystemMessage(`${label}: skipped — no workspace folder open.`);
-    await vscode.window.showErrorMessage("Planstack: open a workspace folder before running phase with the CLI.");
+    await vscode.window.showErrorMessage("Planstack: open a workspace folder before running a phase with the CLI.");
     await notifyFinished("error");
     return;
   }
@@ -196,7 +197,7 @@ export async function handoffViaAgentCli(
     const { stdout, stderr, exitCode } = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: "Planstack: running Cursor agent for this phase…",
+        title: PS_RUN_UI.vscodeProgressRunPhase,
         cancellable: false,
       },
       async (progress) => {

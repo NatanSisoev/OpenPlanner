@@ -1,0 +1,6 @@
+# https://cursor.com/docs/context/ignore-files
+# Keep `.planstack/plans/*.json` out of this file — plan JSON is the project source of truth.
+
+.env
+.env.*
+

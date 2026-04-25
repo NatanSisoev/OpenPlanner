@@ -205,9 +205,7 @@ demo/cursor-agent-smoke-demo.md
 node_modules/
 
 # Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
+#  `.cursorignore` is tracked in this repo so the team shares AI-context defaults; see repo root file.
+#  https://docs.cursor.com/context/ignore-files
 .cursorindexingignore
 todo.md

@@ -1,0 +1,101 @@
+{
+  "id": "plan-red-button-001",
+  "state": "pending",
+  "title": "Add a new red (destructive-style) button",
+  "description": "Ship a visible red action control in the Planstack sidebar (and optional Chat footer) with theme-aware colors, a single clear behavior, and the same postMessage pattern as existing toolbar buttons. Align with VS Code's danger/destructive affordances so it works in light and dark themes.",
+  "createdAt": "2026-04-25T12:00:00Z",
+  "phases": [
+    {
+      "id": "phase-rb-001",
+      "state": "completed",
+      "title": "Define placement and behavior",
+      "description": "Lock the UX: which surface (Overview toolbar in planstackSidebar.js, graph controls, and/or Chat webview), exact label, tooltip, and the user-visible outcome (e.g. opens an existing command, shows a confirmation, or no-ops for a placeholder).",
+      "tasks": [
+        {
+          "id": "task-rb-001",
+          "state": "completed",
+          "desc": "Write a one-paragraph spec: button label, target command or handler name, and whether a confirmation dialog is required",
+          "commit": false
+        },
+        {
+          "id": "task-rb-002",
+          "state": "completed",
+          "desc": "If the action is new, pick command id under hackupc.planstack.* and register it in package.json with activation; otherwise map to an existing command",
+          "commit": true
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "phase-rb-002",
+      "state": "pending",
+      "title": "Sidebar markup and styling",
+      "description": "Add the button next to the existing top-toolbar / create buttons pattern in planstackSidebar.js, with a dedicated CSS class in planstackSidebarWebview.ts. Use var(--vscode-errorForeground) / related theme tokens (or a documented red) so the control reads as “dangerous” without hardcoding a single theme.",
+      "tasks": [
+        {
+          "id": "task-rb-003",
+          "state": "pending",
+          "desc": "Insert the button HTML in planstackSidebar.js (same toolbar region as + Plan / view switchers) and add .btn-danger (or similar) rules with hover/focus for accessibility",
+          "commit": true
+        },
+        {
+          "id": "task-rb-004",
+          "state": "pending",
+          "desc": "Verify layout in list and node views, and that the new control does not break narrow sidebar widths or graph toolbar overflow",
+          "commit": false
+        }
+      ],
+      "dependsOn": [
+        "phase-rb-001"
+      ]
+    },
+    {
+      "id": "phase-rb-003",
+      "state": "pending",
+      "title": "Wire click → extension action",
+      "description": "Route data-action in the webview’s click handler, postMessage to the extension host, and invoke vscode.commands or a small helper. Reuse the patterns used for runPhase, quickCreatePlan, and sync actions.",
+      "tasks": [
+        {
+          "id": "task-rb-005",
+          "state": "pending",
+          "desc": "Add the data-action branch in planstackSidebar.js and the corresponding message type handler in planstackSidebarWebview.ts (or the shared bridge module if applicable)",
+          "commit": true
+        },
+        {
+          "id": "task-rb-006",
+          "state": "pending",
+          "desc": "Log via getOutput from log.ts on invoke and handle failure (unknown workspace, command not found) with a user-visible error message",
+          "commit": true
+        }
+      ],
+      "dependsOn": [
+        "phase-rb-002"
+      ]
+    },
+    {
+      "id": "phase-rb-004",
+      "state": "pending",
+      "title": "Optional Chat parity and handoff",
+      "description": "If the product decision includes Planstack Chat, add a matching red control in planstackChatWebview.ts / planstackChat.js with the same command; if out of scope, document skip in the plan description and mark tasks cancelled.",
+      "tasks": [
+        {
+          "id": "task-rb-007",
+          "state": "pending",
+          "desc": "Either mirror the button in the Chat input footer (styled consistently) or set phase/task state to cancelled with a short note in task prompt why",
+          "commit": true
+        }
+      ],
+      "dependsOn": [
+        "phase-rb-003"
+      ]
+    }
+  ],
+  "git": {
+    "baseBranch": "main",
+    "planBranch": "planstack/plan-red-button-001"
+  },
+  "sync": {
+    "updatedAt": "2026-04-25T22:29:42.312Z",
+    "revision": 2
+  }
+}
