@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import { newTraceId, traceEvent, traceMultiline } from "../debug/trace";
 import { getActiveExecutorProfileId } from "../plan/executorConfig";
 import { getExecutionMode, type ExecutionMode } from "../plan/modes";
-import { handoffClaudeTerminal } from "./claudeCode";
 import { handoffViaAgentCli, type CliPhaseRunFinishedKind } from "./cursorCli";
 import { handoffToNativeComposer } from "./cursorNativeHandoff";
 import { handoffViaCursorSdk } from "./cursorSdk";
@@ -81,9 +80,4 @@ export async function dispatchPhaseHandoff(
       return _exhaustive;
     }
   }
-}
-
-/** Optional path: integrated terminal + `claude` (product doc). */
-export async function dispatchClaudeHandoff(prompt: string): Promise<void> {
-  return handoffClaudeTerminal(prompt);
 }

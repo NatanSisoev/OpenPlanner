@@ -19,6 +19,26 @@ export function sanitizePlanFileBasename(planId: string): string {
   return s.length > 0 ? s : "plan";
 }
 
+/**
+ * Write `content` to `target` via `<target>.tmp` + rename so a crashed write
+ * can't leave a half-written plan file on disk.
+ */
+async function atomicWriteUtf8(target: vscode.Uri, content: string): Promise<void> {
+  const tmp = target.with({ path: `${target.path}.tmp` });
+  const bytes = new TextEncoder().encode(content);
+  await vscode.workspace.fs.writeFile(tmp, bytes);
+  try {
+    await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
+  } catch (err) {
+    try {
+      await vscode.workspace.fs.delete(tmp);
+    } catch {
+      // best-effort cleanup of the orphaned tmp
+    }
+    throw err;
+  }
+}
+
 export async function saveValidatedPlan(
   plan: Plan,
   workspaceRoot: vscode.Uri,
@@ -32,7 +52,7 @@ export async function saveValidatedPlan(
   const base = sanitizePlanFileBasename(plan.id);
   const file = vscode.Uri.joinPath(dir, `${base}.json`);
   const json = `${JSON.stringify(plan, null, 2)}\n`;
-  await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(json));
+  await atomicWriteUtf8(file, json);
   return file;
 }
 
@@ -47,7 +67,7 @@ export async function savePlanPreservingFile(
       stampLocalPlanSync(plan);
     }
     const json = `${JSON.stringify(plan, null, 2)}\n`;
-    await vscode.workspace.fs.writeFile(existing, new TextEncoder().encode(json));
+    await atomicWriteUtf8(existing, json);
     return existing;
   }
   return saveValidatedPlan(plan, workspaceRoot, options);

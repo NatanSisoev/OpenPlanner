@@ -23,7 +23,7 @@ HackUPC/
       log.ts                      # shared "Planstack" OutputChannel (used by loader, dispatchers)
       plan/                       # plan types, validate, loader, watcher, prompt builders, plansStore
       ui/                         # tree, sidebar + chat webviews, chatStatusBridge, agentChatStreamBridge
-      dispatch/                   # router + handoff variants (cli / native / sdk / claude)
+      dispatch/                   # router + handoff variants (cli / native / sdk)
       git/                        # branch resolver, work-branch helper, post-run diff summary helper
     media/                        # activity-bar icon, webview JS/CSS
     out/                          # tsc output (gitignored)
@@ -48,6 +48,8 @@ Phases may declare `dependsOn: string[]` referencing other phase ids in the same
 - no self-references,
 - every dependency points to a known phase id.
 
+Phases and tasks may carry an optional free-text `assignee`. It is **display-only metadata** — no dispatcher routes on it. Executor selection happens via `planstack.executor.activeProfile`.
+
 A working seed plan ships at [`.planstack/plans/demo-onboarding.json`](.planstack/plans/demo-onboarding.json) — model new plans on it.
 
 **AI context:** Planstack Chat `@` suggestions include paths under `.planstack/plans/` (see [`extension/src/ui/chatFileMentions.ts`](extension/src/ui/chatFileMentions.ts)). The repo [`.cursorignore`](.cursorignore) is committed so `.planstack` is not excluded from Cursor indexing rules here. Cursor’s **built-in** Composer `@` picker may still omit some dot-directories depending on Cursor version ([forum discussion](https://forum.cursor.com/t/cursor-ignores-folders-starting-with-dot/77744)); use Planstack Chat, `plan:` mentions, or open the JSON from the file explorer when that happens.
@@ -61,7 +63,6 @@ A working seed plan ships at [`.planstack/plans/demo-onboarding.json`](.planstac
 | `cli` *(default)* | `dispatch/cursorCli.ts`           | Runs `agent -p --trust --force` headless. Live stdout/stderr to **Output → Planstack** (`cliStreamAgentOutput`) and, by default, a **live stream block** in Chat (`agentChatLiveStream` via `agentChatStreamBridge.ts`); throttled notification progress; throttled Chat bubbles when live stream is off; single concurrent run; optional **Git vs HEAD** summary (`worktreeChangeSummary.ts`). |
 | `native-first`    | `dispatch/cursorNativeHandoff.ts` | Clipboard + optional `executeCommand` to focus Composer.                              |
 | `sdk-local` / `sdk-cloud` | `dispatch/cursorSdk.ts`     | `@cursor/february` headless. Stub-level.                                              |
-| (separate path)   | `dispatch/claudeCode.ts`          | Spawns `claude` in an integrated terminal. Not wired into the router.                 |
 
 `cli` is the default because the headless agent can edit the workspace directly with `--force`. Don't change that priority without updating this doc.
 

@@ -1,4 +1,4 @@
-import type { Phase, Plan, WorkState } from "./types";
+import type { Plan, WorkState } from "./types";
 
 /**
  * Roll a list of child states up into a parent state.
@@ -39,19 +39,4 @@ export function recomputeAggregates(plan: Plan): Plan {
   }
   plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
   return plan;
-}
-
-/**
- * Phase ids that are still blocking `phase` from running because at least one
- * dependency hasn't completed yet. Empty array = ready to run.
- */
-export function blockingDependencies(plan: Plan, phase: Phase): string[] {
-  if (!phase.dependsOn?.length) {
-    return [];
-  }
-  const byId = new Map(plan.phases.map((p) => [p.id, p]));
-  return phase.dependsOn.filter((depId) => {
-    const dep = byId.get(depId);
-    return !dep || dep.state !== "completed";
-  });
 }

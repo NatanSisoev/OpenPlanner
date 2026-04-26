@@ -3,8 +3,10 @@
  *
  * A plan is a tree of work: plan -> phases -> tasks. Every level shares the
  * same lifecycle states (`WorkState`). Phases and tasks may carry an optional
- * free-text `assignee`. Plans optionally carry Git metadata so the extension can
- * resolve which branch a phase should run on.
+ * free-text `assignee` — display-only metadata, not consumed by the dispatcher
+ * (routing happens via `planstack.executor.activeProfile`). Plans optionally
+ * carry Git metadata so the extension can resolve which branch a phase should
+ * run on.
  */
 
 /** Lifecycle state shared by plans, phases, and tasks. */
@@ -63,7 +65,7 @@ export interface Task {
   commit: boolean;
   /** Optional override prompt used when handing the task off. */
   prompt?: string;
-  /** Optional human-readable owner label (free text). */
+  /** Display-only owner label (free text). Not consumed by the dispatcher. */
   assignee?: string;
 }
 
@@ -73,7 +75,7 @@ export interface Phase {
   title: string;
   description: string;
   tasks: Task[];
-  /** Optional human-readable owner label (free text). */
+  /** Display-only owner label (free text). Not consumed by the dispatcher. */
   assignee?: string;
   /** Other phases that must complete first. */
   dependsOn?: PhaseDependencyRef[];
