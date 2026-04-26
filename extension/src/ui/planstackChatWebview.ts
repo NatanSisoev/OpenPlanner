@@ -416,22 +416,32 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         return;
       }
       if (m.type === "clearChat") {
-        if (this.persistTimer) {
-          clearTimeout(this.persistTimer);
-          this.persistTimer = undefined;
-        }
-        this.transcript.length = 0;
-        void this.extensionContext.workspaceState.update(CHAT_TRANSCRIPT_KEY, []);
-        try {
-          w.postMessage({
-            type: "init",
-            messages: [],
-            executorProfile: getActiveExecutorProfileId(),
-          });
-        } catch {
-          // Webview disposed.
-        }
-        traceEvent(recvId, "chat.clearChat", {});
+        traceEvent(recvId, "chat.clearChat.request", {});
+        void (async () => {
+          const choice = await vscode.window.showWarningMessage(
+            "Clear Planstack chat history? This cannot be undone.",
+            { modal: true },
+            "Clear",
+          );
+          if (choice !== "Clear") {
+            return;
+          }
+          if (this.persistTimer) {
+            clearTimeout(this.persistTimer);
+            this.persistTimer = undefined;
+          }
+          this.transcript.length = 0;
+          await this.extensionContext.workspaceState.update(CHAT_TRANSCRIPT_KEY, []);
+          try {
+            w.postMessage({
+              type: "init",
+              messages: [],
+              executorProfile: getActiveExecutorProfileId(),
+            });
+          } catch {
+            // Webview disposed.
+          }
+        })();
         return;
       }
       if (m.type === "stopAgents") {

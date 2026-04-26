@@ -746,9 +746,6 @@
   }
 
   function clearChat() {
-    if (!window.confirm("Clear chat history? This cannot be undone.")) {
-      return;
-    }
     vscode.postMessage({ type: "clearChat" });
   }
 
