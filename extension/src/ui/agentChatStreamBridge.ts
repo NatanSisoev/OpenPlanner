@@ -1,4 +1,5 @@
 /** Live agent stdout/stderr into the Planstack Chat webview (separate from one-line system status). */
+import { postChatSystemMessage } from "./chatStatusBridge";
 
 export type AgentStreamSource = "runPhase" | "runTask" | "createPlan" | "sendPrompt";
 
@@ -25,6 +26,8 @@ type ReplayBuf = {
   out: string;
   err: string;
   ended?: AgentStreamEndReason;
+  /** Total characters dropped from the head of `out`/`err` to keep within MAX_REPLAY_CHARS_PER_RUN. */
+  droppedChars: number;
 };
 const replayRuns = new Map<string, ReplayBuf>();
 const MAX_REPLAY_RUNS = 6;
@@ -38,6 +41,12 @@ const pending = new Map<string, PendingBuf>();
 function replayBufferedTo(s: AgentStreamSink): void {
   for (const [runId, rb] of replayRuns) {
     s.onStart(runId, rb.meta);
+    if (rb.droppedChars > 0) {
+      const kb = Math.max(1, Math.ceil(rb.droppedChars / 1024));
+      postChatSystemMessage(
+        `${rb.meta.label}: stream truncated — ${kb} kB of earlier output not replayed (see Output → Planstack for the full log).`,
+      );
+    }
     if (rb.out) {
       s.onChunk(runId, "stdout", rb.out);
     }
@@ -51,12 +60,13 @@ function replayBufferedTo(s: AgentStreamSink): void {
   replayRuns.clear();
 }
 
-function appendBounded(prev: string, add: string): string {
+function appendBounded(prev: string, add: string): { value: string; dropped: number } {
   const next = prev + add;
   if (next.length <= MAX_REPLAY_CHARS_PER_RUN) {
-    return next;
+    return { value: next, dropped: 0 };
   }
-  return next.slice(-MAX_REPLAY_CHARS_PER_RUN);
+  const dropped = next.length - MAX_REPLAY_CHARS_PER_RUN;
+  return { value: next.slice(-MAX_REPLAY_CHARS_PER_RUN), dropped };
 }
 
 function enforceReplayRunCap(): void {
@@ -97,8 +107,11 @@ function flushPending(runId: string): void {
   } else {
     const rb = replayRuns.get(runId);
     if (rb) {
-      rb.out = appendBounded(rb.out, b.out);
-      rb.err = appendBounded(rb.err, b.err);
+      const o = appendBounded(rb.out, b.out);
+      const e = appendBounded(rb.err, b.err);
+      rb.out = o.value;
+      rb.err = e.value;
+      rb.droppedChars += o.dropped + e.dropped;
     }
   }
 }
@@ -111,9 +124,13 @@ function scheduleChunk(runId: string, stream: "stdout" | "stderr", text: string)
     const rb = replayRuns.get(runId);
     if (rb) {
       if (stream === "stdout") {
-        rb.out = appendBounded(rb.out, text);
+        const r = appendBounded(rb.out, text);
+        rb.out = r.value;
+        rb.droppedChars += r.dropped;
       } else {
-        rb.err = appendBounded(rb.err, text);
+        const r = appendBounded(rb.err, text);
+        rb.err = r.value;
+        rb.droppedChars += r.dropped;
       }
     }
     return;
@@ -146,7 +163,7 @@ export function postAgentStreamStart(runId: string, meta: AgentStreamMeta): void
   if (sink) {
     sink.onStart(runId, meta);
   } else {
-    replayRuns.set(runId, { meta, out: "", err: "" });
+    replayRuns.set(runId, { meta, out: "", err: "", droppedChars: 0 });
     enforceReplayRunCap();
   }
 }

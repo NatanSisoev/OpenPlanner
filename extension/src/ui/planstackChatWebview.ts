@@ -23,6 +23,8 @@ import { postAnimatedStatus, postRunFailure, registerRichChatSink } from "./rich
 import { PS_RUN_UI } from "./runUiStrings";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
+const CHAT_TRANSCRIPT_KEY = "planstack.chatTranscript";
+const MAX_PERSISTED_TURNS = 200;
 
 function executorCreatePlanStartChatLine(): string {
   const head = PS_RUN_UI.chatStreamCreatePlan;
@@ -96,7 +98,8 @@ function nowIso(): string {
 
 export class PlanstackChatWebview implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
-  private readonly transcript: ChatTurn[] = [];
+  private readonly transcript: ChatTurn[];
+  private persistTimer?: ReturnType<typeof setTimeout>;
   private activeFlowCount = 0;
   private activeFlowSource: "createPlan" | "sendPrompt" | "" = "";
   private configSubscription?: vscode.Disposable;
@@ -105,7 +108,21 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     private readonly extUri: vscode.Uri,
     private readonly extensionContext: vscode.ExtensionContext,
     private readonly onPlanSaved: () => Promise<void>,
-  ) {}
+  ) {
+    const stored = this.extensionContext.workspaceState.get<ChatTurn[]>(CHAT_TRANSCRIPT_KEY);
+    this.transcript = Array.isArray(stored) ? stored.slice(-MAX_PERSISTED_TURNS) : [];
+  }
+
+  private schedulePersistTranscript(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+    }
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      const tail = this.transcript.slice(-MAX_PERSISTED_TURNS);
+      void this.extensionContext.workspaceState.update(CHAT_TRANSCRIPT_KEY, tail);
+    }, 500);
+  }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -131,9 +148,23 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
 
     w.html = getChatHtml(csp, labelsUri, scriptUri);
 
+    // Send init synchronously BEFORE registering sinks. The webview queue is
+    // FIFO, so any sink-driven `append` messages enqueued during the rest of
+    // this function arrive after init and won't be wiped by its history reset.
+    try {
+      w.postMessage({
+        type: "init",
+        messages: [...this.transcript],
+        executorProfile: getActiveExecutorProfileId(),
+      });
+    } catch {
+      // Webview may already be disposed.
+    }
+
     const pushSystem = (text: string): void => {
       const timestampIso = nowIso();
       this.transcript.push({ role: "system", text, timestampIso });
+      this.schedulePersistTranscript();
       try {
         w.postMessage({ type: "append", role: "system", text, timestampIso });
       } catch {
@@ -143,6 +174,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     const pushUser = (text: string): void => {
       const timestampIso = nowIso();
       this.transcript.push({ role: "user", text, timestampIso });
+      this.schedulePersistTranscript();
       try {
         w.postMessage({ type: "append", role: "user", text, timestampIso });
       } catch {
@@ -214,8 +246,14 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         pushUser(text);
         void (async () => {
-          const mentionCtx = await this.resolveMentionContext(w, text, "send");
-          await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
+          try {
+            const mentionCtx = await this.resolveMentionContext(w, text, "send");
+            await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logLine(`chat.send.flow_error: ${msg}`);
+            pushSystem(`Send failed: ${msg.slice(0, 400)}`);
+          }
         })();
         traceEvent(recvId, "chat.send.done", { storedChars: text.length, handled: true });
         return;
@@ -230,8 +268,14 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         }
         pushUser(text);
         void (async () => {
-          const mentionCtx = await this.resolveMentionContext(w, text, "createPlan");
-          await this.runCreatePlanFlow(w, text, mentionCtx.promptForAgent);
+          try {
+            const mentionCtx = await this.resolveMentionContext(w, text, "createPlan");
+            await this.runCreatePlanFlow(w, text, mentionCtx.promptForAgent);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logLine(`chat.createPlan.flow_error: ${msg}`);
+            pushSystem(`Create plan failed: ${msg.slice(0, 400)}`);
+          }
         })();
         return;
       }
@@ -275,8 +319,14 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         if (text) {
           pushUser(text);
           void (async () => {
-            const mentionCtx = await this.resolveMentionContext(w, text, "send");
-            await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
+            try {
+              const mentionCtx = await this.resolveMentionContext(w, text, "send");
+              await this.runSendPromptFlow(w, text, mentionCtx.promptForAgent);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              logLine(`chat.retryPrompt.flow_error: ${msg}`);
+              pushSystem(`Retry failed: ${msg.slice(0, 400)}`);
+            }
           })();
         }
         return;
@@ -412,18 +462,6 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       disposeChat.dispose();
     });
 
-    const snapshot = [...this.transcript];
-    setTimeout(() => {
-      try {
-        w.postMessage({
-          type: "init",
-          messages: snapshot,
-          executorProfile: getActiveExecutorProfileId(),
-        });
-      } catch {
-        // Webview may already be disposed.
-      }
-    }, 0);
   }
 
   private async resolveMentionContext(
