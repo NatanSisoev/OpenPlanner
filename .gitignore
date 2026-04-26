@@ -209,3 +209,5 @@ node_modules/
 #  https://docs.cursor.com/context/ignore-files
 .cursorindexingignore
 todo.md
+
+.planstack/plans/*.json
