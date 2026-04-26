@@ -1,8 +1,10 @@
-# PlanStack
+# OpenPlanner
 
-A Cursor-first VS Code extension that turns ephemeral agent plans into tracked, **phased**, dependency-aware work units. PlanStack adds a thin orchestration layer on top of native agent workflows: plans are first-class JSON files on disk, the sidebar surfaces them as a tree, and **Run phase** dispatches a focused prompt to the configured executor.
+A Cursor-first VS Code extension that turns ephemeral agent plans into tracked, **phased**, dependency-aware work units. OpenPlanner adds a thin orchestration layer on top of native agent workflows: plans are first-class JSON files on disk, the sidebar surfaces them as a tree, and **Run phase** dispatches a focused prompt to the configured executor.
 
-The product boundary is firm: PlanStack owns **structured intent → start of execution**. Diffs, accept/reject, and code review stay in native surfaces (Composer, Agent, Claude Code).
+The product boundary is firm: OpenPlanner owns **structured intent → start of execution**. Diffs, accept/reject, and code review stay in native surfaces (Composer, Agent, Claude Code).
+
+> **Note on naming.** The product is **OpenPlanner**. The underlying VS Code extension still registers under its original codename `Planstack` — you'll see that label on the activity-bar icon, in the `Planstack:` command palette prefix, in `planstack.cursor.*` settings, and in the `.planstack/plans/` directory. Identifiers will be aligned in a future release.
 
 ---
 
@@ -35,19 +37,17 @@ Each `.planstack/plans/*.json` file is a single plan. Every level (plan / phase 
 
 # Tasks also carry `dependsOn`, a string array of task dependencies. Use `[]` when there are no blockers. Supported task refs are `task-id` for a unique task in the same plan, `phase-id/task-id` for a task in another phase of the same plan, and `plan-id/phase-id/task-id` for a cross-plan dependency. The validator rejects malformed same-plan task refs, unknown same-plan refs, self-references, duplicate phase ids, and duplicate task ids inside one phase. The full shape lives in `[extension/src/plan/types.ts](extension/src/plan/types.ts)`, the parser in `[extension/src/plan/validate.ts](extension/src/plan/validate.ts)`.
 
-PlanStack in **`cli`** execution mode (the default) runs a **headless CLI** chosen by **`planstack.executor.activeProfile`** (or the **Executor** dropdown in Planstack Chat):
+OpenPlanner in **`cli`** execution mode (the default) runs a **headless CLI** chosen by **`planstack.executor.activeProfile`** (or the **Executor** dropdown in Planstack Chat):
 
 - **Cursor CLI (default):** install the Cursor agent CLI and confirm `agent --version` works in a terminal. Set **Planstack: Set Cursor API key** or export `CURSOR_API_KEY`. Optional: `planstack.cursor.agentPath` if the binary is not on `PATH`.
 - **Junie CLI:** install the [Junie CLI](https://junie.jetbrains.com/docs/junie-cli.html), set **Planstack: Set Junie API token** or export `JUNIE_API_KEY`, and set `planstack.executor.juniePath` if needed. Junie CLI is EAP; behavior may evolve.
 - **Windows:** if the CLI runs inside WSL, enable `planstack.cursor.useWsl`.
 
-Cross-IDE workflow with Junie (handoff file, same-repo contract): see [docs/planstack-junie.md](docs/planstack-junie.md).
-
 ---
 
 ## UI overview
 
-Open the **Planstack** icon in the activity bar. The sidebar has three panels (top → bottom):
+Open the **Planstack** activity-bar icon (the OpenPlanner extension registers under that name). The sidebar has three panels (top → bottom):
 
 
 | Panel        | Purpose                                                                        |

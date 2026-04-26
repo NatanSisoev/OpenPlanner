@@ -5,6 +5,7 @@
   const sendBtn = document.getElementById("send");
   const createPlanBtn = document.getElementById("createPlan");
   const stopAgentsBtn = document.getElementById("stopAgents");
+  const clearChatBtn = document.getElementById("clearChat");
   const executorProfileEl = document.getElementById("executorProfile");
   const mentionChipsEl = document.getElementById("mentionChips");
   const mentionSuggestEl = document.getElementById("mentionSuggest");
@@ -744,9 +745,19 @@
     vscode.postMessage({ type: "stopAgents" });
   }
 
+  function clearChat() {
+    if (!window.confirm("Clear chat history? This cannot be undone.")) {
+      return;
+    }
+    vscode.postMessage({ type: "clearChat" });
+  }
+
   sendBtn.addEventListener("click", send);
   createPlanBtn.addEventListener("click", createPlan);
   stopAgentsBtn.addEventListener("click", stopAgents);
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener("click", clearChat);
+  }
   if (executorProfileEl) {
     executorProfileEl.addEventListener("change", () => {
       vscode.postMessage({ type: "setExecutorProfile", profile: executorProfileEl.value });

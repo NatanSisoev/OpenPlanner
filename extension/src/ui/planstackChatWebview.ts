@@ -415,6 +415,25 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         })();
         return;
       }
+      if (m.type === "clearChat") {
+        if (this.persistTimer) {
+          clearTimeout(this.persistTimer);
+          this.persistTimer = undefined;
+        }
+        this.transcript.length = 0;
+        void this.extensionContext.workspaceState.update(CHAT_TRANSCRIPT_KEY, []);
+        try {
+          w.postMessage({
+            type: "init",
+            messages: [],
+            executorProfile: getActiveExecutorProfileId(),
+          });
+        } catch {
+          // Webview disposed.
+        }
+        traceEvent(recvId, "chat.clearChat", {});
+        return;
+      }
       if (m.type === "stopAgents") {
         const n = killAllAgentCliProcesses();
         traceEvent(recvId, "chat.stopAgents", { processesSignaled: n });
@@ -1137,7 +1156,7 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       justify-content: flex-end;
       flex: 0 0 auto;
     }
-    #send, #createPlan, #stopAgents {
+    #send, #createPlan, #stopAgents, #clearChat {
       flex-shrink: 0; padding: 0 12px; height: 28px;
       cursor: pointer; font-size: var(--ps-t-md);
       border: none; border-radius: var(--ps-r-1); white-space: nowrap;
@@ -1147,18 +1166,18 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       background: var(--vscode-button-background);
     }
     #createPlan:hover { background: var(--vscode-button-hoverBackground); }
-    #send {
+    #send, #clearChat {
       color: var(--vscode-foreground);
       background: var(--vscode-button-secondaryBackground, var(--ps-bg-hover));
     }
-    #send:hover { background: var(--vscode-button-secondaryHoverBackground, var(--ps-border-strong)); }
+    #send:hover, #clearChat:hover { background: var(--vscode-button-secondaryHoverBackground, var(--ps-border-strong)); }
     #stopAgents {
       color: var(--vscode-foreground);
       background: var(--vscode-inputValidation-warningBackground, rgba(200, 140, 0, 0.25));
       border: 1px solid var(--ps-border-strong);
     }
     #stopAgents:hover { background: var(--vscode-inputValidation-warningBackground, rgba(200, 140, 0, 0.35)); }
-    #send:disabled, #createPlan:disabled, #stopAgents:disabled, #input:disabled {
+    #send:disabled, #createPlan:disabled, #stopAgents:disabled, #clearChat:disabled, #input:disabled {
       opacity: 0.55; cursor: not-allowed;
     }
     .agent-stream-row {
@@ -1436,6 +1455,7 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
         </select>
       </div>
       <div class="composerActionButtons">
+        <button type="button" id="clearChat" title="Clear chat history">Clear</button>
         <button type="button" id="stopAgents">Stop agents</button>
         <button type="button" id="createPlan">Create plan</button>
         <button type="button" id="send">Send</button>
