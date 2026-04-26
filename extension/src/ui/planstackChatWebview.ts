@@ -18,6 +18,7 @@ import {
   type AgentStreamEndReason,
 } from "./agentChatStreamBridge";
 import { registerChatSystemSink, registerChatUserSink } from "./chatStatusBridge";
+import { PS_TOKENS_CSS } from "./planstackSidebarWebview";
 import { postAnimatedStatus, postRunFailure, registerRichChatSink } from "./richChatBridge";
 import { PS_RUN_UI } from "./runUiStrings";
 
@@ -843,21 +844,22 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <style>
+    ${PS_TOKENS_CSS}
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
       display: flex; flex-direction: column;
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-sideBar-background);
+      color: var(--ps-fg);
+      background: var(--ps-bg);
     }
     .hint {
-      font-size: 0.8em; opacity: 0.55; padding: 8px 10px 6px; line-height: 1.5;
-      border-bottom: 1px solid rgba(127,127,127,0.15);
+      font-size: var(--ps-t-sm); opacity: 0.55; padding: 8px 10px 6px; line-height: 1.5;
+      border-bottom: 1px solid var(--ps-border);
     }
-    .hint strong { opacity: 0.85; }
-    .hint code { font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+    .hint strong { opacity: 0.9; }
+    .hint code { font-family: var(--vscode-editor-font-family); font-size: var(--ps-t-md); }
     #messages {
       flex: 1; overflow-y: auto;
       padding: 10px 10px 10px;
@@ -868,9 +870,9 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     .bubble {
       max-width: 90%;
       padding: 7px 10px;
-      border-radius: 8px;
+      border-radius: var(--ps-r-2);
       white-space: pre-wrap; word-break: break-word;
-      line-height: 1.4; font-size: 0.9em;
+      line-height: 1.4; font-size: var(--ps-t-md);
     }
     .bubble-text {
       white-space: pre-wrap;
@@ -878,8 +880,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     }
     .bubble-meta {
       margin-top: 4px;
-      font-size: 0.75em;
-      opacity: 0.62;
+      font-size: var(--ps-t-xs);
+      opacity: 0.55;
       text-align: right;
     }
     .row.system .bubble-meta {
@@ -889,35 +891,35 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       background: color-mix(
         in srgb,
         var(--vscode-input-background) 78%,
-        var(--vscode-button-secondaryBackground, rgba(127,127,127,0.22)) 22%
+        var(--vscode-button-secondaryBackground, var(--ps-border-strong)) 22%
       );
       border: 1px solid color-mix(
         in srgb,
-        var(--vscode-button-background, var(--vscode-focusBorder, #007acc)) 34%,
-        rgba(127,127,127,0.3)
+        var(--vscode-button-background, var(--vscode-focusBorder, var(--ps-c-accent))) 34%,
+        var(--ps-border-strong)
       );
       border-bottom-right-radius: 2px;
     }
     .bubble.system {
       background: color-mix(
         in srgb,
-        var(--vscode-editor-background, rgba(0,0,0,0.15)) 84%,
-        var(--vscode-textLink-foreground, #3794ff) 16%
+        var(--vscode-editor-background) 84%,
+        var(--vscode-textLink-foreground, var(--ps-c-accent)) 16%
       );
       border: 1px solid color-mix(
         in srgb,
-        var(--vscode-textLink-foreground, #3794ff) 32%,
-        rgba(127,127,127,0.25)
+        var(--vscode-textLink-foreground, var(--ps-c-accent)) 32%,
+        var(--ps-border-strong)
       );
       border-bottom-left-radius: 2px;
-      opacity: 0.94;
+      opacity: 0.9;
       width: 100%;
       max-width: 100%;
     }
     #composer {
       display: flex; flex-direction: column; gap: 6px;
       padding: 8px 10px 10px;
-      border-top: 1px solid rgba(127,127,127,0.18);
+      border-top: 1px solid var(--ps-border);
     }
     #inputWrap { position: relative; }
     #input {
@@ -926,10 +928,10 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       font-family: var(--vscode-font-family); font-size: var(--vscode-font-size);
       color: var(--vscode-input-foreground);
       background: var(--vscode-input-background);
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 5px; outline: none;
+      border: 1px solid var(--ps-border-strong);
+      border-radius: var(--ps-r-1); outline: none;
     }
-    #input:focus { border-color: var(--vscode-focusBorder, #007acc); }
+    #input:focus { border-color: var(--vscode-focusBorder, var(--ps-c-accent)); }
     #mentionChips {
       display: flex;
       flex-wrap: wrap;
@@ -941,26 +943,26 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       align-items: center;
       gap: 4px;
       padding: 1px 7px;
-      border-radius: 999px;
-      border: 1px solid rgba(127,127,127,0.25);
-      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.2));
-      font-size: 0.76em;
+      border-radius: var(--ps-r-pill);
+      border: 1px solid var(--ps-border-strong);
+      background: var(--vscode-button-secondaryBackground, var(--ps-bg-hover));
+      font-size: var(--ps-t-xs);
       line-height: 1.5;
       font-family: var(--vscode-editor-font-family);
     }
     .mention-chip-kind {
-      font-size: 0.78em;
+      font-size: var(--ps-t-xs);
       padding: 0 5px;
-      border-radius: 8px;
-      background: rgba(127,127,127,0.25);
+      border-radius: var(--ps-r-2);
+      background: var(--ps-border-strong);
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .mention-chip-plan .mention-chip-kind { background: rgba(120, 200, 255, 0.38); }
-    .mention-chip-phase .mention-chip-kind { background: rgba(99, 132, 255, 0.35); }
-    .mention-chip-task .mention-chip-kind { background: rgba(110, 200, 130, 0.35); }
-    .mention-chip-symbol .mention-chip-kind { background: rgba(220, 130, 230, 0.35); }
-    .mention-chip-folder .mention-chip-kind { background: rgba(200, 170, 90, 0.38); }
+    .mention-chip-plan .mention-chip-kind { background: var(--ps-fill-running); }
+    .mention-chip-phase .mention-chip-kind { background: var(--ps-fill-running); }
+    .mention-chip-task .mention-chip-kind { background: var(--ps-fill-done); }
+    .mention-chip-symbol .mention-chip-kind { background: color-mix(in srgb, var(--ps-c-accent) 28%, transparent); }
+    .mention-chip-folder .mention-chip-kind { background: color-mix(in srgb, var(--vscode-charts-yellow, var(--ps-c-accent)) 32%, transparent); }
     .mention-chip-label { white-space: nowrap; }
     .mention-chip-remove {
       border: none;
@@ -968,8 +970,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       color: inherit;
       cursor: pointer;
       line-height: 1;
-      font-size: 0.95em;
-      opacity: 0.8;
+      font-size: var(--ps-t-md);
+      opacity: 0.75;
       padding: 0;
     }
     .mention-chip-remove:hover { opacity: 1; }
@@ -978,8 +980,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       left: 0;
       right: 0;
       bottom: calc(100% + 4px);
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 6px;
+      border: 1px solid var(--ps-border-strong);
+      border-radius: var(--ps-r-2);
       overflow: hidden;
       background: var(--vscode-quickInput-background, var(--vscode-editor-background));
       z-index: 5;
@@ -994,34 +996,34 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       gap: 6px;
       width: 100%;
       border: none;
-      border-bottom: 1px solid rgba(127,127,127,0.12);
+      border-bottom: 1px solid var(--ps-border);
       background: transparent;
       color: var(--vscode-foreground);
       text-align: left;
       padding: 6px 8px;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.82em;
+      font-size: var(--ps-t-sm);
       cursor: pointer;
     }
     .mention-suggest-item:last-child { border-bottom: none; }
     .mention-suggest-item:hover,
     .mention-suggest-item.active {
-      background: var(--vscode-list-activeSelectionBackground, rgba(127,127,127,0.2));
+      background: var(--vscode-list-activeSelectionBackground, var(--ps-bg-hover));
     }
     .mention-suggest-kind {
       flex-shrink: 0;
-      font-size: 0.74em;
+      font-size: var(--ps-t-xs);
       padding: 1px 6px;
-      border-radius: 8px;
-      background: rgba(127,127,127,0.25);
+      border-radius: var(--ps-r-2);
+      background: var(--ps-border-strong);
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .mention-suggest-plan .mention-suggest-kind { background: rgba(120, 200, 255, 0.38); }
-    .mention-suggest-phase .mention-suggest-kind { background: rgba(99, 132, 255, 0.35); }
-    .mention-suggest-task .mention-suggest-kind { background: rgba(110, 200, 130, 0.35); }
-    .mention-suggest-symbol .mention-suggest-kind { background: rgba(220, 130, 230, 0.35); }
-    .mention-suggest-folder .mention-suggest-kind { background: rgba(200, 170, 90, 0.38); }
+    .mention-suggest-plan .mention-suggest-kind { background: var(--ps-fill-running); }
+    .mention-suggest-phase .mention-suggest-kind { background: var(--ps-fill-running); }
+    .mention-suggest-task .mention-suggest-kind { background: var(--ps-fill-done); }
+    .mention-suggest-symbol .mention-suggest-kind { background: color-mix(in srgb, var(--ps-c-accent) 28%, transparent); }
+    .mention-suggest-folder .mention-suggest-kind { background: color-mix(in srgb, var(--vscode-charts-yellow, var(--ps-c-accent)) 32%, transparent); }
     .mention-suggest-label {
       flex-shrink: 0;
       font-family: var(--vscode-editor-font-family);
@@ -1032,8 +1034,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      opacity: 0.7;
-      font-size: 0.92em;
+      opacity: 0.75;
+      font-size: var(--ps-t-md);
     }
     #composerActions {
       display: flex;
@@ -1051,7 +1053,7 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       min-width: 0;
       flex: 0 1 auto;
       max-width: min(52%, 320px);
-      font-size: 0.85em;
+      font-size: var(--ps-t-md);
     }
     .composerExecutor label {
       color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.85));
@@ -1067,13 +1069,13 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       max-width: min(220px, 40vw);
       height: 28px;
       padding: 0 30px 0 10px;
-      font-size: 0.85em;
+      font-size: var(--ps-t-md);
       font-family: var(--vscode-font-family);
       line-height: 26px;
       color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
       background-color: var(--vscode-dropdown-background, var(--vscode-input-background, rgba(255, 255, 255, 0.06)));
-      border: 1px solid var(--vscode-dropdown-border, rgba(127, 127, 127, 0.4));
-      border-radius: 4px;
+      border: 1px solid var(--vscode-dropdown-border, var(--ps-border-strong));
+      border-radius: var(--ps-r-1);
       cursor: pointer;
       box-sizing: border-box;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M2.5 4L6 7.5 9.5 4'/%3E%3C/svg%3E");
@@ -1082,11 +1084,11 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       background-size: 11px 11px;
     }
     .composerExecutor select:hover {
-      border-color: var(--vscode-focusBorder, rgba(127, 127, 127, 0.55));
+      border-color: var(--vscode-focusBorder, var(--ps-border-strong));
       background-color: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
     }
     .composerExecutor select:focus {
-      outline: 1px solid var(--vscode-focusBorder, #007fd4);
+      outline: 1px solid var(--vscode-focusBorder, var(--ps-c-accent));
       outline-offset: -1px;
     }
     .composerActionButtons {
@@ -1099,8 +1101,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     }
     #send, #createPlan, #stopAgents {
       flex-shrink: 0; padding: 0 12px; height: 28px;
-      cursor: pointer; font-size: 0.85em;
-      border: none; border-radius: 4px; white-space: nowrap;
+      cursor: pointer; font-size: var(--ps-t-md);
+      border: none; border-radius: var(--ps-r-1); white-space: nowrap;
     }
     #createPlan {
       color: var(--vscode-button-foreground);
@@ -1109,17 +1111,17 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     #createPlan:hover { background: var(--vscode-button-hoverBackground); }
     #send {
       color: var(--vscode-foreground);
-      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.2));
+      background: var(--vscode-button-secondaryBackground, var(--ps-bg-hover));
     }
-    #send:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.3)); }
+    #send:hover { background: var(--vscode-button-secondaryHoverBackground, var(--ps-border-strong)); }
     #stopAgents {
       color: var(--vscode-foreground);
       background: var(--vscode-inputValidation-warningBackground, rgba(200, 140, 0, 0.25));
-      border: 1px solid rgba(127,127,127,0.25);
+      border: 1px solid var(--ps-border-strong);
     }
     #stopAgents:hover { background: var(--vscode-inputValidation-warningBackground, rgba(200, 140, 0, 0.35)); }
     #send:disabled, #createPlan:disabled, #stopAgents:disabled, #input:disabled {
-      opacity: 0.45; cursor: not-allowed;
+      opacity: 0.55; cursor: not-allowed;
     }
     .agent-stream-row {
       display: flex;
@@ -1127,8 +1129,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       max-width: 98%;
       width: 100%;
       align-self: stretch;
-      border: 1px solid rgba(127,127,127,0.22);
-      border-radius: 8px;
+      border: 1px solid var(--ps-border-strong);
+      border-radius: var(--ps-r-2);
       overflow: hidden;
       background: color-mix(in srgb, var(--vscode-editor-background) 78%, transparent);
     }
@@ -1137,11 +1139,11 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      font-size: 0.75em;
+      font-size: var(--ps-t-xs);
       opacity: 0.9;
       padding: 6px 8px;
       background: color-mix(in srgb, var(--vscode-sideBar-background) 55%, transparent);
-      border-bottom: 1px solid rgba(127,127,127,0.18);
+      border-bottom: 1px solid var(--ps-border);
     }
     .agent-stream-header-main {
       min-width: 0;
@@ -1154,25 +1156,25 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     }
     .agent-stream-title {
       font-weight: 600;
-      opacity: 0.95;
+      opacity: 0.9;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .agent-stream-source {
-      opacity: 0.72;
+      opacity: 0.75;
       text-transform: uppercase;
       letter-spacing: 0.03em;
-      font-size: 0.92em;
+      font-size: var(--ps-t-md);
     }
     .agent-stream-status {
-      font-size: 0.9em;
+      font-size: var(--ps-t-md);
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      border-radius: 999px;
+      border-radius: var(--ps-r-pill);
       padding: 2px 7px;
-      border: 1px solid rgba(127,127,127,0.35);
-      opacity: 0.95;
+      border: 1px solid var(--ps-border-strong);
+      opacity: 0.9;
       flex-shrink: 0;
     }
     .agent-stream-status.live {
@@ -1192,22 +1194,22 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 22%, transparent);
     }
     .agent-stream-toggle {
-      border: 1px solid rgba(127,127,127,0.28);
-      border-radius: 4px;
-      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      border: 1px solid var(--ps-border-strong);
+      border-radius: var(--ps-r-1);
+      background: var(--vscode-button-secondaryBackground, var(--ps-border));
       color: var(--vscode-foreground);
-      font-size: 0.9em;
+      font-size: var(--ps-t-md);
       line-height: 1;
       padding: 2px 6px;
       cursor: pointer;
       flex-shrink: 0;
     }
     .agent-stream-toggle:hover {
-      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.24));
+      background: var(--vscode-button-secondaryHoverBackground, var(--ps-border-strong));
     }
     .agent-stream {
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.82em;
+      font-size: var(--ps-t-sm);
       line-height: 1.35;
       white-space: pre-wrap;
       word-break: break-word;
@@ -1215,25 +1217,25 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       overflow-y: auto;
       padding: 8px 10px;
       margin: 0;
-      background: var(--vscode-editor-background, rgba(0,0,0,0.2));
+      background: var(--vscode-editor-background);
       border: 0;
     }
     .agent-stream strong { font-weight: 700; }
     .agent-stream code {
       font-family: var(--vscode-editor-font-family);
-      background: color-mix(in srgb, var(--vscode-editor-background) 65%, rgba(127,127,127,0.25));
-      border: 1px solid rgba(127,127,127,0.18);
-      border-radius: 4px;
+      background: color-mix(in srgb, var(--vscode-editor-background) 65%, var(--ps-border-strong));
+      border: 1px solid var(--ps-border);
+      border-radius: var(--ps-r-1);
       padding: 0 4px;
-      font-size: 0.95em;
+      font-size: var(--ps-t-md);
     }
     .agent-stream .agent-md-fence {
       display: block;
       white-space: pre-wrap;
       margin: 6px 0;
       padding: 8px;
-      border-radius: 6px;
-      border: 1px solid rgba(127,127,127,0.2);
+      border-radius: var(--ps-r-2);
+      border: 1px solid var(--ps-bg-hover);
       background: color-mix(in srgb, var(--vscode-editor-background) 82%, rgba(0,0,0,0.18));
       font-family: var(--vscode-editor-font-family);
     }
@@ -1245,16 +1247,16 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       opacity: 0.76;
       padding: 5px 8px;
-      border-top: 1px solid rgba(127,127,127,0.14);
+      border-top: 1px solid var(--ps-border);
       background: color-mix(in srgb, var(--vscode-sideBar-background) 70%, transparent);
     }
     /* Animated status (cooking phrases) */
     .animated-status-bubble {
       display: flex; align-items: center; gap: 6px;
-      font-style: italic; opacity: 0.8;
+      font-style: italic; opacity: 0.75;
     }
     .animated-spinner {
       font-family: var(--vscode-editor-font-family);
@@ -1264,31 +1266,38 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     /* Run summary card */
     .run-summary-row { width: 100%; max-width: 100%; align-self: stretch; }
     .run-summary-card {
-      background: var(--vscode-editor-background, rgba(0,0,0,0.15));
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 8px; padding: 10px 12px; font-size: 0.88em;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--ps-border-strong);
+      border-radius: var(--ps-r-2); padding: 10px 12px; font-size: var(--ps-t-md);
       width: 100%;
     }
-    .run-summary-header { font-weight: 600; margin-bottom: 3px; }
+    .run-summary-header {
+      font-weight: 600; margin-bottom: 3px;
+      display: inline-flex; align-items: center; gap: var(--ps-s-3);
+    }
+    .run-summary-header.is-ok { color: var(--ps-c-done); }
+    .run-summary-header.is-failed { color: var(--ps-c-failed); }
+    .run-summary-header-text { color: var(--ps-fg); }
+    .ps-i { display: inline-flex; vertical-align: -2px; flex-shrink: 0; }
     .run-summary-stats {
       display: flex; align-items: baseline; flex-wrap: wrap; gap: 0;
-      font-size: 0.9em; margin-bottom: 8px;
+      font-size: var(--ps-t-md); margin-bottom: 8px;
     }
-    .run-summary-stats-prefix { opacity: 0.7; }
+    .run-summary-stats-prefix { opacity: 0.75; }
     .run-summary-files {
       display: flex; flex-direction: column; gap: 3px;
-      border-top: 1px solid rgba(127,127,127,0.15);
+      border-top: 1px solid var(--ps-border);
       padding-top: 6px; margin-bottom: 8px;
     }
     .run-summary-file-row {
-      display: flex; align-items: center; gap: 6px; font-size: 0.88em;
+      display: flex; align-items: center; gap: 6px; font-size: var(--ps-t-md);
     }
     .run-summary-file-path {
       flex: 1; font-family: var(--vscode-editor-font-family);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
     }
     .run-summary-file-diff {
-      white-space: nowrap; font-size: 0.85em; flex-shrink: 0;
+      white-space: nowrap; font-size: var(--ps-t-md); flex-shrink: 0;
     }
     .run-summary-file-diff-add {
       color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
@@ -1296,28 +1305,28 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     .run-summary-file-diff-del {
       color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c);
     }
-    .run-summary-file-diff-sep { opacity: 0.7; }
+    .run-summary-file-diff-sep { opacity: 0.75; }
     .run-summary-diff-btn {
-      flex-shrink: 0; padding: 1px 6px; cursor: pointer; font-size: 0.78em;
-      border: 1px solid rgba(127,127,127,0.3); border-radius: 3px;
-      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      flex-shrink: 0; padding: 1px 6px; cursor: pointer; font-size: var(--ps-t-xs);
+      border: 1px solid var(--ps-border-strong); border-radius: var(--ps-r-1);
+      background: var(--vscode-button-secondaryBackground, var(--ps-border));
       color: var(--vscode-foreground); white-space: nowrap;
     }
     .run-summary-diff-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
+      background: var(--vscode-button-secondaryHoverBackground, var(--ps-border-strong));
     }
     .run-summary-scm-btn {
       display: block; width: 100%; padding: 5px 0; cursor: pointer;
-      font-size: 0.82em; text-align: center;
-      border: 1px solid rgba(127,127,127,0.25); border-radius: 4px;
-      background: var(--vscode-button-secondaryBackground, rgba(127,127,127,0.15));
+      font-size: var(--ps-t-sm); text-align: center;
+      border: 1px solid var(--ps-border-strong); border-radius: var(--ps-r-1);
+      background: var(--vscode-button-secondaryBackground, var(--ps-border));
       color: var(--vscode-foreground);
     }
     .run-summary-scm-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground, rgba(127,127,127,0.25));
+      background: var(--vscode-button-secondaryHoverBackground, var(--ps-border-strong));
     }
     .run-failure-card {
-      border-color: color-mix(in srgb, var(--vscode-terminal-ansiRed, #f14c4c) 45%, rgba(127,127,127,0.25));
+      border-color: color-mix(in srgb, var(--vscode-terminal-ansiRed, #f14c4c) 45%, var(--ps-border-strong));
     }
     .run-failure-details {
       margin: 8px 0 10px;
@@ -1326,11 +1335,11 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       white-space: pre-wrap;
       word-break: break-word;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.82em;
+      font-size: var(--ps-t-sm);
       line-height: 1.35;
-      border: 1px solid rgba(127,127,127,0.2);
-      border-radius: 6px;
-      background: var(--vscode-editor-background, rgba(0,0,0,0.2));
+      border: 1px solid var(--ps-bg-hover);
+      border-radius: var(--ps-r-2);
+      background: var(--vscode-editor-background);
       padding: 8px 9px;
     }
     .run-failure-actions {
@@ -1351,8 +1360,8 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       display: flex;
       align-items: center;
       gap: 10px;
-      opacity: 0.78;
-      font-size: 0.74em;
+      opacity: 0.75;
+      font-size: var(--ps-t-xs);
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
@@ -1361,7 +1370,7 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       height: 1px;
       min-height: 1px;
       align-self: center;
-      background: rgba(127,127,127,0.24);
+      background: var(--ps-border-strong);
     }
     .run-separator-label {
       white-space: nowrap;

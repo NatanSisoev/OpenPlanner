@@ -732,6 +732,65 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   }
 }
 
+const PS_TOKENS_CSS = `
+:root {
+  /* Spacing — 4px base */
+  --ps-s-1: 2px;  --ps-s-2: 4px;  --ps-s-3: 8px;
+  --ps-s-4: 12px; --ps-s-5: 16px; --ps-s-6: 24px;
+
+  /* Radius — 3 stops + pill */
+  --ps-r-1: 3px; --ps-r-2: 6px; --ps-r-3: 10px; --ps-r-pill: 999px;
+
+  /* Type — 4 stops, em-relative */
+  --ps-t-xs: 0.75em; --ps-t-sm: 0.85em;
+  --ps-t-md: 1em;    --ps-t-lg: 1.1em;
+
+  /* Surfaces & text — anchor to theme */
+  --ps-bg:          var(--vscode-sideBar-background);
+  --ps-bg-elevated: var(--vscode-editor-background);
+  --ps-bg-header:   var(--vscode-sideBarSectionHeader-background);
+  --ps-bg-hover:    var(--vscode-list-hoverBackground);
+  --ps-bg-active:   var(--vscode-list-activeSelectionBackground);
+  --ps-fg:          var(--vscode-foreground);
+  --ps-fg-muted:    var(--vscode-descriptionForeground);
+
+  /* Borders — exactly 2 tokens */
+  --ps-border:        color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  --ps-border-strong: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+
+  /* Shadows — VS Code-native */
+  --ps-shadow-1: 0 1px 2px var(--vscode-widget-shadow, transparent);
+  --ps-shadow-2: 0 2px 8px var(--vscode-widget-shadow, transparent);
+
+  /* Status — anchor to charts.* (theme-aware) */
+  --ps-c-done:      var(--vscode-charts-green);
+  --ps-c-running:   var(--vscode-charts-blue);
+  --ps-c-failed:    var(--vscode-charts-red);
+  --ps-c-cancelled: var(--vscode-charts-foreground);
+  --ps-c-pending:   var(--vscode-descriptionForeground);
+  --ps-c-accent:    var(--vscode-focusBorder);
+
+  /* Status fills — derived once */
+  --ps-fill-done:    color-mix(in srgb, var(--ps-c-done)    18%, transparent);
+  --ps-fill-running: color-mix(in srgb, var(--ps-c-running) 18%, transparent);
+  --ps-fill-failed:  color-mix(in srgb, var(--ps-c-failed)  18%, transparent);
+  --ps-fill-pending: color-mix(in srgb, var(--ps-c-pending) 12%, transparent);
+
+  /* Aliases — keep until post-demo refactor */
+  --c-done:      var(--ps-c-done);
+  --c-running:   var(--ps-c-running);
+  --c-failed:    var(--ps-c-failed);
+  --c-cancelled: var(--ps-c-cancelled);
+  --c-pending:   var(--ps-c-pending);
+  --c-border:    var(--ps-border);
+  --c-hover:     var(--ps-bg-hover);
+  --c-card-bg:   var(--ps-bg-elevated);
+  --c-header-bg: var(--ps-bg-header);
+}
+`;
+
+export { PS_TOKENS_CSS };
+
 function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -750,21 +809,15 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       overflow-x: hidden;
     }
 
+    ${PS_TOKENS_CSS}
+
     :root {
-      --c-done:        #4ec9b0;
-      --c-running:     #569cd6;
-      --c-failed:      #f44747;
-      --c-cancelled:   #858585;
-      --c-pending:     #6e6e6e;
-      --c-border:      rgba(127,127,127,0.18);
-      --c-hover:       var(--vscode-list-hoverBackground, rgba(255,255,255,0.05));
-      --c-card-bg:     var(--vscode-editor-background, rgba(0,0,0,0.12));
-      --c-header-bg:   var(--vscode-sideBarSectionHeader-background, rgba(255,255,255,0.04));
+      /* Graph (untouched, normalized prefix) */
       --graph-edge:           color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
-    --graph-edge-dimmed:    color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-    --graph-edge-highlight: var(--vscode-charts-blue, #3794ff);
-      --graph-node-bg: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-sideBar-background));
-      --graph-node-border: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+      --graph-edge-dimmed:    color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+      --graph-edge-highlight: var(--ps-c-accent);
+      --graph-node-bg:        color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-sideBar-background));
+      --graph-node-border:    color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
     }
 
     #root { padding: 6px 0 16px; box-sizing: border-box; }
@@ -827,30 +880,30 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     }
     .view-btn {
       font: inherit;
-      font-size: 0.78em;
-      border-radius: 999px;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      font-size: var(--ps-t-xs);
+      border-radius: var(--ps-r-pill);
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
       background: transparent;
       color: var(--vscode-foreground);
       padding: 3px 10px;
       cursor: pointer;
-      opacity: 0.8;
+      opacity: 0.75;
     }
     .view-btn:hover {
       opacity: 1;
-      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+      background: var(--vscode-list-hoverBackground, var(--ps-border));
     }
     .view-btn.active {
       opacity: 1;
-      color: var(--vscode-button-foreground, #fff);
-      background: var(--vscode-button-background, #0e70c0);
+      color: var(--vscode-button-foreground, white);
+      background: var(--vscode-button-background, var(--ps-c-accent));
       border-color: transparent;
     }
     .sync-split {
       display: inline-flex;
       align-items: stretch;
-      border-radius: 999px;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      border-radius: var(--ps-r-pill);
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
       overflow: visible;
     }
     .sync-split .sync-main {
@@ -875,15 +928,15 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       border: none;
       border-radius: 0;
       font: inherit;
-      font-size: 0.78em;
+      font-size: var(--ps-t-xs);
       background: transparent;
       color: var(--vscode-foreground);
-      opacity: 0.85;
+      opacity: 0.9;
     }
     .sync-more > summary::-webkit-details-marker { display: none; }
     .sync-more > summary:hover {
       opacity: 1;
-      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+      background: var(--vscode-list-hoverBackground, var(--ps-border));
     }
     .sync-dropdown {
       position: absolute;
@@ -895,39 +948,39 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       gap: 2px;
       min-width: 88px;
       padding: 4px;
-      border-radius: 8px;
+      border-radius: var(--ps-r-2);
       border: 1px solid var(--c-border);
       background: var(--vscode-editor-background);
-      box-shadow: 0 6px 16px rgba(0,0,0,0.28);
+      box-shadow: var(--ps-shadow-2);
     }
     .sync-dropdown-item {
       font: inherit;
-      font-size: 0.82em;
+      font-size: var(--ps-t-sm);
       text-align: left;
       padding: 5px 8px;
       border: none;
-      border-radius: 6px;
+      border-radius: var(--ps-r-2);
       background: transparent;
       color: var(--vscode-foreground);
       cursor: pointer;
     }
     .sync-dropdown-item:hover {
-      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+      background: var(--vscode-list-hoverBackground, var(--ps-border));
     }
     .quick-btn {
       font: inherit;
-      font-size: 0.78em;
-      border-radius: 999px;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
-      background: var(--vscode-button-background, #0e70c0);
-      color: var(--vscode-button-foreground, #fff);
+      font-size: var(--ps-t-xs);
+      border-radius: var(--ps-r-pill);
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
+      background: var(--vscode-button-background, var(--ps-c-accent));
+      color: var(--vscode-button-foreground, white);
       padding: 3px 10px;
       cursor: pointer;
-      opacity: 0.95;
+      opacity: 0.9;
     }
     .quick-btn:hover {
       opacity: 1;
-      background: var(--vscode-button-hoverBackground, #1177cc);
+      background: var(--vscode-button-hoverBackground, var(--ps-c-accent));
     }
     .wizard-overlay {
       position: fixed;
@@ -935,16 +988,16 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       display: none;
       align-items: center;
       justify-content: center;
-      background: rgba(0, 0, 0, 0.38);
+      background: color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
       z-index: 20;
       padding: 10px;
     }
     .wizard-card {
       width: min(520px, 100%);
       border: 1px solid var(--c-border);
-      border-radius: 10px;
+      border-radius: var(--ps-r-3);
       background: var(--vscode-editor-background);
-      box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+      box-shadow: var(--ps-shadow-2);
       padding: 12px;
     }
     .wizard-title {
@@ -953,7 +1006,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     }
     .wizard-step {
       opacity: 0.75;
-      font-size: 0.82em;
+      font-size: var(--ps-t-sm);
       margin-bottom: 10px;
     }
     .wizard-field {
@@ -961,10 +1014,10 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       gap: 5px;
       margin-bottom: 8px;
     }
-    .wizard-label { font-size: 0.82em; opacity: 0.85; }
+    .wizard-label { font-size: var(--ps-t-sm); opacity: 0.9; }
     .wizard-input, .wizard-select, .wizard-textarea {
       width: 100%;
-      border-radius: 6px;
+      border-radius: var(--ps-r-2);
       border: 1px solid var(--c-border);
       color: inherit;
       background: var(--vscode-input-background);
@@ -976,14 +1029,14 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       display: flex;
       align-items: center;
       gap: 7px;
-      font-size: 0.84em;
+      font-size: var(--ps-t-sm);
       margin-top: 2px;
       margin-bottom: 8px;
     }
     .wizard-error {
       min-height: 1.2em;
-      color: var(--vscode-errorForeground, #f48771);
-      font-size: 0.8em;
+      color: var(--vscode-errorForeground, var(--ps-c-failed));
+      font-size: var(--ps-t-sm);
       margin-top: 2px;
       margin-bottom: 6px;
     }
@@ -995,16 +1048,16 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     }
     .wizard-btn {
       font: inherit;
-      border-radius: 6px;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
+      border-radius: var(--ps-r-2);
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
       padding: 5px 10px;
       cursor: pointer;
       background: transparent;
       color: inherit;
     }
     .wizard-btn.primary {
-      background: var(--vscode-button-background, #0e70c0);
-      color: var(--vscode-button-foreground, #fff);
+      background: var(--vscode-button-background, var(--ps-c-accent));
+      color: var(--vscode-button-foreground, white);
       border-color: transparent;
     }
 
@@ -1013,8 +1066,8 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       flex-wrap: wrap;
       gap: 8px 14px;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.7em;
-      opacity: 0.82;
+      font-size: var(--ps-t-xs);
+      opacity: 0.75;
       padding: 8px 10px 10px;
     }
     .graph-legend span {
@@ -1027,13 +1080,13 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-legend-dot {
       width: 9px;
       height: 9px;
-      border-radius: 50%;
+      border-radius: var(--ps-r-pill);
       border: 2px solid var(--c-pending);
     }
     .graph-legend-dot.plan {
-      border-color: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 65%, transparent);
-      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 30%, transparent);
-      border-radius: 3px;
+      border-color: color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 65%, transparent);
+      background: color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 30%, transparent);
+      border-radius: var(--ps-r-1);
     }
     .graph-legend-dot.tone-failed { border-color: var(--c-failed); }
     .graph-legend-dot.tone-completed { border-color: var(--c-done); }
@@ -1059,8 +1112,8 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     }
     .graph-filter-label {
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.68em;
-      opacity: 0.6;
+      font-size: var(--ps-t-xs);
+      opacity: 0.55;
       margin-right: 4px;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -1068,17 +1121,17 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-filter-chip {
       font: inherit;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.7em;
+      font-size: var(--ps-t-xs);
       line-height: 1;
       text-transform: lowercase;
       letter-spacing: 0.02em;
       border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
-      border-radius: 999px;
+      border-radius: var(--ps-r-pill);
       padding: 4px 9px;
       background: transparent;
       color: inherit;
       cursor: pointer;
-      opacity: 0.7;
+      opacity: 0.75;
       transition: background 100ms ease, border-color 100ms ease, opacity 100ms ease;
     }
     .graph-filter-chip.active {
@@ -1095,14 +1148,14 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .plan-graph-card {
       margin: 2px 8px 12px;
       border: 1px solid var(--c-border);
-      border-radius: 10px;
+      border-radius: var(--ps-r-3);
       overflow: hidden;
       background: var(--c-card-bg);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.22);
+      box-shadow: var(--ps-shadow-2);
     }
-    .plan-graph-card.tone-failed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-failed) 26%, transparent) inset, 0 6px 18px rgba(0,0,0,0.22); }
-    .plan-graph-card.tone-completed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-done) 26%, transparent) inset, 0 6px 18px rgba(0,0,0,0.22); }
-    .plan-graph-card.tone-in_progress { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-running) 26%, transparent) inset, 0 6px 18px rgba(0,0,0,0.22); }
+    .plan-graph-card.tone-failed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-failed) 26%, transparent) inset, var(--ps-shadow-2); }
+    .plan-graph-card.tone-completed { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-done) 26%, transparent) inset, var(--ps-shadow-2); }
+    .plan-graph-card.tone-in_progress { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-running) 26%, transparent) inset, var(--ps-shadow-2); }
     .plan-graph-header {
       display: flex;
       align-items: center;
@@ -1117,7 +1170,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
           color-mix(in srgb, var(--vscode-sideBarSectionHeader-background) 60%, transparent) 100%);
     }
     .plan-graph-title {
-      font-size: 0.86em;
+      font-size: var(--ps-t-md);
       font-weight: 700;
       letter-spacing: 0.005em;
       min-width: 0;
@@ -1133,15 +1186,15 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       display: inline-block;
       width: 6px;
       height: 6px;
-      border-radius: 50%;
+      border-radius: var(--ps-r-pill);
       background: var(--graph-edge-highlight);
       box-shadow: 0 0 8px var(--graph-edge-highlight);
       flex-shrink: 0;
     }
     .plan-graph-meta {
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.72em;
-      opacity: 0.7;
+      font-size: var(--ps-t-xs);
+      opacity: 0.75;
       white-space: nowrap;
       letter-spacing: 0.01em;
     }
@@ -1196,7 +1249,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       stroke: var(--graph-edge);
       stroke-width: 1.6;
       fill: none;
-      opacity: 0.85;
+      opacity: 0.9;
       transition: stroke 120ms ease, opacity 120ms ease, stroke-width 120ms ease;
     }
     .graph-edges marker#graph-arrow-global path { fill: var(--graph-edge); }
@@ -1216,7 +1269,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     /* Dimmed: a phase is selected and this edge is NOT one of its deps. */
     .graph-edges path.dimmed {
       stroke: var(--graph-edge-dimmed);
-      opacity: 0.45;
+      opacity: 0.55;
     }
     /* Selected: this edge is one of the selected phase's incoming deps
        (i.e., a phase the selection depends on). */
@@ -1228,7 +1281,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-edges path.cross-plan.selected {
       stroke-dasharray: 0;
     }
-    .graph-edge-label.dimmed { opacity: 0.45; }
+    .graph-edge-label.dimmed { opacity: 0.55; }
     .graph-edge-label.selected {
       fill: var(--graph-edge-highlight);
       stroke: var(--vscode-editor-background);
@@ -1249,13 +1302,13 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-plan-node {
       position: absolute;
       border: 1px solid var(--graph-node-border);
-      border-radius: 10px;
+      border-radius: var(--ps-r-3);
       background:
         linear-gradient(135deg,
-          color-mix(in srgb, var(--vscode-button-background, #0e70c0) 18%, var(--graph-node-bg)) 0%,
+          color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 18%, var(--graph-node-bg)) 0%,
           var(--graph-node-bg) 100%);
       box-shadow:
-        0 4px 14px rgba(0,0,0,0.22),
+        var(--ps-shadow-1),
         inset 0 1px 0 rgba(255,255,255,0.05);
       display: grid;
       grid-template-columns: 4px minmax(0, 1fr);
@@ -1266,7 +1319,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       transform: translateY(-1px);
       border-color: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
       box-shadow:
-        0 12px 22px rgba(0,0,0,0.30),
+        0 12px 22px color-mix(in srgb, var(--vscode-editor-background) 70%, transparent),
         inset 0 1px 0 rgba(255,255,255,0.07);
     }
     .graph-plan-node.tone-failed { border-color: color-mix(in srgb, var(--c-failed) 62%, transparent); }
@@ -1307,19 +1360,19 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     }
     .graph-plan-kicker {
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.6em;
+      font-size: var(--ps-t-xs);
       text-transform: uppercase;
       letter-spacing: 0.18em;
       font-weight: 700;
-      opacity: 0.85;
-      background: color-mix(in srgb, var(--vscode-button-background, #0e70c0) 28%, transparent);
+      opacity: 0.9;
+      background: color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 28%, transparent);
       color: var(--vscode-foreground);
       padding: 2px 7px 2px 8px;
-      border-radius: 4px;
-      border: 1px solid color-mix(in srgb, var(--vscode-button-background, #0e70c0) 36%, transparent);
+      border-radius: var(--ps-r-1);
+      border: 1px solid color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 36%, transparent);
     }
     .graph-plan-title {
-      font-size: 0.86em;
+      font-size: var(--ps-t-md);
       font-weight: 700;
       line-height: 1.25;
       letter-spacing: -0.005em;
@@ -1332,10 +1385,10 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-phase-node {
       position: absolute;
       border: 1px solid var(--graph-node-border);
-      border-radius: 10px;
+      border-radius: var(--ps-r-3);
       background: var(--graph-node-bg);
       box-shadow:
-        0 4px 12px rgba(0,0,0,0.22),
+        var(--ps-shadow-1),
         inset 0 1px 0 rgba(255,255,255,0.04);
       display: grid;
       grid-template-columns: 4px minmax(0, 1fr);
@@ -1358,7 +1411,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       box-shadow:
         0 0 0 1px var(--graph-edge-highlight),
         0 0 0 5px color-mix(in srgb, var(--graph-edge-highlight) 22%, transparent),
-        0 16px 30px rgba(0,0,0,0.38);
+        0 16px 30px color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
       transform: none;
     }
     /* Status accent stripe used by both plan and phase nodes. */
@@ -1385,19 +1438,19 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
 
     .graph-node-id {
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.66em;
+      font-size: var(--ps-t-xs);
       letter-spacing: 0.01em;
-      opacity: 0.7;
+      opacity: 0.75;
       background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
       padding: 1px 6px;
-      border-radius: 4px;
+      border-radius: var(--ps-r-1);
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       align-self: flex-start;
     }
-    .graph-plan-body .graph-node-id { font-size: 0.62em; opacity: 0.55; padding: 0 4px; background: transparent; }
+    .graph-plan-body .graph-node-id { font-size: var(--ps-t-xs); opacity: 0.55; padding: 0 4px; background: transparent; }
 
     .graph-phase-main {
       grid-column: 2;
@@ -1430,7 +1483,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       max-width: 60%;
     }
     .graph-phase-title {
-      font-size: 0.86em;
+      font-size: var(--ps-t-md);
       font-weight: 600;
       line-height: 1.25;
       letter-spacing: -0.005em;
@@ -1441,7 +1494,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       min-width: 0;
     }
     .graph-phase-desc {
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       line-height: 1.35;
       color: var(--vscode-descriptionForeground, rgba(180, 180, 180, 0.92));
       display: -webkit-box;
@@ -1454,7 +1507,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-phase-deps-chip {
       align-self: flex-start;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.64em;
+      font-size: var(--ps-t-xs);
       letter-spacing: 0.04em;
       text-transform: uppercase;
       font-weight: 700;
@@ -1462,7 +1515,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
       border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
       padding: 2px 8px;
-      border-radius: 999px;
+      border-radius: var(--ps-r-pill);
       display: inline-flex;
       align-items: center;
       gap: 5px;
@@ -1472,8 +1525,8 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       white-space: nowrap;
     }
     .graph-phase-deps-chip .chip-glyph {
-      font-size: 1.05em;
-      opacity: 0.7;
+      font-size: var(--ps-t-lg);
+      opacity: 0.75;
       line-height: 1;
     }
     .graph-phase-node.selected .graph-phase-deps-chip {
@@ -1498,8 +1551,8 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     }
     .graph-phase-plan {
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.62em;
-      opacity: 0.6;
+      font-size: var(--ps-t-xs);
+      opacity: 0.55;
       text-transform: uppercase;
       letter-spacing: 0.07em;
       overflow: hidden;
@@ -1514,50 +1567,50 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-plan-node .graph-run-btn {
       opacity: 1;
       height: 22px;
-      font-size: 0.74em;
+      font-size: var(--ps-t-xs);
       padding: 2px 10px;
       font-weight: 700;
       letter-spacing: 0.01em;
-      border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--vscode-button-background, #0e70c0) 70%, transparent);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.30);
+      border-radius: var(--ps-r-pill);
+      border: 1px solid color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 70%, transparent);
+      box-shadow: 0 2px 6px color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
       flex-shrink: 0;
     }
     .ps-run-glyph {
       display: inline-block;
       margin-right: 2px;
-      font-size: 0.85em;
+      font-size: var(--ps-t-md);
       line-height: 1;
-      color: var(--vscode-button-foreground, #fff);
-      text-shadow: 0 0 1px rgba(0,0,0,0.35);
+      color: var(--vscode-button-foreground, white);
+      text-shadow: 0 0 1px color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
     }
     .plan-header .run-btn .ps-run-glyph,
     .phase-header .run-btn .ps-run-glyph,
     .node-phase-header .run-btn .ps-run-glyph {
-      color: var(--vscode-button-foreground, #fff);
+      color: var(--vscode-button-foreground, white);
     }
     .task-btn.run-task .ps-run-glyph {
       color: inherit;
       text-shadow: none;
       margin-right: 1px;
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
     }
     .task-btn.run-task .run-task-label {
-      font-size: 0.62em;
+      font-size: var(--ps-t-xs);
       font-weight: 700;
       letter-spacing: 0.02em;
       white-space: nowrap;
     }
     .graph-phase-node .graph-run-btn:hover,
     .graph-plan-node .graph-run-btn:hover {
-      background: var(--vscode-button-hoverBackground, var(--vscode-button-background, #0e70c0));
-      box-shadow: 0 3px 10px rgba(0,0,0,0.40), 0 0 0 3px color-mix(in srgb, var(--vscode-button-background, #0e70c0) 22%, transparent);
+      background: var(--vscode-button-hoverBackground, var(--vscode-button-background, var(--ps-c-accent)));
+      box-shadow: 0 3px 10px color-mix(in srgb, var(--vscode-editor-background) 70%, transparent), 0 0 0 3px color-mix(in srgb, var(--vscode-button-background, var(--ps-c-accent)) 22%, transparent);
     }
     .graph-phase-node .graph-add-btn,
     .graph-plan-node .graph-add-btn {
       opacity: 1;
       height: 24px;
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       padding: 2px 8px;
     }
 
@@ -1574,17 +1627,17 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .graph-control-btn {
       font: inherit;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       letter-spacing: 0.02em;
-      border-radius: 4px;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.30));
+      border-radius: var(--ps-r-1);
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
       background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
       color: var(--vscode-foreground);
       min-width: 24px;
       height: 22px;
       padding: 0 9px;
       cursor: pointer;
-      opacity: 0.85;
+      opacity: 0.9;
       transition: background 100ms ease, opacity 100ms ease, border-color 100ms ease;
     }
     .graph-control-btn:hover {
@@ -1601,10 +1654,10 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       padding-top: 8px;
     }
     .graph-empty-hint {
-      font-size: 0.76em;
-      opacity: 0.72;
+      font-size: var(--ps-t-xs);
+      opacity: 0.75;
       border: 1px dashed var(--c-border);
-      border-radius: 6px;
+      border-radius: var(--ps-r-2);
       padding: 8px;
       text-align: center;
     }
@@ -1625,27 +1678,43 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       margin: 7px 0 8px;
       padding: 7px 8px;
       border-left: 3px solid var(--vscode-charts-purple, #b180d7);
-      border-radius: 5px;
+      border-radius: var(--ps-r-1);
       background: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 12%, transparent);
-      font-size: 0.78em;
+      font-size: var(--ps-t-xs);
       line-height: 1.4;
     }
 
     /* ── Empty state ── */
     .empty-state {
       display: flex; flex-direction: column; align-items: center;
-      padding: 40px 16px; gap: 10px; opacity: 0.55; text-align: center;
+      padding: var(--ps-s-6) var(--ps-s-5); gap: var(--ps-s-3);
+      color: var(--ps-fg-muted); text-align: center;
     }
-    .empty-icon { font-size: 2.2em; }
-    .empty-title { font-weight: 600; }
-    .empty-hint { font-size: 0.82em; line-height: 1.5; }
-    .empty-hint code { font-family: var(--vscode-editor-font-family); opacity: 0.8; }
+    .empty-icon { color: var(--ps-fg-muted); display: inline-flex; }
+    .empty-icon svg { width: 28px; height: 28px; }
+    .empty-title { font-weight: 600; color: var(--ps-fg); }
+    .empty-hint { font-size: var(--ps-t-sm); line-height: 1.5; }
+    .empty-hint code { font-family: var(--vscode-editor-font-family); }
+
+    /* ── Inline SVG icon base ── */
+    .ps-i {
+      display: inline-flex;
+      vertical-align: -2px;
+      flex-shrink: 0;
+    }
+    @keyframes ps-spin { to { transform: rotate(360deg); } }
+    .icon-in_progress .ps-i {
+      animation: ps-spin 1.4s linear infinite;
+      transform-origin: 50% 50%;
+    }
+    .sync-chevron .ps-i { vertical-align: middle; opacity: 0.75; }
+    .sync-chevron:hover .ps-i { opacity: 1; }
 
     /* ── Plan card ── */
     .plan-card {
       margin: 4px 8px;
       border: 1px solid var(--c-border);
-      border-radius: 6px;
+      border-radius: var(--ps-r-2);
       overflow: hidden;
       background: var(--c-card-bg);
     }
@@ -1661,27 +1730,27 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .plan-header:hover .run-btn,
     .plan-header:hover .add-btn { opacity: 1; }
     .plan-header.drag-over { outline: 1px dashed rgba(86,156,214,0.6); outline-offset: -2px; }
-    .plan-header.dragging { opacity: 0.65; }
+    .plan-header.dragging { opacity: 0.75; }
 
     .plan-header-left {
       display: flex; align-items: center; gap: 6px;
       flex: 1; min-width: 0;
     }
     .plan-title {
-      font-weight: 600; font-size: 0.9em;
+      font-weight: 600; font-size: var(--ps-t-md);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .plan-header-right {
       display: flex; align-items: center; gap: 7px; flex-shrink: 0;
     }
-    .plan-progress { font-size: 0.78em; opacity: 0.6; white-space: nowrap; }
+    .plan-progress { font-size: var(--ps-t-xs); opacity: 0.55; white-space: nowrap; }
     .progress-bar {
       width: 44px; height: 3px;
-      background: rgba(127,127,127,0.25); border-radius: 2px; overflow: hidden;
+      background: var(--ps-border-strong); border-radius: var(--ps-r-1); overflow: hidden;
     }
     .progress-fill {
-      height: 100%; border-radius: 2px;
-      background: var(--vscode-progressBar-background, #0e70c0);
+      height: 100%; border-radius: var(--ps-r-1);
+      background: var(--vscode-progressBar-background, var(--ps-c-accent));
       transition: width 0.3s ease;
     }
 
@@ -1690,18 +1759,18 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       font-size: 1em; display: inline-block; line-height: 1;
       transition: transform 0.15s ease; opacity: 0.55; flex-shrink: 0;
     }
-    .chevron.expanded { transform: rotate(90deg); opacity: 0.85; }
-    .chevron.sm { font-size: 0.85em; }
+    .chevron.expanded { transform: rotate(90deg); opacity: 0.9; }
+    .chevron.sm { font-size: var(--ps-t-md); }
     .chevron-gap { display: inline-block; width: 13px; flex-shrink: 0; }
 
     /* ── Phases ── */
     .plan-phases { padding: 3px 0 4px; }
 
-    .phase-row { margin: 1px 5px; border-radius: 4px; }
+    .phase-row { margin: 1px 5px; border-radius: var(--ps-r-1); }
 
     .phase-header {
       display: flex; align-items: flex-start; justify-content: space-between;
-      padding: 4px 7px; gap: 5px; border-radius: 4px;
+      padding: 4px 7px; gap: 5px; border-radius: var(--ps-r-1);
     }
     .phase-header:hover { background: var(--c-hover); }
     .phase-header:hover .run-btn,
@@ -1727,19 +1796,19 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       flex: 1; min-width: 0;
     }
     .phase-blocked-hint {
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       line-height: 1.35;
       color: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.95));
       white-space: normal;
       word-break: break-word;
     }
     .phase-status-dot {
-      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+      width: 7px; height: 7px; border-radius: var(--ps-r-pill); flex-shrink: 0;
       box-shadow: 0 0 4px currentColor;
       cursor: pointer; outline: none;
     }
     .phase-status-dot:hover { transform: scale(1.4); box-shadow: 0 0 6px currentColor; }
-    .phase-status-dot:focus-visible { outline: 2px solid var(--vscode-focusBorder, #0e70c0); outline-offset: 2px; }
+    .phase-status-dot:focus-visible { outline: 2px solid var(--vscode-focusBorder, var(--ps-c-accent)); outline-offset: 2px; }
     .dot-completed  { background: var(--c-done);      color: var(--c-done); }
     .dot-in_progress{ background: var(--c-running);  color: var(--c-running); }
     .dot-failed     { background: var(--c-failed);   color: var(--c-failed); }
@@ -1775,26 +1844,26 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       min-width: 0;
     }
     .phase-title {
-      font-size: 0.86em;
+      font-size: var(--ps-t-md);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .assignee-chip {
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       max-width: 88px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       padding: 1px 6px;
-      border-radius: 8px;
-      border: 1px solid rgba(127,127,127,0.35);
+      border-radius: var(--ps-r-2);
+      border: 1px solid var(--ps-border-strong);
       cursor: pointer;
       flex-shrink: 0;
-      opacity: 0.88;
+      opacity: 0.9;
       line-height: 1.35;
     }
     .assignee-chip:hover {
       opacity: 1;
-      background: rgba(127,127,127,0.12);
+      background: var(--ps-border);
     }
     .assignee-placeholder {
       opacity: 0.55;
@@ -1804,8 +1873,8 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       max-width: 72px;
     }
     .graph-phase-assignee {
-      font-size: 0.72em;
-      opacity: 0.85;
+      font-size: var(--ps-t-xs);
+      opacity: 0.9;
       margin-top: 2px;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1818,45 +1887,45 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
 
     /* ── Status badge ── */
     .badge {
-      font-size: 0.68em; padding: 1px 6px; border-radius: 10px;
+      font-size: var(--ps-t-xs); padding: 1px 6px; border-radius: var(--ps-r-3);
       text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
       white-space: nowrap;
     }
-    .badge-completed  { background: rgba(78,201,176,0.13);  color: var(--c-done); }
-    .badge-in_progress{ background: rgba(86,156,214,0.13);  color: var(--c-running);
+    .badge-completed  { background: var(--ps-fill-done);    color: var(--c-done); }
+    .badge-in_progress{ background: var(--ps-fill-running); color: var(--c-running);
                         animation: pulse-badge 2s infinite; }
-    .badge-failed     { background: rgba(244,71,71,0.13);   color: var(--c-failed); }
-    .badge-pending    { background: rgba(110,110,110,0.13); color: var(--c-pending); }
-    .badge-cancelled  { background: rgba(133,133,133,0.1);  color: var(--c-cancelled); }
+    .badge-failed     { background: var(--ps-fill-failed);  color: var(--c-failed); }
+    .badge-pending    { background: var(--ps-fill-pending); color: var(--c-pending); }
+    .badge-cancelled  { background: var(--ps-fill-pending); color: var(--c-cancelled); }
 
     @keyframes pulse-badge {
       0%, 100% { opacity: 1; }
-      50%       { opacity: 0.65; }
+      50%       { opacity: 0.75; }
     }
 
     /* ── Run button ── */
     .run-btn {
-      font-size: 0.72em; padding: 2px 8px; height: 20px; cursor: pointer;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.3));
-      border-radius: 3px;
-      background: var(--vscode-button-background, #0e70c0);
-      color: var(--vscode-button-foreground, #fff);
+      font-size: var(--ps-t-xs); padding: 2px 8px; height: 20px; cursor: pointer;
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
+      border-radius: var(--ps-r-1);
+      background: var(--vscode-button-background, var(--ps-c-accent));
+      color: var(--vscode-button-foreground, white);
       white-space: nowrap; opacity: 0; transition: opacity 0.1s, background 0.1s;
       display: flex; align-items: center; gap: 3px;
     }
     .run-btn:hover { background: var(--vscode-button-hoverBackground); }
 
     .add-btn {
-      font-size: 0.72em; padding: 2px 7px; height: 20px; cursor: pointer;
-      border: 1px solid var(--vscode-button-border, rgba(127,127,127,0.35));
-      border-radius: 3px;
+      font-size: var(--ps-t-xs); padding: 2px 7px; height: 20px; cursor: pointer;
+      border: 1px solid var(--vscode-button-border, var(--ps-border-strong));
+      border-radius: var(--ps-r-1);
       background: transparent;
       color: var(--vscode-foreground);
       white-space: nowrap; opacity: 0; transition: opacity 0.1s, background 0.1s;
       display: flex; align-items: center; gap: 2px;
     }
     .add-btn:hover {
-      background: var(--vscode-list-hoverBackground, rgba(127,127,127,0.15));
+      background: var(--vscode-list-hoverBackground, var(--ps-border));
     }
 
     /* ── Tasks ── */
@@ -1868,16 +1937,16 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
 
     .task-row {
       display: flex; align-items: center; gap: 6px;
-      padding: 3px 5px; border-radius: 3px; cursor: default;
+      padding: 3px 5px; border-radius: var(--ps-r-1); cursor: default;
     }
-    .task-row.blocked { opacity: 0.82; }
+    .task-row.blocked { opacity: 0.75; }
     .task-row.needs-prompt:not(.blocked) {
       border-left: 2px solid var(--vscode-inputValidation-warningBorder, rgba(234, 179, 8, 0.75));
       padding-left: 4px;
       margin-left: -2px;
     }
     .task-needs-prompt-hint {
-      font-size: 0.72em;
+      font-size: var(--ps-t-xs);
       line-height: 1.35;
       color: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.95));
       flex-shrink: 0;
@@ -1887,12 +1956,13 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .task-row:hover .task-actions { opacity: 1; }
 
     .task-icon {
-      font-size: 0.78em; width: 13px; text-align: center; flex-shrink: 0;
-      line-height: 1; cursor: pointer; border-radius: 3px; padding: 2px;
-      margin: -2px; outline: none; user-select: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; flex-shrink: 0;
+      cursor: pointer; border-radius: var(--ps-r-1);
+      outline: none; user-select: none;
     }
-    .task-icon:hover { background: rgba(127,127,127,0.2); }
-    .task-icon:focus-visible { box-shadow: 0 0 0 2px var(--vscode-focusBorder, #0e70c0); }
+    .task-icon:hover { background: var(--ps-bg-hover); }
+    .task-icon:focus-visible { box-shadow: 0 0 0 2px var(--vscode-focusBorder, var(--ps-c-accent)); }
     .icon-completed  { color: var(--c-done); }
     .icon-in_progress{ color: var(--c-running); }
     .icon-failed     { color: var(--c-failed); }
@@ -1900,12 +1970,12 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .icon-pending    { color: var(--c-pending); }
 
     .task-title {
-      font-size: 0.83em; flex: 1; min-width: 0;
+      font-size: var(--ps-t-sm); flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       line-height: 1.4;
       cursor: pointer; user-select: none;
     }
-    .task-title.strike { text-decoration: line-through; opacity: 0.45; }
+    .task-title.strike { text-decoration: line-through; opacity: 0.55; }
     .task-deps-hint { opacity: 0.68; }
 
     .task-actions {
@@ -1914,7 +1984,7 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
     .task-btn {
       width: 18px; height: 18px; padding: 0; display: flex;
       align-items: center; justify-content: center; cursor: pointer;
-      border-radius: 3px; font-size: 0.75em; border: none;
+      border-radius: var(--ps-r-1); font-size: var(--ps-t-xs); border: none;
       background: transparent; line-height: 1;
     }
     .task-btn.run-task {
@@ -1926,19 +1996,19 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       gap: 3px;
     }
     .task-btn.done-btn  { color: var(--c-done); }
-    .task-btn.done-btn:hover   { background: rgba(78,201,176,0.15); }
+    .task-btn.done-btn:hover   { background: var(--ps-fill-done); }
     .task-btn.run-task  { color: var(--c-running); }
-    .task-btn.run-task:hover   { background: rgba(86,156,214,0.15); }
+    .task-btn.run-task:hover   { background: var(--ps-fill-running); }
     .task-btn.cancel-btn{ color: var(--c-failed); }
-    .task-btn.cancel-btn:hover { background: rgba(244,71,71,0.15); }
+    .task-btn.cancel-btn:hover { background: var(--ps-fill-failed); }
     .task-btn.reset-btn { color: var(--c-cancelled); }
-    .task-btn.reset-btn:hover  { background: rgba(133,133,133,0.15); }
+    .task-btn.reset-btn:hover  { background: var(--ps-fill-pending); }
   </style>
 </head>
 <body>
   <div id="root">
     <div class="empty-state">
-      <div class="empty-icon">📋</div>
+      <div class="empty-icon"><svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3" width="9" height="11" rx="1.2"/><rect x="6" y="1.8" width="4" height="2" rx="0.5"/><path d="M6 8 H10 M6 11 H9"/></svg></div>
       <div class="empty-title">Loading plans…</div>
     </div>
   </div>
@@ -1987,44 +2057,43 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    :root {
-      color-scheme: light dark;
-    }
+    ${PS_TOKENS_CSS}
+    :root { color-scheme: light dark; }
     body {
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
+      color: var(--ps-fg);
+      background: var(--ps-bg-elevated);
       margin: 0;
-      padding: 14px 16px 18px;
+      padding: var(--ps-s-4) var(--ps-s-5) var(--ps-s-5);
     }
-    .h1 { font-size: 1.1em; font-weight: 700; margin: 0 0 10px; }
+    .h1 { font-size: var(--ps-t-lg); font-weight: 700; margin: 0 0 var(--ps-s-3); }
     .meta {
       display: grid;
       grid-template-columns: max-content 1fr;
       gap: 6px 10px;
       padding: 10px 12px;
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 8px;
-      background: rgba(127,127,127,0.08);
+      border: 1px solid var(--ps-border-strong);
+      border-radius: var(--ps-r-2);
+      background: var(--ps-bg-hover);
     }
-    .k { opacity: 0.7; }
+    .k { opacity: 0.75; }
     .v { word-break: break-word; }
     .section { margin-top: 12px; }
     .label { font-weight: 700; margin-bottom: 6px; opacity: 0.9; }
     pre {
       margin: 0;
       padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(127,127,127,0.25);
-      background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
+      border-radius: var(--ps-r-2);
+      border: 1px solid var(--ps-border-strong);
+      background: var(--vscode-textCodeBlock-background, var(--ps-border));
       white-space: pre-wrap;
       word-break: break-word;
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.9em;
+      font-size: var(--ps-t-md);
       line-height: 1.45;
     }
-    .subtle { opacity: 0.7; }
+    .subtle { opacity: 0.75; }
     code { font-family: var(--vscode-editor-font-family); }
     .row {
       display: inline-flex;
@@ -2037,27 +2106,27 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
       border: none;
       background: transparent;
       color: inherit;
-      opacity: 0.7;
+      opacity: 0.75;
       cursor: pointer;
       padding: 2px 4px;
-      border-radius: 4px;
+      border-radius: var(--ps-r-1);
       line-height: 1;
     }
-    .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
+    .edit-btn:hover { opacity: 1; background: var(--ps-border); }
     .toggle-btn {
       font: inherit;
-      border: 1px solid rgba(127,127,127,0.35);
+      border: 1px solid var(--ps-border-strong);
       background: transparent;
       color: inherit;
       cursor: pointer;
       padding: 1px 8px;
-      border-radius: 4px;
+      border-radius: var(--ps-r-1);
       font-family: var(--vscode-editor-font-family);
       line-height: 1.4;
     }
-    .toggle-btn:hover { background: rgba(127,127,127,0.18); border-color: rgba(127,127,127,0.55); }
-    .toggle-btn[data-value="true"] { color: var(--vscode-charts-green, #4ec9b0); }
-    .toggle-btn[data-value="false"] { color: var(--vscode-charts-red, #f48771); }
+    .toggle-btn:hover { background: var(--ps-border); border-color: var(--ps-border-strong); }
+    .toggle-btn[data-value="true"] { color: var(--vscode-charts-green, var(--ps-c-done)); }
+    .toggle-btn[data-value="false"] { color: var(--vscode-charts-red, var(--ps-c-failed)); }
   </style>
 </head>
 <body>
@@ -2125,49 +2194,50 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
+    ${PS_TOKENS_CSS}
     :root { color-scheme: light dark; }
     body {
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
+      color: var(--ps-fg);
+      background: var(--ps-bg-elevated);
       margin: 0;
-      padding: 14px 16px 18px;
+      padding: var(--ps-s-4) var(--ps-s-5) var(--ps-s-5);
     }
-    .h1 { font-size: 1.1em; font-weight: 700; margin: 0 0 10px; }
+    .h1 { font-size: var(--ps-t-lg); font-weight: 700; margin: 0 0 var(--ps-s-3); }
     .meta {
       display: grid;
       grid-template-columns: max-content 1fr;
-      gap: 6px 10px;
-      padding: 10px 12px;
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 8px;
-      background: rgba(127,127,127,0.08);
+      gap: var(--ps-s-2) var(--ps-s-3);
+      padding: var(--ps-s-3) var(--ps-s-4);
+      border: 1px solid var(--ps-border);
+      border-radius: var(--ps-r-2);
+      background: var(--ps-bg-hover);
     }
-    .k { opacity: 0.7; }
+    .k { color: var(--ps-fg-muted); }
     .v { word-break: break-word; }
-    .section { margin-top: 12px; }
-    ul { margin: 8px 0 0; padding-left: 18px; }
-    li { margin-bottom: 8px; }
-    .subtle { opacity: 0.75; }
+    .section { margin-top: var(--ps-s-4); }
+    ul { margin: var(--ps-s-3) 0 0; padding-left: var(--ps-s-5); }
+    li { margin-bottom: var(--ps-s-3); }
+    .subtle { color: var(--ps-fg-muted); }
     code { font-family: var(--vscode-editor-font-family); }
-    .row { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .row { display: inline-flex; align-items: center; gap: var(--ps-s-3); min-width: 0; }
     .edit-btn {
       font: inherit;
       border: none;
       background: transparent;
-      color: inherit;
-      opacity: 0.7;
+      color: var(--ps-fg-muted);
       cursor: pointer;
-      padding: 2px 4px;
-      border-radius: 4px;
+      padding: var(--ps-s-1) var(--ps-s-2);
+      border-radius: var(--ps-r-1);
       line-height: 1;
     }
-    .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
+    .edit-btn:hover { color: var(--ps-fg); background: var(--ps-bg-hover); }
     .overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.35);
+      background: color-mix(in srgb, var(--vscode-editor-background) 60%, transparent);
+      backdrop-filter: blur(2px);
       display: none;
       align-items: center;
       justify-content: center;
@@ -2175,43 +2245,44 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
     }
     .modal {
       width: min(720px, calc(100vw - 28px));
-      border-radius: 10px;
-      border: 1px solid rgba(127,127,127,0.25);
-      background: var(--vscode-editor-background);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-      padding: 12px;
+      border-radius: var(--ps-r-3);
+      border: 1px solid var(--ps-border-strong);
+      background: var(--ps-bg-elevated);
+      box-shadow: var(--ps-shadow-2);
+      padding: var(--ps-s-4);
     }
-    .modal-title { font-weight: 700; margin: 0 0 8px; }
+    .modal-title { font-weight: 700; margin: 0 0 var(--ps-s-3); }
     textarea {
       width: 100%;
       min-height: 140px;
       resize: vertical;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(127,127,127,0.25);
-      background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
-      color: var(--vscode-foreground);
+      padding: var(--ps-s-3) var(--ps-s-4);
+      border-radius: var(--ps-r-2);
+      border: 1px solid var(--ps-border);
+      background: var(--vscode-textCodeBlock-background, var(--ps-bg-hover));
+      color: var(--ps-fg);
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.9em;
+      font-size: var(--ps-t-md);
       line-height: 1.45;
       outline: none;
     }
-    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+    textarea:focus { border-color: var(--ps-c-accent); }
+    .modal-actions { display: flex; gap: var(--ps-s-3); justify-content: flex-end; margin-top: var(--ps-s-3); }
     .btn {
       font: inherit;
-      border-radius: 6px;
-      padding: 6px 10px;
+      border-radius: var(--ps-r-2);
+      padding: var(--ps-s-2) var(--ps-s-3);
       cursor: pointer;
-      border: 1px solid rgba(127,127,127,0.3);
+      border: 1px solid var(--ps-border-strong);
       background: transparent;
       color: inherit;
     }
     .btn.primary {
-      background: var(--vscode-button-background, #0e70c0);
-      color: var(--vscode-button-foreground, #fff);
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
       border-color: transparent;
     }
-    .btn:hover { background: rgba(127,127,127,0.12); }
+    .btn:hover { background: var(--ps-bg-hover); }
     .btn.primary:hover { background: var(--vscode-button-hoverBackground); }
   </style>
 </head>
@@ -2310,49 +2381,50 @@ function getPlanDetailsHtml(plan: Plan): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
+    ${PS_TOKENS_CSS}
     :root { color-scheme: light dark; }
     body {
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
+      color: var(--ps-fg);
+      background: var(--ps-bg-elevated);
       margin: 0;
-      padding: 14px 16px 18px;
+      padding: var(--ps-s-4) var(--ps-s-5) var(--ps-s-5);
     }
-    .h1 { font-size: 1.1em; font-weight: 700; margin: 0 0 10px; }
+    .h1 { font-size: var(--ps-t-lg); font-weight: 700; margin: 0 0 var(--ps-s-3); }
     .meta {
       display: grid;
       grid-template-columns: max-content 1fr;
-      gap: 6px 10px;
-      padding: 10px 12px;
-      border: 1px solid rgba(127,127,127,0.25);
-      border-radius: 8px;
-      background: rgba(127,127,127,0.08);
+      gap: var(--ps-s-2) var(--ps-s-3);
+      padding: var(--ps-s-3) var(--ps-s-4);
+      border: 1px solid var(--ps-border);
+      border-radius: var(--ps-r-2);
+      background: var(--ps-bg-hover);
     }
-    .k { opacity: 0.7; }
+    .k { color: var(--ps-fg-muted); }
     .v { word-break: break-word; }
-    .section { margin-top: 12px; }
-    ul { margin: 8px 0 0; padding-left: 18px; }
-    li { margin-bottom: 8px; }
-    .subtle { opacity: 0.75; }
+    .section { margin-top: var(--ps-s-4); }
+    ul { margin: var(--ps-s-3) 0 0; padding-left: var(--ps-s-5); }
+    li { margin-bottom: var(--ps-s-3); }
+    .subtle { color: var(--ps-fg-muted); }
     code { font-family: var(--vscode-editor-font-family); }
-    .row { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .row { display: inline-flex; align-items: center; gap: var(--ps-s-3); min-width: 0; }
     .edit-btn {
       font: inherit;
       border: none;
       background: transparent;
-      color: inherit;
-      opacity: 0.7;
+      color: var(--ps-fg-muted);
       cursor: pointer;
-      padding: 2px 4px;
-      border-radius: 4px;
+      padding: var(--ps-s-1) var(--ps-s-2);
+      border-radius: var(--ps-r-1);
       line-height: 1;
     }
-    .edit-btn:hover { opacity: 1; background: rgba(127,127,127,0.15); }
+    .edit-btn:hover { color: var(--ps-fg); background: var(--ps-bg-hover); }
     .overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.35);
+      background: color-mix(in srgb, var(--vscode-editor-background) 60%, transparent);
+      backdrop-filter: blur(2px);
       display: none;
       align-items: center;
       justify-content: center;
@@ -2360,43 +2432,44 @@ function getPlanDetailsHtml(plan: Plan): string {
     }
     .modal {
       width: min(720px, calc(100vw - 28px));
-      border-radius: 10px;
-      border: 1px solid rgba(127,127,127,0.25);
-      background: var(--vscode-editor-background);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-      padding: 12px;
+      border-radius: var(--ps-r-3);
+      border: 1px solid var(--ps-border-strong);
+      background: var(--ps-bg-elevated);
+      box-shadow: var(--ps-shadow-2);
+      padding: var(--ps-s-4);
     }
-    .modal-title { font-weight: 700; margin: 0 0 8px; }
+    .modal-title { font-weight: 700; margin: 0 0 var(--ps-s-3); }
     textarea {
       width: 100%;
       min-height: 140px;
       resize: vertical;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(127,127,127,0.25);
-      background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
-      color: var(--vscode-foreground);
+      padding: var(--ps-s-3) var(--ps-s-4);
+      border-radius: var(--ps-r-2);
+      border: 1px solid var(--ps-border);
+      background: var(--vscode-textCodeBlock-background, var(--ps-bg-hover));
+      color: var(--ps-fg);
       font-family: var(--vscode-editor-font-family);
-      font-size: 0.9em;
+      font-size: var(--ps-t-md);
       line-height: 1.45;
       outline: none;
     }
-    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+    textarea:focus { border-color: var(--ps-c-accent); }
+    .modal-actions { display: flex; gap: var(--ps-s-3); justify-content: flex-end; margin-top: var(--ps-s-3); }
     .btn {
       font: inherit;
-      border-radius: 6px;
-      padding: 6px 10px;
+      border-radius: var(--ps-r-2);
+      padding: var(--ps-s-2) var(--ps-s-3);
       cursor: pointer;
-      border: 1px solid rgba(127,127,127,0.3);
+      border: 1px solid var(--ps-border-strong);
       background: transparent;
       color: inherit;
     }
     .btn.primary {
-      background: var(--vscode-button-background, #0e70c0);
-      color: var(--vscode-button-foreground, #fff);
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
       border-color: transparent;
     }
-    .btn:hover { background: rgba(127,127,127,0.12); }
+    .btn:hover { background: var(--ps-bg-hover); }
     .btn.primary:hover { background: var(--vscode-button-hoverBackground); }
   </style>
 </head>

@@ -19,6 +19,26 @@
     streamStartedSuffix: "started",
   };
 
+  function svgIcon(d, extraCls) {
+    const ns = "http://www.w3.org/2000/svg";
+    const el = document.createElementNS(ns, "svg");
+    el.setAttribute("class", "ps-i " + (extraCls || ""));
+    el.setAttribute("viewBox", "0 0 16 16");
+    el.setAttribute("width", "14");
+    el.setAttribute("height", "14");
+    el.setAttribute("fill", "none");
+    el.setAttribute("stroke", "currentColor");
+    el.setAttribute("stroke-width", "1.6");
+    el.setAttribute("stroke-linecap", "round");
+    el.setAttribute("stroke-linejoin", "round");
+    el.setAttribute("aria-hidden", "true");
+    el.innerHTML = d;
+    return el;
+  }
+
+  const PS_ICON_CHECK = '<path d="M3.5 8.5 L7 12 L12.5 4"/>';
+  const PS_ICON_X = '<path d="M4 4 L12 12 M12 4 L4 12"/>';
+
   /** Max characters retained per run in the live <pre> (tail kept). */
   const MAX_AGENT_STREAM_CHARS = 400000;
 
@@ -511,15 +531,20 @@
     const card = document.createElement("div");
     card.className = "run-summary-card";
 
-    // Header: ✓ / ✗ + label + duration
+    // Header: status icon + label + duration
     const header = document.createElement("div");
     header.className = "run-summary-header";
-    const icon = summary.exitCode === 0 ? "✓" : "✗";
+    const ok = summary.exitCode === 0;
+    header.classList.add(ok ? "is-ok" : "is-failed");
     const dur =
       summary.durationSec >= 60
         ? `~${Math.floor(summary.durationSec / 60)}m ${summary.durationSec % 60}s`
         : `${summary.durationSec}s`;
-    header.textContent = `${icon} ${summary.phaseLabel} · ${dur}`;
+    header.appendChild(svgIcon(ok ? PS_ICON_CHECK : PS_ICON_X, ok ? "ps-i-ok" : "ps-i-failed"));
+    const headerText = document.createElement("span");
+    headerText.className = "run-summary-header-text";
+    headerText.textContent = `${summary.phaseLabel} · ${dur}`;
+    header.appendChild(headerText);
     card.appendChild(header);
 
     // Stats line (same + / − colors as per-file rows below)
@@ -627,8 +652,12 @@
     card.className = "run-summary-card run-failure-card";
 
     const header = document.createElement("div");
-    header.className = "run-summary-header";
-    header.textContent = `✗ ${failure.phaseLabel} · ${failure.durationSec}s`;
+    header.className = "run-summary-header is-failed";
+    header.appendChild(svgIcon(PS_ICON_X, "ps-i-failed"));
+    const headerText = document.createElement("span");
+    headerText.className = "run-summary-header-text";
+    headerText.textContent = `${failure.phaseLabel} · ${failure.durationSec}s`;
+    header.appendChild(headerText);
     card.appendChild(header);
 
     const stats = document.createElement("div");

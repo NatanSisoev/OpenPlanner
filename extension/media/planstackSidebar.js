@@ -81,18 +81,23 @@
     return STATE_CYCLE[(i === -1 ? 0 : i + 1) % STATE_CYCLE.length];
   }
 
+  function svgIcon(d, extraCls) {
+    return `<svg class="ps-i ${extraCls || ""}" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  }
+
+  const PS_ICON_PATHS = {
+    completed:   '<path d="M3.5 8.5 L7 12 L12.5 4"/>',
+    in_progress: '<circle cx="8" cy="8" r="5"/><path d="M8 3 a5 5 0 0 1 5 5"/>',
+    failed:      '<path d="M4 4 L12 12 M12 4 L4 12"/>',
+    cancelled:   '<circle cx="8" cy="8" r="5"/><path d="M4.5 11.5 L11.5 4.5"/>',
+    pending:     '<circle cx="8" cy="8" r="4.5"/>',
+  };
+
   function taskIconHtml(state, planId, phaseId, taskId) {
     const cls = "task-icon icon-" + state;
-    const icons = {
-      completed:   "✓",
-      in_progress: "⟳",
-      failed:      "✗",
-      cancelled:   "⊘",
-      pending:     "○",
-    };
-    const symbol = icons[state] || "○";
+    const path = PS_ICON_PATHS[state] || PS_ICON_PATHS.pending;
     const next = nextStateInCycle(state);
-    return `<span class="${cls}" role="button" tabindex="0" data-action="cycleTaskState" data-plan="${planId}" data-phase="${phaseId}" data-task="${taskId}" title="Click to set: ${next.replace("_", " ")}">${symbol}</span>`;
+    return `<span class="${cls}" role="button" tabindex="0" data-action="cycleTaskState" data-plan="${planId}" data-phase="${phaseId}" data-task="${taskId}" title="Click to set: ${next.replace("_", " ")}">${svgIcon(path)}</span>`;
   }
 
   function badgeHtml(state) {
@@ -149,7 +154,7 @@
       root.innerHTML = `
         ${renderToolbar(true)}
         <div class="empty-state">
-          <div class="empty-icon">📋</div>
+          <div class="empty-icon">${svgIcon('<rect x="3.5" y="3" width="9" height="11" rx="1.2"/><rect x="6" y="1.8" width="4" height="2" rx="0.5"/><path d="M6 8 H10 M6 11 H9"/>', 'ps-i-empty')}</div>
           <div class="empty-title">No plans loaded</div>
           <div class="empty-hint">Create your first plan or add <code>.planstack/plans/*.json</code> to your workspace.</div>
         </div>`;
@@ -188,7 +193,7 @@
             <div class="sync-split">
               <button type="button" class="view-btn sync-main" data-action="syncPullPush" title="Mongo: pull then push">Sync</button>
               <details class="sync-more">
-                <summary class="sync-chevron" title="Pull or push only">▾</summary>
+                <summary class="sync-chevron" title="Pull or push only">${svgIcon('<path d="M4 6 L8 10 L12 6"/>')}</summary>
                 <div class="sync-dropdown">
                   <button type="button" class="sync-dropdown-item" data-action="syncPull">Pull only</button>
                   <button type="button" class="sync-dropdown-item" data-action="syncPush">Push only</button>
