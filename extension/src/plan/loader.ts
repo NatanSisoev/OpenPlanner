@@ -35,9 +35,10 @@ async function loadPlansFromFolder(
 
 /**
  * Load valid plan JSON from `.planstack/plans/*.json` across every workspace
- * folder. Duplicate ids are dropped (later wins is undefined; warn so the user
- * knows their tree has duplicates). When `onError` is provided, the caller is
- * notified once per file that failed to parse/validate.
+ * folder. Duplicate ids: the first occurrence wins; later occurrences are
+ * dropped with a warning so the user knows their tree has duplicates. When
+ * `onError` is provided, the caller is notified once per file that failed to
+ * parse/validate.
  */
 export async function loadPlansFromWorkspace(
   onError?: (err: PlanLoadError) => void,

@@ -907,7 +907,12 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!latestPhase) {
             return false;
           }
-          latestPhase.state = "in_progress";
+          const runnable = latestPhase.tasks.find(
+            (t) => t.state === "pending" || t.state === "in_progress",
+          );
+          if (runnable) {
+            runnable.state = "in_progress";
+          }
         });
         if (!marked) {
           void vscode.window.showWarningMessage("Planstack: phase could not be marked in progress.");
@@ -1478,23 +1483,20 @@ export function activate(context: vscode.ExtensionContext): void {
           return false;
         }
         if (outcome === "success") {
-          phase.state = "completed";
           for (const t of phase.tasks) {
             if (t.state !== "cancelled" && t.state !== "failed") {
               t.state = "completed";
             }
           }
         } else if (outcome === "stopped") {
-          phase.state = "cancelled";
           for (const t of phase.tasks) {
-            if (t.state === "in_progress") {
+            if (t.state === "in_progress" || t.state === "pending") {
               t.state = "cancelled";
             }
           }
         } else {
-          phase.state = "failed";
           for (const t of phase.tasks) {
-            if (t.state === "in_progress") {
+            if (t.state === "in_progress" || t.state === "pending") {
               t.state = "failed";
             }
           }
