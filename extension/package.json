@@ -285,6 +285,23 @@
           "default": true,
           "description": "Stream live agent stdout/stderr to Output → Planstack during Create plan and Run phase (CLI)."
         },
+        "planstack.cursor.revealAgentEditedFiles": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "During **Run phase** / Chat **Send** when the Cursor `agent` CLI runs with `--force`, watch files under the run working directory and **open changed or created files** as preview tabs so you can follow edits live. Ignores `.git` and `node_modules`. Turn off if tab churn is distracting."
+        },
+        "planstack.cursor.revealAgentEditedFilesFocusEditor": {
+          "type": "boolean",
+          "default": false,
+          "description": "When revealAgentEditedFiles is on: if true, move keyboard focus to each opened editor; if false (default), open preview tabs but keep focus where it was (e.g. Planstack Chat)."
+        },
+        "planstack.cursor.revealAgentEditedFilesDebounceMs": {
+          "type": "number",
+          "default": 200,
+          "minimum": 50,
+          "maximum": 5000,
+          "description": "Debounce (ms) before opening an editor after a file change event, coalescing rapid writes to the same path."
+        },
         "planstack.cursor.cliStreamProgressThrottleMs": {
           "type": "number",
           "default": 2000,
@@ -369,6 +386,11 @@
           "type": "string",
           "default": "Ubuntu",
           "description": "WSL distribution name to use when planstack.cursor.useWsl is enabled (e.g. \"Ubuntu\", \"Ubuntu-22.04\"). Run `wsl -l` in a terminal to list installed distributions."
+        },
+        "planstack.requireTaskPrompt": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When **true**, **Run task** requires a non-empty `task.prompt` (handoff includes task-specific guidance). When **false**, the task title and phase/plan context are enough and the sidebar does not block the run button for an empty prompt."
         }
       }
     }

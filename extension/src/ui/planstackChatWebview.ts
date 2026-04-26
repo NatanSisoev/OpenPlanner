@@ -23,6 +23,24 @@ import { PS_RUN_UI } from "./runUiStrings";
 
 export const CHAT_WEBVIEW_ID = "hackupc.planstack.chat";
 
+function executorCreatePlanStartChatLine(): string {
+  const head = PS_RUN_UI.chatStreamCreatePlan;
+  return getActiveExecutorProfileId() === "junie-cli"
+    ? `${head}: starting Junie CLI…`
+    : `${head}: starting Cursor agent CLI (read-only print mode)…`;
+}
+
+function executorSendStartChatLine(): string {
+  const head = PS_RUN_UI.chatStreamSendPrompt;
+  return getActiveExecutorProfileId() === "junie-cli"
+    ? `${head}: starting Junie CLI…`
+    : `${head}: starting Cursor agent CLI (may edit workspace)…`;
+}
+
+function executorProfileLogSuffix(): string {
+  return getActiveExecutorProfileId() === "junie-cli" ? "junie-cli" : "cursor-agent-cli";
+}
+
 const MAX_MESSAGE_CHARS = 8000;
 const execFileAsync = promisify(execFile);
 
@@ -499,8 +517,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
         );
         return;
       }
-      const startLine = `${PS_RUN_UI.chatStreamCreatePlan}: starting Cursor CLI run (agent -p --trust)…`;
-      this.pushSystem(w, startLine);
+      this.pushSystem(w, executorCreatePlanStartChatLine());
 
       const cfg = vscode.workspace.getConfiguration("planstack.cursor");
       const streamToOutput = cfg.get<boolean>("cliStreamAgentOutput") ?? true;
@@ -513,7 +530,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
       });
       const out = getOutput();
       out.show(true);
-      out.appendLine(`\n=== ${PS_RUN_UI.chatStreamCreatePlan}: agent run ${new Date().toISOString()} ===\n`);
+      out.appendLine(
+        `\n=== ${PS_RUN_UI.chatStreamCreatePlan}: CLI run (${executorProfileLogSuffix()}) ${new Date().toISOString()} ===\n`,
+      );
 
       const runId = randomUUID();
       traceEvent(flowId, "createPlanFlow.run_context", { runId, streamToOutput, useLiveChat });
@@ -687,7 +706,9 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     const useLiveChat = cfg.get<boolean>("agentChatLiveStream") ?? true;
     const out = getOutput();
     out.show(true);
-    out.appendLine(`\n=== Send prompt: agent run ${new Date().toISOString()} ===\n`);
+    out.appendLine(
+      `\n=== ${PS_RUN_UI.chatStreamSendPrompt}: CLI run (${executorProfileLogSuffix()}) ${new Date().toISOString()} ===\n`,
+    );
 
     const runId = randomUUID();
     let streamActive = false;
@@ -707,7 +728,7 @@ export class PlanstackChatWebview implements vscode.WebviewViewProvider {
     };
 
     try {
-      this.pushSystem(w, `${PS_RUN_UI.chatStreamSendPrompt}: starting Cursor CLI run (agent -p --trust --force)…`);
+      this.pushSystem(w, executorSendStartChatLine());
       if (useLiveChat) {
         streamActive = true;
         postAgentStreamStart(runId, {
@@ -1014,7 +1035,68 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       opacity: 0.7;
       font-size: 0.92em;
     }
-    #composerActions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+    #composerActions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      margin-top: 6px;
+    }
+    .composerExecutor {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 0 1 auto;
+      max-width: min(52%, 320px);
+      font-size: 0.85em;
+    }
+    .composerExecutor label {
+      color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.85));
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .composerExecutor select {
+      appearance: none;
+      -webkit-appearance: none;
+      min-width: 128px;
+      max-width: min(220px, 40vw);
+      height: 28px;
+      padding: 0 30px 0 10px;
+      font-size: 0.85em;
+      font-family: var(--vscode-font-family);
+      line-height: 26px;
+      color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+      background-color: var(--vscode-dropdown-background, var(--vscode-input-background, rgba(255, 255, 255, 0.06)));
+      border: 1px solid var(--vscode-dropdown-border, rgba(127, 127, 127, 0.4));
+      border-radius: 4px;
+      cursor: pointer;
+      box-sizing: border-box;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M2.5 4L6 7.5 9.5 4'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 9px center;
+      background-size: 11px 11px;
+    }
+    .composerExecutor select:hover {
+      border-color: var(--vscode-focusBorder, rgba(127, 127, 127, 0.55));
+      background-color: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
+    }
+    .composerExecutor select:focus {
+      outline: 1px solid var(--vscode-focusBorder, #007fd4);
+      outline-offset: -1px;
+    }
+    .composerActionButtons {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      flex: 0 0 auto;
+    }
     #send, #createPlan, #stopAgents {
       flex-shrink: 0; padding: 0 12px; height: 28px;
       cursor: pointer; font-size: 0.85em;
@@ -1258,14 +1340,17 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     }
     .run-separator-row {
       width: 100%;
-      margin-top: 10px;
-      margin-bottom: 4px;
+      margin-top: 12px;
+      margin-bottom: 8px;
     }
     .run-separator {
       width: 100%;
+      min-height: 36px;
+      padding: 8px 0;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       opacity: 0.78;
       font-size: 0.74em;
       text-transform: uppercase;
@@ -1274,35 +1359,20 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
     .run-separator-line {
       flex: 1;
       height: 1px;
+      min-height: 1px;
+      align-self: center;
       background: rgba(127,127,127,0.24);
     }
     .run-separator-label {
       white-space: nowrap;
       font-weight: 600;
-    }
-    .executor-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 6px 0 4px;
-      font-size: 0.86em;
-      flex-wrap: wrap;
-    }
-    .executor-row label {
-      opacity: 0.85;
-      white-space: nowrap;
-    }
-    .executor-row select {
-      flex: 1;
-      min-width: 140px;
-      max-width: 100%;
-      padding: 3px 6px;
-      font-size: inherit;
+      line-height: 1.4;
+      padding: 0 2px;
     }
   </style>
 </head>
 <body>
-  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits. Choose the <strong>CLI executor</strong> below for Create plan / Send / Run phase (<code>cli</code> mode). Tag with <strong>@file</strong>, <strong>@folder:path/to/dir</strong>, <strong>@plan:planId</strong>, <strong>@phase:planId/phaseId</strong>, <strong>@task:planId/phaseId/taskId</strong>, or <strong>@symbol:Name</strong>.</div>
+  <div class="hint"><strong>Create plan</strong> writes plan files, <strong>Send</strong> applies edits. Choose the <strong>CLI executor</strong> on the bottom row (left) for Create plan / Send / Run phase (<code>cli</code> mode). Tag with <strong>@file</strong>, <strong>@folder:path/to/dir</strong>, <strong>@plan:planId</strong>, <strong>@phase:planId/phaseId</strong>, <strong>@task:planId/phaseId/taskId</strong>, or <strong>@symbol:Name</strong>.</div>
   <div id="messages" aria-live="polite"></div>
   <div id="composer">
     <div id="inputWrap">
@@ -1310,17 +1380,19 @@ function getChatHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Uri):
       <textarea id="input" rows="2" placeholder="Ask the configured CLI agent to edit the codebase…" aria-label="Message"></textarea>
     </div>
     <div id="mentionChips" aria-label="@file mentions"></div>
-    <div id="executorRow" class="executor-row">
-      <label for="executorProfile">Executor</label>
-      <select id="executorProfile" aria-label="Headless CLI executor for Create plan and Send">
-        <option value="cursor-agent-cli">Cursor CLI (agent)</option>
-        <option value="junie-cli">Junie CLI</option>
-      </select>
-    </div>
-    <div id="composerActions">
-      <button type="button" id="stopAgents">Stop agents</button>
-      <button type="button" id="createPlan">Create plan</button>
-      <button type="button" id="send">Send</button>
+    <div id="composerActions" role="toolbar" aria-label="Chat actions and executor">
+      <div class="composerExecutor">
+        <label for="executorProfile">Executor</label>
+        <select id="executorProfile" aria-label="Headless CLI executor for Create plan and Send">
+          <option value="cursor-agent-cli">Cursor CLI (agent)</option>
+          <option value="junie-cli">Junie CLI</option>
+        </select>
+      </div>
+      <div class="composerActionButtons">
+        <button type="button" id="stopAgents">Stop agents</button>
+        <button type="button" id="createPlan">Create plan</button>
+        <button type="button" id="send">Send</button>
+      </div>
     </div>
   </div>
   <script src="${labelsUri}"></script>

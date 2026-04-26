@@ -36,7 +36,8 @@
           "id": "task-rb-003",
           "state": "pending",
           "desc": "Insert the button HTML in planstackSidebar.js (same toolbar region as + Plan / view switchers) and add .btn-danger (or similar) rules with hover/focus for accessibility",
-          "commit": true
+          "commit": true,
+          "prompt": "Scope: markup and CSS only for this task. Do not wire postMessage or extension handlers (that is a later phase).\n\nIn extension/media/planstackSidebar.js, find the top toolbar where “+ Plan” and the list/graph view switchers are rendered. Add a <button type=\"button\"> in that same toolbar row with a clear label (e.g. short destructive label or icon+tooltip via title=), a dedicated class such as btn-danger, and a placeholder data-action value reserved for later wiring (e.g. noop or a stub name documented in a short HTML comment).\n\nIn extension/src/ui/planstackSidebarWebview.ts, add styles for .btn-danger (or the class you chose) alongside existing sidebar toolbar button styles: foreground using theme tokens such as var(--vscode-errorForeground) and/or var(--vscode-inputValidation-errorForeground), border/background subtle enough for light and dark themes. Include :hover and :focus-visible states with a visible focus outline (e.g. outline or box-shadow using var(--vscode-focusBorder)) so keyboard users get a clear ring.\n\nKeep narrow sidebar widths in mind: the new control must not overflow the toolbar; follow spacing/patterns of neighboring buttons."
         },
         {
           "id": "task-rb-004",
@@ -95,7 +96,7 @@
     "planBranch": "planstack/plan-red-button-001"
   },
   "sync": {
-    "updatedAt": "2026-04-25T22:29:42.312Z",
-    "revision": 2
+    "updatedAt": "2026-04-25T23:42:53.594Z",
+    "revision": 4
   }
 }

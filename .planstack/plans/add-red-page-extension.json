@@ -1,0 +1,78 @@
+{
+  "id": "add-red-page-extension",
+  "state": "pending",
+  "title": "Add a red page to the extension",
+  "createdAt": "2026-04-26T12:00:00Z",
+  "phases": [
+    {
+      "id": "scaffold",
+      "state": "pending",
+      "title": "Scaffold the red page surface",
+      "description": "Add a view, command, and webview (or simple UI host) for the new red page, following existing extension patterns.",
+      "tasks": [
+        {
+          "id": "t-register-view",
+          "state": "pending",
+          "desc": "Register contribution (package.json) and a command to open the red page.",
+          "commit": true
+        },
+        {
+          "id": "t-webview-html",
+          "state": "pending",
+          "desc": "Implement HTML/CSS for a full red-themed page in media or inline resolver.",
+          "commit": true
+        }
+      ]
+    },
+    {
+      "id": "wire-activate",
+      "state": "pending",
+      "title": "Wire activation and open flow",
+      "description": "From extension.ts, create the webview panel or editor tab and ensure it disposes correctly.",
+      "tasks": [
+        {
+          "id": "t-activate",
+          "state": "pending",
+          "desc": "On command, show the red page; handle single instance vs multiple as per repo convention.",
+          "commit": true
+        },
+        {
+          "id": "t-csp-icons",
+          "state": "pending",
+          "desc": "Set webview options (localResourceRoots, CSP if needed) and verify assets load.",
+          "commit": true
+        }
+      ],
+      "dependsOn": [
+        "scaffold"
+      ]
+    },
+    {
+      "id": "polish-validate",
+      "state": "pending",
+      "title": "Polish and validate",
+      "description": "Manual check in Extension Development Host and compile gate.",
+      "tasks": [
+        {
+          "id": "t-compile",
+          "state": "pending",
+          "desc": "Run `npm run compile` in extension/ and fix any TypeScript issues.",
+          "commit": true
+        },
+        {
+          "id": "t-f5",
+          "state": "pending",
+          "desc": "F5 launch: open red page, confirm color and no console errors.",
+          "commit": false
+        }
+      ],
+      "dependsOn": [
+        "wire-activate"
+      ]
+    }
+  ],
+  "sync": {
+    "updatedAt": "2026-04-25T23:40:25.742Z",
+    "revision": 1
+  }
+}

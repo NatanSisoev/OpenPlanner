@@ -122,6 +122,7 @@ Plans live in `.planstack/plans/*.json`. The schema is defined in `[extension/sr
       "title": "API implementation",
       "state": "pending",
       "description": "Build the REST endpoints",
+      "assignee": "Alex",
       "dependsOn": [],
       "tasks": [
         {
@@ -129,6 +130,7 @@ Plans live in `.planstack/plans/*.json`. The schema is defined in `[extension/sr
           "desc": "Build login endpoint",
           "state": "pending",
           "commit": true,
+          "assignee": "Alex",
           "prompt": "Implement POST /auth/login using JWT..."
         }
       ]
@@ -138,6 +140,8 @@ Plans live in `.planstack/plans/*.json`. The schema is defined in `[extension/sr
 ```
 
 State values: `pending` · `in_progress` · `completed` · `failed` · `cancelled`. Phase and plan states are derived from their children — they cannot be set directly.
+
+Phases and tasks may include optional `assignee` (free-text label for who owns that slice of work).
 
 Phases may declare `dependsOn: string[]` referencing other phase IDs. The validator enforces no duplicate IDs, no self-references, and no references to unknown IDs.
 

@@ -705,9 +705,10 @@
     if (!t) {
       return;
     }
-    vscode.postMessage({ type: "createPlan", text: t });
+    inputEl.value = "";
     closeMentionSuggest();
     renderMentionChips();
+    vscode.postMessage({ type: "createPlan", text: t });
   }
 
   function stopAgents() {

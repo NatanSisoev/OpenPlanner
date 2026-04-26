@@ -6,15 +6,31 @@ import { resolveDefaultAgentExecutable } from "./agentPath";
 import { getActiveExecutorProfileId, getJunieExecutable } from "./executorConfig";
 import { buildJunieCliArgs } from "./junieCliArgs";
 import { buildJunieCliEnv, resolveJunieApiKey } from "./junieApiKey";
+import { coercePlanJsonRoot } from "./coercePlanJsonRoot";
 import { buildPlanCreationPrompt, buildPlanResyncPrompt } from "./planCreationPrompt";
 import { extractJsonObject } from "./extractJsonFromAgentOutput";
 import type { Plan } from "./types";
+import { applyTaskPromptDefaultsFromDesc } from "./taskPromptDefaults";
 import { validatePlanJson } from "./validate";
 import { saveValidatedPlan } from "./writePlan";
 
 // Re-exported here for backward compat with callers that imported from this module.
 export { CURSOR_API_KEY_SECRET, buildAgentEnv, resolveCursorApiKey } from "./cursorApiKey";
 export { JUNIE_API_KEY_SECRET, buildJunieCliEnv, resolveJunieApiKey } from "./junieApiKey";
+
+/** Appended only for Junie CLI Create plan / resync — reinforces root shape after envelopes. */
+const JUNIE_PLAN_JSON_ROOT_SUFFIX = `\n\nImportant for your JSON output: the single root object must directly include a "phases" array (as in the schema above). Do not wrap the plan in an extra envelope so that "phases" only appears on a nested object unless that nested object is the only JSON you output.`;
+
+function summarizeJsonRootKeys(value: unknown): string {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return keys.length > 0 ? keys.join(", ") : "(empty object)";
+  }
+  if (Array.isArray(value)) {
+    return `(array length ${value.length})`;
+  }
+  return `(${typeof value})`;
+}
 
 export interface CreatePlanFromCliOptions {
   extensionContext: vscode.ExtensionContext;
@@ -69,7 +85,6 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
     workspaceRoot: opts.workspaceRoot.fsPath,
     promptChars: opts.prompt.length,
   });
-  traceMultiline(tid, "agentPlanJson.prompt", opts.prompt);
 
   const cfg = vscode.workspace.getConfiguration("planstack.cursor");
   const agentPath = cfg.get<string>("agentPath")?.trim() || "agent";
@@ -80,6 +95,10 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
 
   const cwd = opts.workspaceRoot.fsPath;
   const profile = getActiveExecutorProfileId();
+  const promptForCli =
+    profile === "junie-cli" ? `${opts.prompt}${JUNIE_PLAN_JSON_ROOT_SUFFIX}` : opts.prompt;
+
+  traceMultiline(tid, "agentPlanJson.prompt", promptForCli);
 
   let stdout: string;
   let stderr: string;
@@ -100,7 +119,7 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
       cwd,
       authToken: junieKey,
       timeoutMs,
-      task: opts.prompt,
+      task: promptForCli,
       outputFormatJson: true,
     });
     traceEvent(tid, "agentPlanJson.config", {
@@ -158,7 +177,7 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
     const r = await runAgentPrint({
       agentPath: resolvedAgent,
       cwd,
-      prompt: opts.prompt,
+      prompt: promptForCli,
       env,
       timeoutMs,
       maxStdoutChars,
@@ -202,19 +221,27 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
     parsed = JSON.parse(jsonText);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const tail = stdout.trimEnd().slice(-200);
     traceEvent(tid, "agentPlanJson.parse_json_fail", {
       message: msg,
       stdoutHead: stdout.slice(0, 400),
+      stdoutTail: tail,
     });
     throw new AgentCliError(
-      `Could not parse plan JSON from CLI output: ${msg}. First 400 chars: ${stdout.slice(0, 400)}`,
+      `Could not parse plan JSON from CLI output: ${msg}. First 400 chars: ${stdout.slice(0, 400)}${tail ? ` | tail (200): ${tail}` : ""}`,
       exitCode,
       stderr,
     );
   }
 
+  parsed = coercePlanJsonRoot(parsed);
+  traceEvent(tid, "agentPlanJson.coerced_root", {
+    rootKeys: summarizeJsonRootKeys(parsed),
+  });
+
   try {
     const plan = validatePlanJson(parsed);
+    applyTaskPromptDefaultsFromDesc(plan);
     traceEvent(tid, "agentPlanJson.validate_ok", {
       planId: plan.id,
       title: plan.title,
@@ -222,8 +249,18 @@ async function runAgentForPlanJson(opts: AgentPlanJsonRunOptions): Promise<Plan>
     return plan;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    traceEvent(tid, "agentPlanJson.validate_fail", { message: msg });
-    throw new AgentCliError(`Plan JSON failed validation: ${msg}`, exitCode, stderr);
+    const keys = summarizeJsonRootKeys(parsed);
+    const tail = stdout.trimEnd().slice(-200);
+    traceEvent(tid, "agentPlanJson.validate_fail", {
+      message: msg,
+      rootKeys: keys,
+      stdoutTail: tail,
+    });
+    throw new AgentCliError(
+      `Plan JSON failed validation: ${msg} (parsed root keys: ${keys}${tail ? `; stdout tail: ${tail}` : ""})`,
+      exitCode,
+      stderr,
+    );
   }
 }
 

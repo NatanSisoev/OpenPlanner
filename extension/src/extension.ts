@@ -24,6 +24,7 @@ import { getWriteHandoffFileOnCliRun } from "./plan/executorConfig";
 import { JUNIE_API_KEY_SECRET } from "./plan/junieApiKey";
 import { PLANSTACK_MONGODB_URI_SECRET, requireMongoUriOrThrow } from "./plan/mongoUri";
 import { reconcileAllPlansWithMongo, type ReconcileMongoPlansResult } from "./plan/mongoPlanSync";
+import { applyTaskPromptDefaultsFromDesc, ensureTaskPromptFromDesc } from "./plan/taskPromptDefaults";
 import { validatePlanJson } from "./plan/validate";
 import { debugCliConnection } from "./plan/debugCliConnection";
 import { AgentCliError, AgentRunBusyError, isAgentRunBusy, killAllAgentCliProcesses } from "./plan/agentCliRunner";
@@ -321,13 +322,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const existingTaskIds = new Set((phase.tasks ?? []).map((t) => t.id));
     const taskId = uniqueId(`task-${slugifyId(trimmedDesc)}`, existingTaskIds);
-    phase.tasks.push({
+    const newTask: Task = {
       id: taskId,
       state: "pending",
       desc: trimmedDesc,
       commit: input.commit,
       prompt: input.prompt?.trim() || undefined,
-    });
+    };
+    ensureTaskPromptFromDesc(newTask);
+    phase.tasks.push(newTask);
     phase.state = deriveAggregateState(phase.tasks.map((t) => t.state));
     plan.state = deriveAggregateState(plan.phases.map((p) => p.state));
     await savePlanPreservingFile(plan, root);
@@ -369,10 +372,12 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
       return false;
     }
+    const requireTaskPrompt =
+      vscode.workspace.getConfiguration("planstack").get<boolean>("requireTaskPrompt") ?? true;
     const taskPrompt = (task.prompt ?? "").trim();
-    if (!taskPrompt) {
+    if (requireTaskPrompt && !taskPrompt) {
       void vscode.window.showWarningMessage(
-        `Planstack: task "${task.desc}" has no prompt. Open task details and add a prompt before running.`,
+        `Planstack: task "${task.desc}" has no prompt. Add one in the plan JSON, or open task details and use Edit prompt (✎), then save before running. You can also set planstack.requireTaskPrompt to false to run using the task title only.`,
       );
       return false;
     }
@@ -1185,6 +1190,14 @@ export function activate(context: vscode.ExtensionContext): void {
         if (patch.description !== undefined) {
           phase.description = patch.description;
         }
+        if (patch.assignee !== undefined) {
+          const a = patch.assignee.trim();
+          if (a) {
+            phase.assignee = a;
+          } else {
+            delete phase.assignee;
+          }
+        }
       });
       if (!ok && patch.state !== undefined) {
         void vscode.window.showWarningMessage(
@@ -1211,6 +1224,14 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         if (patch.commit !== undefined) {
           task.commit = patch.commit;
+        }
+        if (patch.assignee !== undefined) {
+          const a = patch.assignee.trim();
+          if (a) {
+            task.assignee = a;
+          } else {
+            delete task.assignee;
+          }
         }
       });
     },
@@ -1366,6 +1387,13 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SIDEBAR_WEBVIEW_ID, sidebarUi, {
       webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("planstack.requireTaskPrompt")) {
+        void refreshPlans(sidebarUi);
+      }
     }),
   );
 
@@ -1738,6 +1766,7 @@ export function activate(context: vscode.ExtensionContext): void {
               createdAt: regenerated.createdAt ?? existingPlan.createdAt,
             };
             normalizeStaleInProgressToPending(merged);
+            applyTaskPromptDefaultsFromDesc(merged);
             await savePlanPreservingFile(merged, root);
           },
         );

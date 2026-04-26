@@ -14,11 +14,13 @@ Schema:
   - state: same enum as plan
   - title: string
   - description: string (phase scope / narrative)
+  - assignee: optional string (human-readable owner label for the phase)
   - tasks: array (can be empty) of:
     - id: string
     - state: same enum
     - desc: string (concrete work item)
     - commit: boolean (whether this item should end in a git commit)
+    - assignee: optional string (human-readable owner label for the task)
     Tasks have NO dependencies — only phases do.
   - dependsOn: optional string[] of phase dependency refs.
     Ref forms: "phase-id" (same plan) or "plan-id/phase-id" (another plan).

@@ -110,13 +110,18 @@ function parseTask(raw: unknown, phaseIndex: number, taskIndex: number): Task {
   const fieldPrefix = `phases[${phaseIndex}].tasks[${taskIndex}]`;
   // Legacy plans may carry a `dependsOn` field on tasks; we silently ignore it.
   // Dependencies are only allowed at the phase level.
-  return {
+  const task: Task = {
     id: asString(raw.id, `${fieldPrefix}.id`),
     state: asTaskState(raw.state, `${fieldPrefix}.state`),
     desc: typeof raw.desc === "string" ? raw.desc.trim() : "",
     commit: asBoolean(raw.commit, `${fieldPrefix}.commit`),
     prompt: asOptionalString(raw.prompt),
   };
+  const assignee = asOptionalString(raw.assignee);
+  if (assignee) {
+    task.assignee = assignee;
+  }
+  return task;
 }
 
 function parsePhase(raw: unknown, index: number): Phase {
@@ -135,7 +140,7 @@ function parsePhase(raw: unknown, index: number): Phase {
   }
   const tasks = tasksRaw.map((t, j) => parseTask(t, index, j));
 
-  return {
+  const phase: Phase = {
     id: asString(raw.id, `phases[${index}].id`),
     state: asPhaseState(raw.state, `phases[${index}].state`),
     title: asString(raw.title, `phases[${index}].title`),
@@ -143,6 +148,11 @@ function parsePhase(raw: unknown, index: number): Phase {
     tasks,
     dependsOn: depends,
   };
+  const assignee = asOptionalString(raw.assignee);
+  if (assignee) {
+    phase.assignee = assignee;
+  }
+  return phase;
 }
 
 /** Parse and validate workspace plan JSON (seed-aligned schema). */

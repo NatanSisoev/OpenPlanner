@@ -2,6 +2,7 @@ import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
 import * as path from "path";
 import { traceEvent, traceMultiline } from "../debug/trace";
+import { startRevealAgentEditedFilesSession } from "./agentEditReveal";
 
 /** Reject second `runAgentPrint` while another is active (no queue). */
 export const AGENT_RUN_BUSY_MESSAGE =
@@ -415,8 +416,10 @@ export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: s
 
 /** Cursor `agent` print mode; delegates to {@link runExternalCli}. */
 export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const revealSession =
+    opts.applyEdits === true ? startRevealAgentEditedFilesSession(opts.cwd, opts.debugTraceId) : undefined;
   const args = buildCursorAgentArgv(opts.agentPath, opts.prompt, !!opts.applyEdits);
-  return runExternalCli({
+  const run = runExternalCli({
     executable: opts.agentPath,
     args,
     cwd: opts.cwd,
@@ -430,5 +433,8 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     useWsl: opts.useWsl,
     wslDistro: opts.wslDistro,
     wslPassThroughKeys: ["CURSOR_API_KEY"],
+  });
+  return run.finally(() => {
+    revealSession?.dispose();
   });
 }

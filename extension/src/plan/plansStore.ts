@@ -10,6 +10,8 @@ export type TaskPatch = {
   desc?: string;
   prompt?: string;
   commit?: boolean;
+  /** Set or clear assignee; empty string clears. */
+  assignee?: string;
 };
 
 export type PhasePatch = {
@@ -17,6 +19,8 @@ export type PhasePatch = {
   title?: string;
   description?: string;
   dependsOn?: string[];
+  /** Set or clear assignee; empty string clears. */
+  assignee?: string;
 };
 
 /**
@@ -132,6 +136,14 @@ export class PlansStore implements vscode.Disposable {
     if (patch.commit !== undefined) {
       task.commit = patch.commit;
     }
+    if (patch.assignee !== undefined) {
+      const a = patch.assignee.trim();
+      if (a) {
+        task.assignee = a;
+      } else {
+        delete task.assignee;
+      }
+    }
     recomputeAggregates(plan);
 
     try {
@@ -171,6 +183,14 @@ export class PlansStore implements vscode.Disposable {
         return false;
       }
       phase.dependsOn = patch.dependsOn.length > 0 ? [...patch.dependsOn] : undefined;
+    }
+    if (patch.assignee !== undefined) {
+      const a = patch.assignee.trim();
+      if (a) {
+        phase.assignee = a;
+      } else {
+        delete phase.assignee;
+      }
     }
     recomputeAggregates(plan);
 

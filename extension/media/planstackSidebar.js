@@ -38,7 +38,11 @@
     runPlanTooltip: "Runs phases in order from the next runnable phase.",
     runPhaseTooltip: "Runs this phase with the configured executor (CLI, etc.).",
     runTaskTooltip: "Runs this task with the configured executor.",
+    runTaskNeedsPromptTooltip:
+      "Add a task prompt first (open task details, Edit prompt ✎, save) or set it in the plan JSON. Or disable planstack.requireTaskPrompt to run using the task title only.",
   };
+
+  let requireTaskPrompt = true;
 
   // Red-button UX spec: Overview webview only — place a destructive-styled control labeled "Stop agents"
   // (title: abort in-flight headless agent runs) in the top toolbar’s right group beside Sync; the webview
@@ -54,6 +58,21 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  /** Optional assignee chip: `kind` is "phase" or "task". */
+  function assigneeChip(planId, phaseId, kind, assignee, taskId) {
+    const pid = esc(planId);
+    const phid = esc(phaseId);
+    const label = assignee && String(assignee).trim() ? String(assignee).trim() : "";
+    const text = label ? esc(label) : '<span class="assignee-placeholder">Assign</span>';
+    const titleText = label ? `Assignee: ${label} (click to change; empty clears)` : "Set assignee (empty clears)";
+    const titleAttr = esc(titleText);
+    if (kind === "task" && taskId) {
+      const tid = esc(taskId);
+      return `<span class="assignee-chip" role="button" tabindex="0" data-action="editTaskAssignee" data-plan="${pid}" data-phase="${phid}" data-task="${tid}" title="${titleAttr}">${text}</span>`;
+    }
+    return `<span class="assignee-chip" role="button" tabindex="0" data-action="editPhaseAssignee" data-plan="${pid}" data-phase="${phid}" title="${titleAttr}">${text}</span>`;
   }
 
   const STATE_CYCLE = ["pending", "in_progress", "completed", "failed", "cancelled"];
@@ -294,6 +313,9 @@
             ${badgeHtml(state)}
           </header>
           <div class="graph-phase-title">${esc(node.phase.title)}</div>
+          ${node.phase.assignee && String(node.phase.assignee).trim()
+            ? `<div class="graph-phase-assignee" title="Assignee">${esc(String(node.phase.assignee).trim())}</div>`
+            : ""}
           ${phaseDescHtml}
           ${depSummary.short
             ? `<div class="graph-phase-deps-chip" title="${esc(depSummary.title)}"><span class="chip-glyph">⇠</span>${esc(depSummary.short)}</div>`
@@ -650,7 +672,10 @@
               <span class="phase-status-dot dot-${phase.state}"></span>
             </div>
             <div class="phase-header-text">
-              <span class="phase-title">${esc(phase.title)}</span>
+              <div class="phase-title-row">
+                <span class="phase-title">${esc(phase.title)}</span>
+                ${assigneeChip(plan.id, phase.id, "phase", phase.assignee)}
+              </div>
             </div>
           </div>
           <div class="phase-header-right">
@@ -762,7 +787,10 @@
                     title="Click to set: ${nextStateInCycle(phase.state).replace("_", " ")}"></span>
             </div>
             <div class="phase-header-text">
-              <span class="phase-title">${esc(phase.title)}</span>
+              <div class="phase-title-row">
+                <span class="phase-title">${esc(phase.title)}</span>
+                ${assigneeChip(plan.id, phase.id, "phase", phase.assignee)}
+              </div>
               ${isBlocked ? `<span class="phase-blocked-hint">blocked by ${esc(blockers.join(", "))}</span>` : ""}
             </div>
           </div>
@@ -782,6 +810,7 @@
 
   function renderTask(plan, phase, task) {
     const isCancelled = task.state === "cancelled";
+    const isCompleted = task.state === "completed";
     const isRunning = task.state === "in_progress";
     const pid = esc(plan.id);
     const phid = esc(phase.id);
@@ -791,22 +820,41 @@
     // (the run flow blocks the same way) but we keep the message short.
     const phaseBlockers = blockingDeps(plan, phase);
     const isBlocked = phaseBlockers.length > 0;
+    const needsPrompt = !String(task.prompt || "").trim();
+    const enforcePromptUi =
+      requireTaskPrompt &&
+      needsPrompt &&
+      !isBlocked &&
+      !isRunning &&
+      !isCancelled &&
+      !isCompleted;
     const runTitle = isRunning
       ? "Already running"
       : isBlocked
         ? `Phase blocked by: ${phaseBlockers.join(", ")}`
-        : R.runTaskTooltip;
+        : enforcePromptUi
+          ? (R.runTaskNeedsPromptTooltip || R.runTaskTooltip)
+          : R.runTaskTooltip;
+    const runDisabled = isRunning || enforcePromptUi;
+    const rowClass = ["task-row", isBlocked ? "blocked" : "", enforcePromptUi ? "needs-prompt" : ""]
+      .filter(Boolean)
+      .join(" ");
+    const needsPromptHint = enforcePromptUi
+      ? `<span class="task-needs-prompt-hint">needs prompt</span>`
+      : "";
 
     const runBtn = `<button class="task-btn run-task" data-action="taskRun"
                  data-plan="${pid}" data-phase="${phid}" data-task="${tid}"
-                 ${isRunning ? "disabled" : ""}
+                 ${runDisabled ? "disabled" : ""}
                  aria-label="${esc(R.runTaskButton)}"
                  title="${esc(runTitle)}"><span class="ps-run-glyph" aria-hidden="true">${R.glyph}</span><span class="run-task-label">${esc(R.runTaskButton)}</span></button>`;
 
     return `
-      <div class="task-row${isBlocked ? " blocked" : ""}" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
+      <div class="${rowClass}" data-plan="${pid}" data-phase="${phid}" data-task="${tid}">
         ${taskIconHtml(task.state, pid, phid, tid)}
         <span class="task-title${isCancelled ? " strike" : ""}">${esc(task.desc)}</span>
+        ${needsPromptHint}
+        ${assigneeChip(plan.id, phase.id, "task", task.assignee, task.id)}
         <div class="task-actions">${runBtn}</div>
       </div>`;
   }
@@ -1040,12 +1088,40 @@
       return;
     }
 
+    if (action === "editTaskAssignee") {
+      e.stopPropagation();
+      if (planId && phaseId && taskId) {
+        vscode.postMessage({ type: "editTaskAssignee", planId, phaseId, taskId });
+      }
+      return;
+    }
+
+    if (action === "editPhaseAssignee") {
+      e.stopPropagation();
+      if (planId && phaseId) {
+        vscode.postMessage({ type: "editPhaseAssignee", planId, phaseId });
+      }
+      return;
+    }
+
     if (action === "taskRun") {
       e.stopPropagation();
       const plan = plans.find((p) => p.id === planId);
       const phase = plan?.phases?.find((ph) => ph.id === phaseId);
       const task = phase?.tasks?.find((t) => t.id === taskId);
       if (!task || task.state === "in_progress") {
+        return;
+      }
+      const needsPrompt = !String(task.prompt || "").trim();
+      const phaseBlockers = blockingDeps(plan, phase);
+      const isBlocked = phaseBlockers.length > 0;
+      const enforcePromptUi =
+        requireTaskPrompt &&
+        needsPrompt &&
+        !isBlocked &&
+        task.state !== "cancelled" &&
+        task.state !== "completed";
+      if (enforcePromptUi) {
         return;
       }
       // Optimistic local state for instant feedback while the backend dispatches.
@@ -1333,6 +1409,10 @@
     }
     const menu = createContextMenu(event.clientX, event.clientY, [
       {
+        label: "Set assignee…",
+        onClick: () => vscode.postMessage({ type: "editTaskAssignee", planId, phaseId, taskId }),
+      },
+      {
         label: "Delete task",
         onClick: () => vscode.postMessage({ type: "deleteTask", planId, phaseId, taskId }),
       },
@@ -1348,6 +1428,10 @@
       return;
     }
     const menu = createContextMenu(event.clientX, event.clientY, [
+      {
+        label: "Set assignee…",
+        onClick: () => vscode.postMessage({ type: "editPhaseAssignee", planId, phaseId }),
+      },
       {
         label: "Delete phase",
         onClick: () => vscode.postMessage({ type: "deletePhase", planId, phaseId }),
@@ -1822,6 +1906,7 @@
     }
     if (msg.type === "setPlans") {
       plans = msg.plans || [];
+      requireTaskPrompt = msg.requireTaskPrompt !== false;
       plans.forEach((p) => expandedPlans.add(p.id));
       render();
       return;

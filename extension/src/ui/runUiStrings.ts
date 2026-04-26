@@ -12,6 +12,9 @@ export const PS_RUN_UI = {
   runPlanTooltip: "Runs phases in order from the next runnable phase.",
   runPhaseTooltip: "Runs this phase with the configured executor (CLI, etc.).",
   runTaskTooltip: "Runs this task with the configured executor.",
+  /** Sidebar when `task.prompt` is empty and `planstack.requireTaskPrompt` is true */
+  runTaskNeedsPromptTooltip:
+    "Add a task prompt first (open task details, Edit prompt ✎, save) or set it in the plan JSON. Or disable planstack.requireTaskPrompt to run using the task title only.",
 
   chatStreamRunPhase: "Run phase",
   chatStreamRunTask: "Run task",

@@ -11,13 +11,24 @@ interface PlanstackSidebarCallbacks {
   onUpdatePhase: (
     planId: string,
     phaseId: string,
-    patch: { state?: ExecutionState; title?: string; description?: string },
+    patch: {
+      state?: ExecutionState;
+      title?: string;
+      description?: string;
+      assignee?: string;
+    },
   ) => Promise<boolean>;
   onUpdateTask: (
     planId: string,
     phaseId: string,
     taskId: string,
-    patch: { state?: ExecutionState; desc?: string; prompt?: string; commit?: boolean },
+    patch: {
+      state?: ExecutionState;
+      desc?: string;
+      prompt?: string;
+      commit?: boolean;
+      assignee?: string;
+    },
   ) => Promise<boolean>;
   onUpdatePlan: (planId: string, patch: { title?: string; description?: string }) => Promise<boolean>;
   onCreatePlan: (input: { title: string; description?: string }) => Promise<void>;
@@ -66,7 +77,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
   private readonly onSyncPullPushAll: PlanstackSidebarCallbacks["onSyncPullPushAll"];
   private readonly promptEditors = new Map<
     string,
-    { kind: "plan" | "phase"; planId: string; phaseId?: string }
+    { kind: "plan" | "phase" | "task"; planId: string; phaseId?: string; taskId?: string }
   >();
 
   constructor(private readonly extUri: vscode.Uri, callbacks: PlanstackSidebarCallbacks) {
@@ -138,6 +149,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         desc?: string;
         prompt?: string;
         commit?: boolean;
+        assignee?: string;
         orderedPlanIds?: string[];
       };
       if (m.type === "runPhase" && m.planId && m.phaseId) {
@@ -199,6 +211,12 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       if (m.type === "editPhasePrompt" && m.planId && m.phaseId) {
         void this.editPhasePrompt(m.planId, m.phaseId);
       }
+      if (m.type === "editTaskAssignee" && m.planId && m.phaseId && m.taskId) {
+        void this.editTaskAssignee(m.planId, m.phaseId, m.taskId);
+      }
+      if (m.type === "editPhaseAssignee" && m.planId && m.phaseId) {
+        void this.editPhaseAssignee(m.planId, m.phaseId);
+      }
       if (m.type === "updateTask" && m.planId && m.phaseId && m.taskId) {
         traceEvent(recvId, "sidebar.updateTask.meta", {
           planId: m.planId,
@@ -220,6 +238,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
           desc: m.desc,
           prompt: m.prompt,
           commit: m.commit,
+          assignee: m.assignee,
         }).then((ok) => {
           if (!m.requestId) {
             return;
@@ -282,7 +301,7 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     setTimeout(() => {
       try {
         if (sentVersion === this.plansVersion) {
-          w.postMessage({ type: "setPlans", plans: this.plans });
+          this.postPlansToWebview();
         }
       } catch {
         // Webview may already be disposed.
@@ -290,14 +309,24 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     }, 0);
   }
 
-  setPlans(plans: Plan[]): void {
-    this.plans = plans;
-    this.plansVersion += 1;
+  private postPlansToWebview(): void {
+    const w = this.view?.webview;
+    if (!w) {
+      return;
+    }
+    const requireTaskPrompt =
+      vscode.workspace.getConfiguration("planstack").get<boolean>("requireTaskPrompt") ?? true;
     try {
-      this.view?.webview.postMessage({ type: "setPlans", plans });
+      w.postMessage({ type: "setPlans", plans: this.plans, requireTaskPrompt });
     } catch {
       // Webview not ready yet.
     }
+  }
+
+  setPlans(plans: Plan[]): void {
+    this.plans = plans;
+    this.plansVersion += 1;
+    this.postPlansToWebview();
   }
 
   /** Backward-compatible shim. */
@@ -333,6 +362,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       if (m.type === "renameTask" && m.planId && m.phaseId && m.taskId) {
         void this.renameTask(m.planId, m.phaseId, m.taskId);
       }
+      if (m.type === "editTaskAssignee" && m.planId && m.phaseId && m.taskId) {
+        void this.editTaskAssignee(m.planId, m.phaseId, m.taskId);
+      }
       if (m.type === "toggleTaskCommit" && m.planId && m.phaseId && m.taskId) {
         const planIdLocal = m.planId;
         const phaseIdLocal = m.phaseId;
@@ -353,6 +385,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
             panel.webview.html = getTaskDetailsHtml(updatedPlan, updatedPhase, updatedTask);
           }
         })();
+      }
+      if (m.type === "editTaskPrompt" && m.planId && m.phaseId && m.taskId) {
+        void this.editTaskPrompt(m.planId, m.phaseId, m.taskId);
       }
     });
     panel.onDidDispose(() => {
@@ -414,6 +449,63 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     await this.onUpdatePhase(planId, phaseId, { title: trimmed });
   }
 
+  private async editTaskAssignee(planId: string, phaseId: string, taskId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    const task = phase?.tasks?.find((t) => t.id === taskId);
+    if (!plan || !phase || !task) {
+      void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+      return;
+    }
+
+    const next = await vscode.window.showInputBox({
+      title: "Task assignee",
+      prompt: "Owner label (free text). Leave empty to clear.",
+      value: task.assignee ?? "",
+      ignoreFocusOut: true,
+    });
+    if (next === undefined) {
+      return;
+    }
+
+    await this.onUpdateTask(planId, phaseId, taskId, { assignee: next });
+    const updatedPlan = this.plans.find((p) => p.id === planId);
+    const updatedPhase = updatedPlan?.phases?.find((ph) => ph.id === phaseId);
+    const updatedTask = updatedPhase?.tasks?.find((t) => t.id === taskId);
+    if (updatedPlan && updatedPhase && updatedTask && this.taskDetailsPanel) {
+      this.taskDetailsPanel.webview.html = getTaskDetailsHtml(updatedPlan, updatedPhase, updatedTask);
+    }
+    if (updatedPlan && updatedPhase && this.phaseDetailsPanel) {
+      this.phaseDetailsPanel.webview.html = getPhaseDetailsHtml(updatedPlan, updatedPhase);
+    }
+  }
+
+  private async editPhaseAssignee(planId: string, phaseId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    if (!plan || !phase) {
+      void vscode.window.showWarningMessage("Planstack: phase not found — refresh and try again.");
+      return;
+    }
+
+    const next = await vscode.window.showInputBox({
+      title: "Phase assignee",
+      prompt: "Owner label (free text). Leave empty to clear.",
+      value: phase.assignee ?? "",
+      ignoreFocusOut: true,
+    });
+    if (next === undefined) {
+      return;
+    }
+
+    await this.onUpdatePhase(planId, phaseId, { assignee: next });
+    const updatedPlan = this.plans.find((p) => p.id === planId);
+    const updatedPhase = updatedPlan?.phases?.find((ph) => ph.id === phaseId);
+    if (updatedPlan && updatedPhase && this.phaseDetailsPanel) {
+      this.phaseDetailsPanel.webview.html = getPhaseDetailsHtml(updatedPlan, updatedPhase);
+    }
+  }
+
   private async renamePlan(planId: string): Promise<void> {
     const plan = this.plans.find((p) => p.id === planId);
     if (!plan) {
@@ -455,8 +547,25 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
         const text = doc.getText().replace(/\s+$/, "");
         if (ctx.kind === "plan") {
           void this.onUpdatePlan(ctx.planId, { description: text });
-        } else {
+        } else if (ctx.kind === "phase") {
           void this.onUpdatePhase(ctx.planId, ctx.phaseId ?? "", { description: text });
+        } else {
+          const planId = ctx.planId;
+          const phaseId = ctx.phaseId ?? "";
+          const taskId = ctx.taskId ?? "";
+          void (async () => {
+            const ok = await this.onUpdateTask(planId, phaseId, taskId, { prompt: text });
+            if (!ok || !this.taskDetailsPanel) {
+              return;
+            }
+            const updatedPlan = this.plans.find((p) => p.id === planId);
+            const updatedPhase = updatedPlan?.phases?.find((ph) => ph.id === phaseId);
+            const updatedTask = updatedPhase?.tasks?.find((t) => t.id === taskId);
+            if (updatedPlan && updatedPhase && updatedTask) {
+              this.taskDetailsPanel.webview.html = getTaskDetailsHtml(updatedPlan, updatedPhase, updatedTask);
+              this.taskDetailsPanel.title = `Task: ${updatedTask.desc}`;
+            }
+          })();
         }
       },
       undefined,
@@ -507,6 +616,23 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
     void vscode.window.showInformationMessage("Edit the phase description, then save the tab to apply.");
   }
 
+  private async editTaskPrompt(planId: string, phaseId: string, taskId: string): Promise<void> {
+    const plan = this.plans.find((p) => p.id === planId);
+    const phase = plan?.phases?.find((ph) => ph.id === phaseId);
+    const task = phase?.tasks?.find((t) => t.id === taskId);
+    if (!plan || !phase || !task) {
+      void vscode.window.showWarningMessage("Planstack: task not found — refresh and try again.");
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument({
+      content: task.prompt ? String(task.prompt) : "",
+      language: "markdown",
+    });
+    this.promptEditors.set(doc.uri.toString(), { kind: "task", planId, phaseId, taskId });
+    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false });
+    void vscode.window.showInformationMessage("Edit the task prompt, then save the tab to apply.");
+  }
+
   private async openPhaseDetails(planId: string, phaseId: string): Promise<void> {
     const plan = this.plans.find((p) => p.id === planId);
     const phase = plan?.phases?.find((ph) => ph.id === phaseId);
@@ -535,6 +661,9 @@ export class PlanstackSidebarWebview implements vscode.WebviewViewProvider {
       const m = msg as { type?: string; planId?: string; phaseId?: string; description?: string };
       if (m.type === "renamePhase" && m.planId && m.phaseId) {
         void this.renamePhase(m.planId, m.phaseId);
+      }
+      if (m.type === "editPhaseAssignee" && m.planId && m.phaseId) {
+        void this.editPhaseAssignee(m.planId, m.phaseId);
       }
       if (m.type === "setPhaseDescription" && m.planId && m.phaseId) {
         const next = (m.description ?? "").trim();
@@ -1635,9 +1764,52 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       pointer-events: none;
     }
 
+    .phase-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .phase-title-row .phase-title {
+      flex: 1;
+      min-width: 0;
+    }
     .phase-title {
       font-size: 0.86em;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .assignee-chip {
+      font-size: 0.72em;
+      max-width: 88px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 1px 6px;
+      border-radius: 8px;
+      border: 1px solid rgba(127,127,127,0.35);
+      cursor: pointer;
+      flex-shrink: 0;
+      opacity: 0.88;
+      line-height: 1.35;
+    }
+    .assignee-chip:hover {
+      opacity: 1;
+      background: rgba(127,127,127,0.12);
+    }
+    .assignee-placeholder {
+      opacity: 0.55;
+      font-style: italic;
+    }
+    .task-row .assignee-chip {
+      max-width: 72px;
+    }
+    .graph-phase-assignee {
+      font-size: 0.72em;
+      opacity: 0.85;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .phase-header-right {
       display: flex; align-items: center; gap: 5px; flex-shrink: 0;
@@ -1699,6 +1871,18 @@ function getSidebarHtml(csp: string, labelsUri: vscode.Uri, scriptUri: vscode.Ur
       padding: 3px 5px; border-radius: 3px; cursor: default;
     }
     .task-row.blocked { opacity: 0.82; }
+    .task-row.needs-prompt:not(.blocked) {
+      border-left: 2px solid var(--vscode-inputValidation-warningBorder, rgba(234, 179, 8, 0.75));
+      padding-left: 4px;
+      margin-left: -2px;
+    }
+    .task-needs-prompt-hint {
+      font-size: 0.72em;
+      line-height: 1.35;
+      color: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.95));
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
     .task-row:hover { background: var(--c-hover); }
     .task-row:hover .task-actions { opacity: 1; }
 
@@ -1786,12 +1970,16 @@ function htmlEscape(s: unknown): string {
 
 function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Plan["phases"][number]["tasks"][number]): string {
   const prompt = task.prompt?.trim() ?? "";
-  const promptBlock = prompt
-    ? `<div class="section">
-         <div class="label">Prompt</div>
-         <pre>${htmlEscape(prompt)}</pre>
-       </div>`
-    : `<div class="section subtle">No prompt provided for this task.</div>`;
+  const promptBody = prompt
+    ? `<pre>${htmlEscape(prompt)}</pre>`
+    : `<div class="subtle">No prompt provided for this task.</div>`;
+  const promptSection = `<div class="section">
+    <div class="row" style="margin-bottom: 6px; width: 100%; justify-content: space-between; align-items: center;">
+      <div class="label" style="margin-bottom: 0;">Prompt</div>
+      <button class="edit-btn" type="button" data-action="editTaskPrompt" title="Edit task prompt">✎</button>
+    </div>
+    ${promptBody}
+  </div>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1885,8 +2073,9 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
     <div class="k">Task</div><div class="v"><code>${htmlEscape(task.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(task.state)}</code></div>
     <div class="k">Commit</div><div class="v"><button class="toggle-btn" type="button" data-action="toggleCommit" data-value="${task.commit ? "true" : "false"}" title="Click to toggle">${task.commit ? "true" : "false"}</button></div>
+    <div class="k">Assignee</div><div class="v"><span class="row"><span>${task.assignee?.trim() ? htmlEscape(task.assignee.trim()) : "—"}</span><button class="edit-btn" type="button" data-action="editTaskAssignee" title="Set assignee">✎</button></span></div>
   </div>
-  ${promptBlock}
+  ${promptSection}
   <script>
     const vscode = acquireVsCodeApi();
     document.addEventListener("click", (e) => {
@@ -1895,6 +2084,12 @@ function getTaskDetailsHtml(plan: Plan, phase: Plan["phases"][number], task: Pla
       const action = btn.dataset.action;
       if (action === "renameTask") {
         vscode.postMessage({ type: "renameTask", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
+      }
+      if (action === "editTaskAssignee") {
+        vscode.postMessage({ type: "editTaskAssignee", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
+      }
+      if (action === "editTaskPrompt") {
+        vscode.postMessage({ type: "editTaskPrompt", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
       }
       if (action === "toggleCommit") {
         vscode.postMessage({ type: "toggleTaskCommit", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)}, taskId: ${JSON.stringify(task.id)} });
@@ -1913,12 +2108,14 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
     : `<span class="subtle">none</span>`;
   const tasksMarkup = tasks.length
     ? `<ul>${tasks
-        .map(
-          (task) => `<li>
+        .map((task) => {
+          const asg = task.assignee?.trim();
+          const asgLine = asg ? ` · assignee: ${htmlEscape(asg)}` : "";
+          return `<li>
               <div><strong>${htmlEscape(task.desc)}</strong></div>
-              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code></div>
-            </li>`,
-        )
+              <div class="subtle"><code>${htmlEscape(task.id)}</code> · <code>${htmlEscape(task.state)}</code> · commit=<code>${task.commit ? "true" : "false"}</code>${asgLine}</div>
+            </li>`;
+        })
         .join("")}</ul>`
     : `<div class="subtle">This phase has no tasks.</div>`;
 
@@ -2030,6 +2227,7 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
     <div class="k">Phase</div><div class="v"><code>${htmlEscape(phase.id)}</code></div>
     <div class="k">State</div><div class="v"><code>${htmlEscape(phase.state)}</code></div>
     <div class="k">Depends on</div><div class="v">${phaseDepsMarkup}</div>
+    <div class="k">Assignee</div><div class="v"><span class="row"><span>${phase.assignee?.trim() ? htmlEscape(phase.assignee.trim()) : "—"}</span><button class="edit-btn" type="button" data-action="editPhaseAssignee" title="Set assignee">✎</button></span></div>
     <div class="k">Description</div><div class="v"><span class="row"><span>${htmlEscape(phase.description)}</span><button class="edit-btn" type="button" data-action="editPhaseDescription" title="Edit">✎</button></span></div>
     <div class="k">Tasks</div><div class="v"><code>${tasks.length}</code></div>
   </div>
@@ -2065,6 +2263,9 @@ function getPhaseDetailsHtml(plan: Plan, phase: Plan["phases"][number]): string 
       const action = btn.dataset.action;
       if (action === "renamePhase") {
         vscode.postMessage({ type: "renamePhase", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)} });
+      }
+      if (action === "editPhaseAssignee") {
+        vscode.postMessage({ type: "editPhaseAssignee", planId: ${JSON.stringify(plan.id)}, phaseId: ${JSON.stringify(phase.id)} });
       }
       if (action === "editPhaseDescription") {
         openDescEditor();
