@@ -15,8 +15,6 @@
   "activationEvents": [
     "onView:hackupc.planstack.ui",
     "onView:hackupc.planstack.chat",
-    "onView:hackupc.planstack.redPage",
-    "onCommand:hackupc.planstack.openRedPage",
     "onCommand:hackupc.planstack.refresh",
     "onCommand:hackupc.planstack.createPlan",
     "onCommand:hackupc.planstack.createPhase",
@@ -58,11 +56,6 @@
         {
           "id": "hackupc.planstack.chat",
           "name": "Chat",
-          "type": "webview"
-        },
-        {
-          "id": "hackupc.planstack.redPage",
-          "name": "Red page",
           "type": "webview"
         }
       ]
@@ -145,10 +138,6 @@
       {
         "command": "hackupc.nativeHandoff.demo",
         "title": "HackUPC: Native handoff demo (clipboard + Composer)"
-      },
-      {
-        "command": "hackupc.planstack.openRedPage",
-        "title": "Planstack: Open red page"
       }
     ],
     "menus": {
