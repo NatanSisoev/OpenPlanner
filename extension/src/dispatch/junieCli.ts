@@ -298,6 +298,11 @@ export async function handoffViaJunieCli(
             useWsl,
             wslDistro,
             wslPassThroughKeys: ["JUNIE_API_KEY"],
+            onStallWarning: (idleMs) => {
+              postChatSystemMessage(
+                `${label}: no Junie output for ${Math.floor(idleMs / 1000)}s — process may be stalled. Use “Stop agents” to abort.`,
+              );
+            },
           });
           if (r.exitCode !== 0) {
             endReason = "error";

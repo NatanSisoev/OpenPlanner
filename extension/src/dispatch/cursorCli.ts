@@ -311,6 +311,11 @@ export async function handoffViaAgentCli(
             debugTraceId: tid,
             useWsl,
             wslDistro,
+            onStallWarning: (idleMs) => {
+              postChatSystemMessage(
+                `${label}: no agent output for ${Math.floor(idleMs / 1000)}s — process may be stalled. Use “Stop agents” to abort.`,
+              );
+            },
           });
           if (r.exitCode !== 0) {
             endReason = "error";

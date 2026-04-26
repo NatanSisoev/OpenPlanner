@@ -8,7 +8,7 @@ import { dispatchPhaseHandoff } from "./dispatch/router";
 import { mergePlanBranchNoFf } from "./git/mergePlanBranch";
 import { ensurePlanWorkBranch } from "./git/ensurePlanWorkBranch";
 import { effectiveWorkBranch, summarizeGitForPlan } from "./git/resolver";
-import { loadPlansFromWorkspace, watchPlans } from "./plan/loader";
+import { loadPlansFromWorkspace, watchPlans, type PlanLoadError } from "./plan/loader";
 import { deriveAggregateState, recomputeAggregates } from "./plan/aggregate";
 import {
   blockingPhaseDependencies,
@@ -117,16 +117,76 @@ export function activate(context: vscode.ExtensionContext): void {
   } = {};
   let refreshGeneration = 0;
   const planMutationQueues = new Map<string, Promise<unknown>>();
+  // Synchronous reservation that closes the TOCTOU window between the
+  // isAgentRunBusy() preflight and the actual spawn inside runExternalCli.
+  // Without it, two near-simultaneous Run clicks can both pass the check.
+  let phaseRunReservation = false;
+  let didInitialNormalize = false;
+  let lastErrorFingerprint = "";
 
   async function refreshPlans(sidebar: PlanstackSidebarWebview): Promise<void> {
     const generation = ++refreshGeneration;
-    const loaded = await loadPlansFromWorkspace();
+    const errors: PlanLoadError[] = [];
+    const loaded = await loadPlansFromWorkspace((err) => errors.push(err));
     if (generation !== refreshGeneration) {
       return;
+    }
+    if (!didInitialNormalize) {
+      didInitialNormalize = true;
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      for (const plan of loaded) {
+        let mutated = false;
+        for (const phase of plan.phases) {
+          if (phase.state === "in_progress") {
+            phase.state = "pending";
+            mutated = true;
+          }
+          for (const task of phase.tasks) {
+            if (task.state === "in_progress") {
+              task.state = "pending";
+              mutated = true;
+            }
+          }
+        }
+        if (mutated) {
+          recomputeAggregates(plan);
+          if (root) {
+            try {
+              await savePlanPreservingFile(plan, root);
+            } catch (e) {
+              logLine(
+                `refreshPlans: persist normalized state failed for ${plan.id}: ${e instanceof Error ? e.message : String(e)}`,
+              );
+            }
+          }
+        }
+      }
     }
     const savedOrder = context.workspaceState.get<string[]>(PLAN_ORDER_KEY);
     currentPlans = orderPlans(loaded, savedOrder);
     sidebar.setPlans(currentPlans);
+    const fingerprint = errors
+      .map((e) => `${e.uri.fsPath}:${e.message}`)
+      .sort()
+      .join("|");
+    if (fingerprint && fingerprint !== lastErrorFingerprint) {
+      const out = getOutput();
+      out.appendLine(`\n--- Plan validation errors (${errors.length}) ---`);
+      for (const err of errors) {
+        out.appendLine(`  ${err.uri.fsPath}: ${err.message}`);
+      }
+      void vscode.window
+        .showWarningMessage(
+          `Planstack: ${errors.length} plan file${errors.length === 1 ? "" : "s"} failed validation and ${errors.length === 1 ? "was" : "were"} skipped.`,
+          "Show Output",
+        )
+        .then((choice) => {
+          if (choice === "Show Output") {
+            out.show(true);
+          }
+        });
+    }
+    lastErrorFingerprint = fingerprint;
   }
 
   async function pickPhaseInteractively(): Promise<{ plan: Plan; phase: Plan["phases"][number] } | undefined> {
@@ -407,17 +467,19 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       return false;
     }
-    if (isAgentRunBusy()) {
+    if (phaseRunReservation || isAgentRunBusy()) {
       void vscode.window.showWarningMessage(
         "Planstack: an agent run is already in progress. Stop it or wait for completion, then retry.",
       );
       return false;
     }
+    phaseRunReservation = true;
 
     const statusLabel = `${plan.title} › ${phase.title} › ${task.desc}`;
     const root = vscode.workspace.workspaceFolders?.[0]?.uri;
     if (!root) {
       void vscode.window.showWarningMessage("Planstack: no workspace folder found.");
+      phaseRunReservation = false;
       return false;
     }
     const git = await summarizeGitForPlan(root, phase, plan);
@@ -440,6 +502,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     if (!marked) {
       void vscode.window.showWarningMessage("Planstack: task could not be marked in progress.");
+      phaseRunReservation = false;
       return false;
     }
 
@@ -581,6 +644,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return false;
     } finally {
       postAgentStreamEnd(runId, endReason);
+      phaseRunReservation = false;
     }
   }
 
@@ -802,79 +866,84 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       return false;
     }
-    if (isAgentRunBusy()) {
+    if (phaseRunReservation || isAgentRunBusy()) {
       void vscode.window.showWarningMessage(
         "Planstack: an agent run is already in progress. Stop it or wait for completion, then retry.",
       );
       traceEvent(traceId, "runphase.agent_busy_preflight", { planId: plan.id, phaseId: phase.id });
       return false;
     }
-    if (decision === "prepare_branch") {
-      emitRunRequestMessage(plan, phase, source);
-      const branchOk = await ensurePlanWorkBranch(plan, context.workspaceState);
-      traceEvent(traceId, "runphase.branch_prep", { path: source, ok: branchOk, mode: "prepare_branch" });
-      if (!branchOk) {
-        return false;
-      }
-      postChatSystemMessage(`${planChatLabel(plan)}: branch prep accepted for phase "${phase.title}".`);
-    } else {
-      emitRunRequestMessage(plan, phase, source);
-      postChatSystemMessage(
-        `${planChatLabel(plan)}: running phase "${phase.title}" on current branch (branch prep skipped).`,
-      );
-    }
-
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-    const git = root
-      ? await summarizeGitForPlan(root, phase, plan)
-      : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
-    const eff = effectiveWorkBranch(phase, plan);
-    const prompt = buildPhaseHandoffPrompt(plan, phase, {
-      currentHead: git.currentBranchLabel,
-      effectiveWorkBranch: eff,
-      baseBranch: plan.git?.baseBranch,
-    });
-    traceMultiline(traceId, "runphase.generated_prompt", prompt);
-    if (root) {
-      const marked = await mutatePlan(plan.id, (latest) => {
-        const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
-        if (!latestPhase) {
+    phaseRunReservation = true;
+    try {
+      if (decision === "prepare_branch") {
+        emitRunRequestMessage(plan, phase, source);
+        const branchOk = await ensurePlanWorkBranch(plan, context.workspaceState);
+        traceEvent(traceId, "runphase.branch_prep", { path: source, ok: branchOk, mode: "prepare_branch" });
+        if (!branchOk) {
           return false;
         }
-        latestPhase.state = "in_progress";
-      });
-      if (!marked) {
-        void vscode.window.showWarningMessage("Planstack: phase could not be marked in progress.");
-        return false;
-      }
-    }
-    traceEvent(traceId, "runphase.dispatch", {
-      statusLabel: `${plan.title} › ${phase.title}`,
-      traceId,
-      source,
-    });
-    if (root && getWriteHandoffFileOnCliRun()) {
-      try {
-        const written = await writePlanstackHandoffFile(root, prompt, {
-          planId: plan.id,
-          phaseId: phase.id,
-          planTitle: plan.title,
-          phaseTitle: phase.title,
-        });
+        postChatSystemMessage(`${planChatLabel(plan)}: branch prep accepted for phase "${phase.title}".`);
+      } else {
+        emitRunRequestMessage(plan, phase, source);
         postChatSystemMessage(
-          `Handoff file: ${handoffPathForMessage(root, written)} — attach in Junie or keep for your records.`,
+          `${planChatLabel(plan)}: running phase "${phase.title}" on current branch (branch prep skipped).`,
         );
-      } catch (e) {
-        logLine(`runphase: handoff file write failed: ${e instanceof Error ? e.message : String(e)}`);
       }
+
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      const git = root
+        ? await summarizeGitForPlan(root, phase, plan)
+        : { effectiveBranch: undefined, currentBranchLabel: undefined, hasGitRepository: false };
+      const eff = effectiveWorkBranch(phase, plan);
+      const prompt = buildPhaseHandoffPrompt(plan, phase, {
+        currentHead: git.currentBranchLabel,
+        effectiveWorkBranch: eff,
+        baseBranch: plan.git?.baseBranch,
+      });
+      traceMultiline(traceId, "runphase.generated_prompt", prompt);
+      if (root) {
+        const marked = await mutatePlan(plan.id, (latest) => {
+          const latestPhase = latest.phases.find((ph) => ph.id === phase.id);
+          if (!latestPhase) {
+            return false;
+          }
+          latestPhase.state = "in_progress";
+        });
+        if (!marked) {
+          void vscode.window.showWarningMessage("Planstack: phase could not be marked in progress.");
+          return false;
+        }
+      }
+      traceEvent(traceId, "runphase.dispatch", {
+        statusLabel: `${plan.title} › ${phase.title}`,
+        traceId,
+        source,
+      });
+      if (root && getWriteHandoffFileOnCliRun()) {
+        try {
+          const written = await writePlanstackHandoffFile(root, prompt, {
+            planId: plan.id,
+            phaseId: phase.id,
+            planTitle: plan.title,
+            phaseTitle: phase.title,
+          });
+          postChatSystemMessage(
+            `Handoff file: ${handoffPathForMessage(root, written)} — attach in Junie or keep for your records.`,
+          );
+        } catch (e) {
+          logLine(`runphase: handoff file write failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      await dispatchPhaseHandoff(prompt, context, {
+        statusLabel: `${plan.title} › ${phase.title}`,
+        traceId,
+        onCliRunFinished: (kind) =>
+          phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(plan.id, phase.id, kind) : Promise.resolve(),
+      });
+      return true;
+    } finally {
+      phaseRunReservation = false;
     }
-    await dispatchPhaseHandoff(prompt, context, {
-      statusLabel: `${plan.title} › ${phase.title}`,
-      traceId,
-      onCliRunFinished: (kind) =>
-        phaseRunHooks.applyOutcome ? phaseRunHooks.applyOutcome(plan.id, phase.id, kind) : Promise.resolve(),
-    });
-    return true;
   }
 
   async function runPhaseWithBranchDecision(

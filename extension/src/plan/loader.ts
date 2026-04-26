@@ -5,7 +5,16 @@ import { validatePlanJson } from "./validate";
 
 const PLANS_GLOB = ".planstack/plans/*.json";
 
-async function loadPlansFromFolder(folder: vscode.WorkspaceFolder): Promise<Plan[]> {
+/** Reported alongside successfully-loaded plans so callers can surface invalid files in the UI. */
+export interface PlanLoadError {
+  uri: vscode.Uri;
+  message: string;
+}
+
+async function loadPlansFromFolder(
+  folder: vscode.WorkspaceFolder,
+  onError?: (err: PlanLoadError) => void,
+): Promise<Plan[]> {
   const pattern = new vscode.RelativePattern(folder, PLANS_GLOB);
   const uris = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 200, undefined);
   const out: Plan[] = [];
@@ -18,6 +27,7 @@ async function loadPlansFromFolder(folder: vscode.WorkspaceFolder): Promise<Plan
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       logLine(`loader: skipping ${uri.fsPath} (${msg})`);
+      onError?.({ uri, message: msg });
     }
   }
   return out;
@@ -26,9 +36,12 @@ async function loadPlansFromFolder(folder: vscode.WorkspaceFolder): Promise<Plan
 /**
  * Load valid plan JSON from `.planstack/plans/*.json` across every workspace
  * folder. Duplicate ids are dropped (later wins is undefined; warn so the user
- * knows their tree has duplicates).
+ * knows their tree has duplicates). When `onError` is provided, the caller is
+ * notified once per file that failed to parse/validate.
  */
-export async function loadPlansFromWorkspace(): Promise<Plan[]> {
+export async function loadPlansFromWorkspace(
+  onError?: (err: PlanLoadError) => void,
+): Promise<Plan[]> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders?.length) {
     return [];
@@ -36,7 +49,7 @@ export async function loadPlansFromWorkspace(): Promise<Plan[]> {
   const seen = new Set<string>();
   const all: Plan[] = [];
   for (const folder of folders) {
-    for (const plan of await loadPlansFromFolder(folder)) {
+    for (const plan of await loadPlansFromFolder(folder, onError)) {
       if (seen.has(plan.id)) {
         logLine(`loader: duplicate plan id ${plan.id} (keeping first occurrence)`);
         continue;

@@ -26,6 +26,9 @@ export interface RunAgentPrintOptions {
   /** Windows only: spawn via `wsl.exe -d <wslDistro>` instead of native Windows. */
   useWsl?: boolean;
   wslDistro?: string;
+  /** Fired once when the child has produced no output for `stallWarnAfterMs` (default 60s). */
+  onStallWarning?: (idleMs: number) => void;
+  stallWarnAfterMs?: number;
 }
 
 export class AgentCliError extends Error {
@@ -155,6 +158,9 @@ export interface RunExternalCliOptions {
    * Defaults to CURSOR_API_KEY for backward compatibility. Use ["JUNIE_API_KEY"] for Junie CLI.
    */
   wslPassThroughKeys?: string[];
+  /** Fired once when the child has produced no output for `stallWarnAfterMs` (default 60s). */
+  onStallWarning?: (idleMs: number) => void;
+  stallWarnAfterMs?: number;
 }
 
 function wslEnvSuffix(keys: string[]): string {
@@ -285,6 +291,42 @@ export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: s
     let stdoutChunkCount = 0;
     let stderrChunkCount = 0;
 
+    const stallMs = Math.max(5_000, opts.stallWarnAfterMs ?? 60_000);
+    let lastOutputAt = Date.now();
+    let stallWarned = false;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const armStallTimer = (): void => {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+      }
+      if (!opts.onStallWarning || stallWarned) {
+        return;
+      }
+      const remaining = Math.max(1_000, stallMs - (Date.now() - lastOutputAt));
+      stallTimer = setTimeout(() => {
+        const idleMs = Date.now() - lastOutputAt;
+        if (idleMs >= stallMs) {
+          stallWarned = true;
+          traceEvent(tid, "runExternalCli.stall_warning", { idleMs });
+          try {
+            opts.onStallWarning?.(idleMs);
+          } catch {
+            // best-effort notification
+          }
+        } else {
+          armStallTimer();
+        }
+      }, remaining);
+    };
+    armStallTimer();
+    const noteOutput = (): void => {
+      lastOutputAt = Date.now();
+      if (stallWarned) {
+        stallWarned = false;
+      }
+      armStallTimer();
+    };
+
     const emitOut = (raw: string): void => {
       opts.onStdoutChunk?.(clampChunk(raw, streamCap));
     };
@@ -293,6 +335,7 @@ export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: s
     };
 
     child.stdout?.on("data", (d: Buffer) => {
+      noteOutput();
       outChunks.push(d);
       const str = d.toString("utf8");
       stdoutChunkCount++;
@@ -315,6 +358,7 @@ export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: s
       }
     });
     child.stderr?.on("data", (d: Buffer) => {
+      noteOutput();
       errChunks.push(d);
       const str = d.toString("utf8");
       stderrChunkCount++;
@@ -334,6 +378,9 @@ export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: s
 
     child.on("error", (e) => {
       clearTimeout(killTimer);
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+      }
       unregisterChild(child);
       const err = e as NodeJS.ErrnoException;
       let msg = `Failed to spawn CLI: ${e.message}`;
@@ -350,6 +397,9 @@ export function runExternalCli(opts: RunExternalCliOptions): Promise<{ stdout: s
 
     child.on("close", (exitCode) => {
       clearTimeout(killTimer);
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+      }
       unregisterChild(child);
       if (settled) {
         return;
@@ -433,6 +483,8 @@ export function runAgentPrint(opts: RunAgentPrintOptions): Promise<{ stdout: str
     useWsl: opts.useWsl,
     wslDistro: opts.wslDistro,
     wslPassThroughKeys: ["CURSOR_API_KEY"],
+    onStallWarning: opts.onStallWarning,
+    stallWarnAfterMs: opts.stallWarnAfterMs,
   });
   return run.finally(() => {
     revealSession?.dispose();

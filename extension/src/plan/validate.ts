@@ -186,7 +186,9 @@ function checkPhaseInvariants(plan: Plan): void {
   }
   // 2. Same-plan dependsOn refs must exist and cannot self-reference.
   const allIds = new Set(plan.phases.map((p) => p.id));
+  const samePlanDeps = new Map<string, string[]>();
   for (const p of plan.phases) {
+    const deps: string[] = [];
     for (const dep of p.dependsOn ?? []) {
       const parsed = parsePhaseDependencyRef(dep);
       if (!parsed) {
@@ -203,7 +205,38 @@ function checkPhaseInvariants(plan: Plan): void {
       if (!allIds.has(parsed.phaseId)) {
         throw new Error(`phase "${p.id}" depends on unknown phase id "${dep}"`);
       }
+      deps.push(parsed.phaseId);
     }
+    samePlanDeps.set(p.id, deps);
+  }
+  // 3. No transitive cycles (A -> B -> C -> A). DFS with three-color marking.
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  for (const p of plan.phases) {
+    color.set(p.id, WHITE);
+  }
+  const visit = (id: string, stack: string[]): void => {
+    const c = color.get(id) ?? WHITE;
+    if (c === GRAY) {
+      const startIdx = stack.indexOf(id);
+      const cyclePath = [...stack.slice(startIdx), id].map((s) => `"${s}"`).join(" -> ");
+      throw new Error(`circular phase dependency: ${cyclePath}`);
+    }
+    if (c === BLACK) {
+      return;
+    }
+    color.set(id, GRAY);
+    stack.push(id);
+    for (const next of samePlanDeps.get(id) ?? []) {
+      visit(next, stack);
+    }
+    stack.pop();
+    color.set(id, BLACK);
+  };
+  for (const p of plan.phases) {
+    visit(p.id, []);
   }
 }
 
