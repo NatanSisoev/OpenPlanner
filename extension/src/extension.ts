@@ -34,6 +34,7 @@ import { PlanstackChatWebview, CHAT_WEBVIEW_ID } from "./ui/planstackChatWebview
 import { postChatSystemMessage, postChatUserMessage } from "./ui/chatStatusBridge";
 import { postAgentStreamChunk, postAgentStreamEnd, postAgentStreamStart, type AgentStreamEndReason } from "./ui/agentChatStreamBridge";
 import { postAnimatedStatus, postRunFailure } from "./ui/richChatBridge";
+import { RedPageWebviewProvider, RED_PAGE_WEBVIEW_ID } from "./ui/redPageWebview";
 import { PlanstackSidebarWebview, SIDEBAR_WEBVIEW_ID } from "./ui/planstackSidebarWebview";
 import { PS_RUN_UI } from "./ui/runUiStrings";
 import { WORK_STATES, type ExecutionState } from "./plan/types";
@@ -1559,6 +1560,18 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(CHAT_WEBVIEW_ID, chatUi, {
       webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+
+  const redPageUi = new RedPageWebviewProvider(extUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(RED_PAGE_WEBVIEW_ID, redPageUi, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hackupc.planstack.openRedPage", async () => {
+      await redPageUi.openRedPage();
     }),
   );
 
